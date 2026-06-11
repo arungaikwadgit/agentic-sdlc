@@ -1,0 +1,935 @@
+/* ── Overlay & Modal ── */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 940px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.4);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.header h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 3px 0 0;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.closeBtn:hover { color: var(--text); background: var(--surface-2); }
+
+/* ── Admin bar ── */
+.adminBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.adminLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.adminSelect {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  min-width: 200px;
+}
+.adminSelect:focus { outline: none; border-color: var(--accent); }
+
+.adminHint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Tabs ── */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 0 16px;
+}
+
+.tab {
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 0;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+
+.tabActive {
+  color: var(--text);
+  border-bottom: 2px solid var(--accent);
+  font-weight: 600;
+}
+
+/* ── Body ── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.tabContent {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Section titles ── */
+.sectionTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+/* ── General tab ── */
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.formGroup label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.formGroup input,
+.formGroup textarea {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  resize: vertical;
+}
+.formGroup input:focus,
+.formGroup textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.formGroup input:disabled,
+.formGroup textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fieldHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.modeToggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.modeBtn {
+  padding: 7px 20px;
+  background: none;
+  border: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0;
+}
+.modeBtn:hover { background: var(--surface-2); }
+.modeBtn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.modeBtnActive {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.modeBtnActive:hover { background: var(--accent); }
+
+/* ── Role cards ── */
+.rolesGrid { display: flex; flex-direction: column; }
+
+.roleCards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.roleCard {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-left: 3px solid;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.roleCardTitle {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.roleCardDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.roleCardAgents {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  opacity: 0.8;
+}
+
+/* ── Add member form ── */
+.addSection {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.addRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.addForm input,
+.addForm select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  width: 100%;
+  box-sizing: border-box;
+}
+.addForm input:focus,
+.addForm select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.addForm input:disabled,
+.addForm select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rolePreview {
+  display: flex;
+  align-items: center;
+}
+
+.roleSelect { cursor: pointer; }
+
+.error { color: var(--error); font-size: 12px; margin: 0; }
+
+.roleHint {
+  font-size: 11px;
+  color: var(--success);
+  margin: 0;
+}
+.roleHintMuted {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.lockedHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* ── Member cards ── */
+.memberSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memberGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.memberCard {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s;
+}
+
+.memberCardActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.memberCardTop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.avatarSmall {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.memberInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memberNameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.memberName {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.memberEmail {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adminBadge {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.youBadge {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.memberCardRole {
+  border-left: 3px solid var(--border);
+  padding: 4px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.memberRoleTitle {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.memberRoleDesc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.memberCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memberAgentCount {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.memberMeta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.memberActions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.actionBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.actionBtn:hover { background: var(--surface-2); color: var(--text); }
+
+.removeBtn:hover { color: var(--error); border-color: var(--error); background: rgba(220,38,38,0.08); }
+
+/* ── Integrations (GitHub) ── */
+.integrationSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.integrationStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.integrationDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.integrationDotConnected { background: var(--success); }
+.integrationDotDisconnected { background: var(--text-muted); }
+
+/* ── Danger zone (archive/restore) ── */
+.dangerZone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+/* ── Member card agent list ── */
+.memberAgentList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0 2px;
+  border-top: 1px solid var(--border);
+}
+
+.memberAgentListLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.memberAgentPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.memberAgentPill {
+  font-size: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.memberAgentWarning {
+  font-size: 11px;
+  color: var(--error);
+  font-weight: 500;
+}
+
+.memberCardWarning {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 20%, transparent);
+}
+
+/* ── Collapsible role reference ── */
+.roleReference {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.roleReferenceSummary {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.roleReferenceSummary::-webkit-details-marker { display: none; }
+.roleReferenceSummary::before { content: '▶ '; font-size: 10px; }
+details[open] .roleReferenceSummary::before { content: '▼ '; }
+.roleReferenceSummary:hover { color: var(--text); }
+
+.roleReference .roleCards {
+  padding: 0 14px 14px;
+}
+
+/* ── Assignments tab ── */
+.quickApplySection {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quickApplyGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quickApplyRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quickApplyName {
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.quickApplySelect {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  flex: 1;
+}
+.quickApplySelect:focus { outline: none; border-color: var(--accent); }
+
+.clearBtn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.clearBtn:hover { border-color: var(--error); color: var(--error); }
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.filterSelect {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.filterSelect:focus { outline: none; border-color: var(--accent); }
+
+/* ── Matrix ── */
+.matrix {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  overflow-x: auto;
+}
+
+.matrixHeader {
+  display: flex;
+  align-items: center;
+  background: var(--surface-2, var(--surface));
+  border-bottom: 2px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.matrixPhaseRow {
+  background: var(--surface-2, var(--surface));
+  padding: 5px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+
+.matrixAgentCol {
+  flex: 0 0 260px;
+  min-width: 260px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-right: 1px solid var(--border);
+}
+
+.matrixMemberCol {
+  flex: 0 0 72px;
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-right: 1px solid var(--border);
+}
+.matrixMemberCol:last-child { border-right: none; }
+
+.matrixMemberName {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60px;
+}
+
+.matrixRow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.matrixRow:last-child { border-bottom: none; }
+.matrixRow:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+
+.matrixAgentName {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.matrixSuggestedRoles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.rolePill {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  border: 1px solid;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.matrixCell {
+  flex: 0 0 72px;
+  min-width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  border-right: 1px solid var(--border);
+}
+.matrixCell:last-child { border-right: none; }
+
+.checkBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+}
+.checkBtn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.checkBtn:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.checkBtnOn {
+  border-color: transparent;
+  font-weight: 700;
+}
+
+.emptyHint {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 40px;
+}
+
+.readOnlyHint {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px;
+  background: var(--surface-2, var(--surface));
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* ── Remove / revoke-admin error banner ── */
+.removeError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.removeErrorDismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.removeErrorDismiss:hover {
+  background: var(--surface2);
+}
+
+/* ── Re-run agent button ── */
+.rerunBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.rerunBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Inline prompt editor for re-run ── */
+.rerunPanel {
+  margin: 0 20px 16px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rerunPanelTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.rerunTextarea {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--text);
+}
+.rerunActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.rerunWarning {
+  font-size: 11px;
+  color: var(--warning, #d97706);
+  padding: 4px 0;
+}
+
+/* ── Domain Knowledge tab ──────────────────────────────────────────────────── */
+.domainChipSmall {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.knowledgeHint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 8px;
+  line-height: 1.5;
+}
+
+.knowledgeTextarea {
+  width: 100%;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  min-height: 240px;
+  box-sizing: border-box;
+}
+.knowledgeTextarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.knowledgeTextarea:disabled {
+  opacity: 0.6;
+}

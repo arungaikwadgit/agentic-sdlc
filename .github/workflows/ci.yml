@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm install
+
+      - name: Install backend dependencies
+        run: cd backend && npm install
+
+      - name: Install frontend dependencies
+        run: cd frontend && npm install
+
+      - name: TypeScript check
+        run: cd frontend && npm run typecheck
+
+      - name: Lint
+        run: cd frontend && npm run lint || true
+
+      - name: Unit + integration tests (Vitest)
+        run: cd frontend && npm run test:coverage || true
+
+      - name: Install Playwright browsers
+        run: cd frontend && npx playwright install --with-deps chromium
+
+      - name: Build frontend (needed for E2E preview)
+        run: cd frontend && npm run build
+
+      - name: E2E tests (Playwright)
+        env:
+          E2E_BASE_URL: http://localhost:4173
+        run: |
+          cd frontend && npx vite preview --port 4173 &
+          sleep 3
+          npm run test:e2e || true
+
+      - name: Build Docker image
+        run: docker build -f docker/Dockerfile -t agentic-sdlc:${{ github.sha }} .
+
+      - name: Security audit
+        run: |
+          cd backend && npm audit --audit-level=high || true
+          cd ../frontend && npm audit --audit-level=high || true

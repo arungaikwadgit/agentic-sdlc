@@ -1,0 +1,463 @@
+import { useState } from 'react';
+import { AGENT_DEFINITIONS } from '@/agents/definitions';
+import { getEffectivePromptDefault } from '@/agents/promptDefaults';
+import { REVIEW_GATES, PHASE_LABELS, PHASE_AGENTS } from '@/agents/constants';
+import { DOMAINS } from '@/agents/domains';
+import { updateAgentRun, updateProject } from '@/db/projectRepository';
+import { api } from '@/services/api';
+import { checkPromptInjection } from '@/utils/sanitize';
+import { buildTeamRoster } from '@/data/roleTemplates';
+import DocumentViewer from '../documents/DocumentViewer';
+import ExportMenu from '../documents/ExportMenu';
+import type { Project, ReviewGateId } from '@/types/project.types';
+import type { AgentId, PhaseId } from '@/types/agent.types';
+import styles from './ReviewGateModal.module.css';
+
+/** Which gate covers the given phase (i.e., gate fires AFTER this phase's group)? */
+function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
+  return (Object.entries(REVIEW_GATES) as [ReviewGateId, PhaseId[]][])
+    .find(([, phases]) => phases.includes(phase))?.[0];
+}
+
+const GATE_LABELS: Record<ReviewGateId, string> = {
+  gate1: 'Phase 1 Review Gate',
+  gate2_3: 'Phase 2 & 3 Review Gate',
+  gate5: 'Phase 5 Review Gate',
+  gate6: 'Phase 6 Review Gate',
+};
+
+interface Props {
+  gateId: ReviewGateId;
+  project: Project;
+  onApprove: (notes: string, approvedById?: string) => void;
+  onReject: () => void;
+  onClose: () => void;
+}
+
+type PanelMode = 'view' | 'edit' | 'prompt';
+
+function initials(name: string) {
+  return name.split(' ').map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('');
+}
+
+// Which members are assigned to any agent in this gate's phases?
+function getGateAssignees(project: Project, agents: AgentId[]) {
+  const members = project.teamMembers ?? [];
+  const assignments = project.agentAssignments ?? [];
+  const seen = new Set<string>();
+  const result: Array<{ member: typeof members[0] }> = [];
+  for (const agentId of agents) {
+    const a = assignments.find((x) => x.agentId === agentId);
+    if (a) {
+      for (const memberId of (a.memberIds ?? [])) {
+        if (!seen.has(memberId)) {
+          const m = members.find((m) => m.id === memberId);
+          if (m) { seen.add(memberId); result.push({ member: m }); }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+export default function ReviewGateModal({ gateId, project, onApprove, onReject, onClose }: Props) {
+  const phases = REVIEW_GATES[gateId];
+  const agents: AgentId[] = phases.flatMap((p) => PHASE_AGENTS[p as PhaseId] ?? []);
+
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>(agents[0]);
+  const [notes, setNotes] = useState('');
+  const [panelMode, setPanelMode] = useState<PanelMode>('view');
+  const [approvedById, setApprovedById] = useState<string>('');
+
+  const members = project.teamMembers ?? [];
+  const gateAssignees = getGateAssignees(project, agents);
+
+  // Editable output state
+  const [editedOutput, setEditedOutput] = useState<string>('');
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Prompt sandbox state
+  const [editedPrompt, setEditedPrompt] = useState<string>('');
+  const [dryRunResult, setDryRunResult] = useState<string | null>(null);
+  const [dryRunning, setDryRunning] = useState(false);
+  const [injectionWarning, setInjectionWarning] = useState<string | null>(null);
+  const [promptSaved, setPromptSaved] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+
+  const def = AGENT_DEFINITIONS[selectedAgent];
+  const run = project.agentRuns[selectedAgent];
+
+  // Agents that declare selectedAgent in their dependsOn — these consumed this agent's
+  // output as input, so if its output changes they should be re-run to pick it up.
+  const downstreamAgents = Object.values(AGENT_DEFINITIONS)
+    .filter((d) => d.dependsOn?.includes(selectedAgent))
+    .map((d) => d.name);
+
+  function handleSelectAgent(agentId: AgentId) {
+    setSelectedAgent(agentId);
+    setPanelMode('view');
+    setEditedOutput('');
+    setEditedPrompt('');
+    setDryRunResult(null);
+    setInjectionWarning(null);
+    setPromptSaved(false);
+  }
+
+  function startEdit() {
+    setEditedOutput(run?.output ?? '');
+    setPanelMode('edit');
+  }
+
+  async function startPromptEdit() {
+    const savedOverride = project.promptOverrides?.find((o) => o.agentId === selectedAgent);
+    if (savedOverride?.fullPrompt) {
+      setEditedPrompt(savedOverride.fullPrompt);
+    } else {
+      // Fall back to the app-level default (App Settings → Agent Prompts), then the hardcoded prompt
+      setEditedPrompt(await getEffectivePromptDefault(selectedAgent));
+    }
+    setInjectionWarning(null);
+    setDryRunResult(null);
+    setPromptSaved(false);
+    setPanelMode('prompt');
+  }
+
+  // ── Save the current edited prompt as the project default for this agent ───
+  async function savePromptForProject() {
+    if (!editedPrompt.trim()) return;
+    setSavingPrompt(true);
+    try {
+      await updateProject(project.id, (p) => {
+        const existing = p.promptOverrides.findIndex((o) => o.agentId === selectedAgent);
+        const entry = {
+          agentId: selectedAgent,
+          patch: [],
+          fullPrompt: editedPrompt,
+          updatedAt: Date.now(),
+        };
+        if (existing >= 0) {
+          p.promptOverrides[existing] = entry;
+        } else {
+          p.promptOverrides.push(entry);
+        }
+      });
+      setPromptSaved(true);
+    } finally {
+      setSavingPrompt(false);
+    }
+  }
+
+  // ── AI-enhance the current edited prompt ────────────────────────────────────
+  async function enhancePromptInSandbox() {
+    if (!editedPrompt.trim()) return;
+    setEnhancing(true);
+    try {
+      const improved = await api.enhancePrompt(editedPrompt, def?.name);
+      if (improved) {
+        handlePromptChange(improved);
+        setPromptSaved(false);
+      }
+    } finally {
+      setEnhancing(false);
+    }
+  }
+
+  async function saveEdit() {
+    if (!editedOutput.trim()) return;
+    setSavingEdit(true);
+    try {
+      await updateAgentRun(project.id, selectedAgent, { output: editedOutput });
+      setPanelMode('view');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  function handlePromptChange(value: string) {
+    setEditedPrompt(value);
+    setPromptSaved(false);
+    const check = checkPromptInjection(value);
+    setInjectionWarning(check.safe ? null : `⚠ Possible prompt injection detected: ${check.matchedPattern}`);
+  }
+
+  async function runDryRun() {
+    if (!def) return;
+    if (injectionWarning) {
+      if (!confirm('Injection pattern detected. Run anyway?')) return;
+    }
+    setDryRunning(true);
+    setDryRunResult(null);
+    try {
+      const domain = DOMAINS[project.domain];
+      const priorOutputs: Partial<Record<AgentId, string>> = {};
+      for (const [id, run] of Object.entries(project.agentRuns)) {
+        if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;
+      }
+      const domainContext = project.domainKnowledge
+        ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
+        : domain.context;
+      const ctx = {
+        projectName: project.name,
+        projectDescription: project.description,
+        domain: domain.id,
+        domainContext,
+        priorOutputs,
+        teamRoster: buildTeamRoster(project),
+      };
+      const userPrompt = def.buildUserPrompt(ctx);
+      const resp = await api.callAgent({
+        systemPrompt: editedPrompt,
+        userPrompt,
+      });
+      const output = api.extractText(resp);
+      setDryRunResult(output);
+
+      // Save this run as the agent's new artifact
+      await updateAgentRun(project.id, selectedAgent, {
+        agentId: selectedAgent,
+        status: 'complete',
+        output,
+        tokensUsed: resp.usage?.total_tokens ?? 0,
+        completedAt: Date.now(),
+      });
+
+      // The underlying document changed — require re-approval of its review gate
+      const agentPhase = def.phase as PhaseId;
+      const coveringGate = gateForPhase(agentPhase);
+      if (coveringGate) {
+        await updateProject(project.id, (p) => {
+          if (p.reviewGates[coveringGate]) {
+            p.reviewGates[coveringGate] = {
+              ...p.reviewGates[coveringGate]!,
+              approved: false,
+              approvedAt: undefined,
+              approvedBy: undefined,
+              notes: `Prompt sandbox run of ${def.name} — re-approval required`,
+            };
+          }
+          p.status = 'paused';
+          p.currentPhase = agentPhase;
+        });
+      }
+
+      // Show the new artifact immediately
+      setPanelMode('view');
+    } catch (e) {
+      setDryRunResult(`Error: ${String(e)}`);
+    } finally {
+      setDryRunning(false);
+    }
+  }
+
+  return (
+    <div className={styles.overlay}>
+      <div className={styles.modal}>
+        <div className={styles.header}>
+          <div>
+            <h2>{GATE_LABELS[gateId]}</h2>
+            <p className={styles.subtitle}>
+              Review outputs before the pipeline continues.
+              Phases: {phases.map((p) => PHASE_LABELS[p as PhaseId]).join(', ')}
+            </p>
+          </div>
+          <div className={styles.headerActions}>
+            <button
+              className={styles.closeBtn}
+              onClick={onClose}
+              title="Close (pipeline stays paused, no approval/rejection recorded)"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+            {/* Assigned reviewers badges */}
+            {gateAssignees.length > 0 && (
+              <div className={styles.assigneeBadges}>
+                <span className={styles.assigneeLabel}>Assigned:</span>
+                {gateAssignees.map(({ member }) => (
+                  <span
+                    key={member.id}
+                    className={styles.assigneeBadge}
+                    style={{ background: member.avatarColor }}
+                    title={`${member.name} (${member.role})`}
+                  >
+                    {initials(member.name)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {/* Approver selector */}
+            {members.length > 0 && (
+              <select
+                value={approvedById}
+                onChange={(e) => setApprovedById(e.target.value)}
+                className={styles.approverSelect}
+                title="Who is approving?"
+              >
+                <option value="">Approving as...</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.role})</option>
+                ))}
+              </select>
+            )}
+            <button className="btn-danger" onClick={onReject}>Reject &amp; Stop</button>
+            <button className="btn-primary" onClick={() => onApprove(notes, approvedById || undefined)}>
+              Approve &amp; Continue ›
+            </button>
+          </div>
+        </div>
+
+        <div className={styles.body}>
+          {/* Agent list */}
+          <div className={styles.agentList}>
+            {agents.map((agentId) => {
+              const d = AGENT_DEFINITIONS[agentId];
+              const r = project.agentRuns[agentId];
+              return (
+                <button
+                  key={agentId}
+                  className={`${styles.agentTab} ${selectedAgent === agentId ? styles.activeTab : ''}`}
+                  onClick={() => handleSelectAgent(agentId)}
+                >
+                  <span style={{ color: r?.status === 'complete' ? 'var(--success)' : 'var(--text-muted)', fontSize: 12 }}>
+                    {r?.status === 'complete' ? '✓' : '○'}
+                  </span>
+                  <span>{d?.outputLabel ?? agentId}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Document panel */}
+          <div className={styles.docPanel}>
+            {/* Panel tab bar */}
+            <div className={styles.panelTabs}>
+              <button
+                className={panelMode === 'view' ? styles.tabActive : styles.tab}
+                onClick={() => setPanelMode('view')}
+              >View</button>
+              <button
+                className={panelMode === 'edit' ? styles.tabActive : styles.tab}
+                onClick={startEdit}
+                disabled={run?.status !== 'complete'}
+              >Edit Output</button>
+              <button
+                className={panelMode === 'prompt' ? styles.tabActive : styles.tab}
+                onClick={startPromptEdit}
+              >Prompt Sandbox</button>
+              {run?.status === 'complete' && run.output && (
+                <div style={{ marginLeft: 'auto' }}>
+                  <ExportMenu agentId={selectedAgent} project={project} />
+                </div>
+              )}
+            </div>
+
+            {/* View mode */}
+            {panelMode === 'view' && (
+              run?.status === 'complete' && run.output
+                ? <DocumentViewer markdown={run.output} />
+                : <div className={styles.noOutput}>No output available for {def?.name}</div>
+            )}
+
+            {/* Edit output mode */}
+            {panelMode === 'edit' && (
+              <div className={styles.editPanel}>
+                <p className={styles.editHint}>
+                  Edit the agent output directly. Changes are saved to the project and will be used by downstream agents.
+                </p>
+                <textarea
+                  value={editedOutput}
+                  onChange={(e) => setEditedOutput(e.target.value)}
+                  className={styles.editTextarea}
+                />
+                <div className={styles.editActions}>
+                  <button className="btn-secondary" onClick={() => setPanelMode('view')}>Cancel</button>
+                  <button className="btn-primary" onClick={saveEdit} disabled={savingEdit}>
+                    {savingEdit ? 'Saving...' : 'Save Edits'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Prompt sandbox mode */}
+            {panelMode === 'prompt' && (
+              <div className={styles.editPanel}>
+                <p className={styles.editHint}>
+                  Edit the system prompt for <strong>{def?.name}</strong>. "Run &amp; Update Output" executes this prompt against the OpenAI API,
+                  replaces this agent's output with the result (visible in the View tab and exportable to Word), and resets this review gate for
+                  re-approval. "Save for this project" makes this prompt the default for future runs of this agent.
+                </p>
+                {project.promptOverrides?.some((o) => o.agentId === selectedAgent) && !promptSaved && (
+                  <p className={styles.editHint} style={{ color: 'var(--accent)' }}>
+                    ✏ This agent has a saved custom prompt for this project.
+                  </p>
+                )}
+                {injectionWarning && (
+                  <div className={styles.injectionWarning}>{injectionWarning}</div>
+                )}
+                <textarea
+                  value={editedPrompt}
+                  onChange={(e) => handlePromptChange(e.target.value)}
+                  className={styles.editTextarea}
+                  style={{ height: 180 }}
+                />
+                {promptSaved && (
+                  <p style={{ fontSize: 12, color: 'var(--success)', margin: 0 }}>
+                    ✓ Saved as project default. Future runs of this agent will use this prompt.
+                  </p>
+                )}
+                {downstreamAgents.length > 0 && (
+                  <p className={styles.editHint} style={{ color: 'var(--accent)' }}>
+                    ℹ {downstreamAgents.join(', ')} {downstreamAgents.length === 1 ? 'depends' : 'depend'} on this
+                    agent's output. If you change it here, re-run {downstreamAgents.length === 1 ? 'that agent' : 'those agents'} too
+                    so their inputs reflect the update — re-running picks up the latest saved output automatically.
+                  </p>
+                )}
+                <div className={styles.editActions}>
+                  <button className="btn-secondary" onClick={runDryRun} disabled={dryRunning}>
+                    {dryRunning ? '⟳ Running...' : '▷ Run & Update Output'}
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    onClick={enhancePromptInSandbox}
+                    disabled={enhancing || !editedPrompt.trim()}
+                    title="Use AI to rewrite this prompt for clarity and output quality"
+                  >
+                    {enhancing ? '⟳ Enhancing...' : '✨ Enhance prompt'}
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={savePromptForProject}
+                    disabled={savingPrompt || promptSaved || !editedPrompt.trim()}
+                    title="Save this prompt as the default for future runs of this agent in this project"
+                  >
+                    {promptSaved ? '✓ Saved' : savingPrompt ? 'Saving...' : '💾 Save for this project'}
+                  </button>
+                </div>
+                {dryRunResult && (
+                  <div className={styles.dryRunResult}>
+                    <strong>{dryRunResult.startsWith('Error:') ? 'Run failed:' : 'New output saved as artifact — see the View tab.'}</strong>
+                    <pre>{dryRunResult}</pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Notes bar */}
+        {/* Notes bar */}
+        <div className={styles.notesBar}>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Review Notes (optional)</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Add notes or feedback for this review gate..."
+            rows={2}
+            style={{ resize: 'vertical' }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

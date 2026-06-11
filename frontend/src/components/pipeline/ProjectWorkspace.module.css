@@ -1,0 +1,421 @@
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-muted);
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.projectInfo {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.projectInfo h2 {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modeBadge {
+  font-size: 11px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.phaseGroup {
+  margin-bottom: 4px;
+}
+
+.phaseHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 14px 4px;
+}
+
+.phaseLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.agentRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  color: var(--text);
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.agentRow:hover {
+  background: var(--surface2);
+}
+
+.agentSelected {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-right: 2px solid var(--accent);
+}
+
+.agentName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.agentAvatars {
+  display: flex;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.agentAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  margin-left: -4px;
+  border: 1px solid var(--surface);
+}
+.agentAvatars .agentAvatar:first-child { margin-left: 0; }
+
+.agentAvatarMore {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--border));
+  flex-shrink: 0;
+  margin-left: -4px;
+  border: 1px solid var(--surface);
+}
+
+.content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.docArea {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.docHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.docHeader h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.docMeta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Review gate indicators in sidebar */
+.gateIndicator {
+  margin: 2px 10px 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.gateActive {
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  cursor: pointer;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.gateApproved {
+  border: 1px solid var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+}
+
+.gatePending {
+  opacity: 0.5;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ── Team-required banner ── */
+.teamRequiredBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--error) 10%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+/* ── Locked phase group ── */
+.phaseGroupLocked {
+  opacity: 0.55;
+}
+
+.phaseLockIcon {
+  font-size: 11px;
+}
+
+.phaseLockedHint {
+  padding: 3px 14px 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Locked / unmapped agent rows ── */
+.agentLocked {
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+.agentUnmapped {
+  border-left: 2px solid var(--error);
+}
+
+.agentUnmappedBadge {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--error);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+/* ── Re-run panel ────────────────────────────────────────────────────────── */
+.rerunBtn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.rerunBtn:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.rerunPanel {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rerunPanelTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rerunWarning {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--warning, #f59e0b);
+}
+
+.rerunTextarea {
+  width: 100%;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  min-height: 100px;
+  box-sizing: border-box;
+}
+.rerunTextarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.rerunActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Prompt override: custom badge, save/reset controls ─────────────────── */
+.customPromptBadge {
+  font-size: 10px;
+  color: var(--warning, #f59e0b);
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+.overrideActive {
+  font-size: 12px;
+  color: var(--warning, #f59e0b);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.resetPromptBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: inherit;
+}
+.resetPromptBtn:hover { color: var(--accent-hover); }
+
+.savePromptBtn {
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.savePromptBtn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.22);
+}
+.savePromptBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.docCustomBadge {
+  font-size: 11px;
+  color: var(--warning, #f59e0b);
+}
