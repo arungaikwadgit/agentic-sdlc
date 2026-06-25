@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Traceability Matrix Export (Appendix O).
  * Links User Story IDs → Test Case IDs → Functional Requirement IDs.
  * Parses markdown output from userStory, testCases, and manager agents.

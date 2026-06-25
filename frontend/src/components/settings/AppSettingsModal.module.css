@@ -1,3 +1,7 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 .overlay {
   position: fixed;
   inset: 0;
@@ -14,16 +18,16 @@
   border: 1px solid var(--border);
   border-radius: 12px;
   width: 100%;
-  max-width: 520px;
-  max-height: 90vh;
+  max-width: 760px;
+  height: 80vh;
+  max-height: 780px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.modalWide {
-  max-width: 760px;
-}
+/* kept for backwards compat — no longer changes dimensions */
+.modalWide {}
 
 .header {
   display: flex;
@@ -368,4 +372,16 @@
   color: var(--text-muted);
   text-align: center;
   padding: 24px 0;
+}
+
+/* ── Test Connection spinner ───────────────────────────────────────────── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-block;
+  animation: spin 0.7s linear infinite;
+  margin-right: 5px;
+  font-style: normal;
 }

@@ -37,6 +37,7 @@ vi.mock('../../frontend/src/db/projectRepository', () => ({
 
 vi.mock('../../frontend/src/agents/promptDefaults', () => ({
   getPromptDefaults: vi.fn(async () => ({})),
+  getAgentProviderHints: vi.fn(async () => ({})),
 }));
 
 vi.mock('../../frontend/src/services/api', () => ({
@@ -91,9 +92,11 @@ function approveAllGates(project: Project): Project {
     ...project,
     reviewGates: {
       gate1: { id: 'gate1', afterPhases: ['phase1', 'phase1b'], approved: true, approvedAt: now },
-      gate2_3: { id: 'gate2_3', afterPhases: ['phase2', 'phase3'], approved: true, approvedAt: now },
+      gate2: { id: 'gate2', afterPhases: ['phase2'], approved: true, approvedAt: now },
+      // gate3 now covers phase3 + phase3b (securityCompliance moved here)
+      gate3: { id: 'gate3', afterPhases: ['phase3', 'phase3b'], approved: true, approvedAt: now },
       gate5: { id: 'gate5', afterPhases: ['phase5'], approved: true, approvedAt: now },
-      gate6: { id: 'gate6', afterPhases: ['phase6'], approved: true, approvedAt: now },
+      // gate6 intentionally omitted: phase6 is empty, gate6 never fires
     },
   };
 }
@@ -159,6 +162,12 @@ describe('PipelineEngine', () => {
     expect(callbacks.onAgentComplete).toHaveBeenCalledWith('manager', expect.any(String));
     expect(callbacks.onAgentComplete).toHaveBeenCalledWith('architecture', expect.any(String));
     expect(callbacks.onAgentComplete).toHaveBeenCalledWith('onCallEngineer', expect.any(String));
+
+    // New agents (phase3b and phase4 additions) also completed
+    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('securityCompliance', expect.any(String));
+    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('codeReviewStandards', expect.any(String));
+    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('roadmapPlanner', expect.any(String));
+    expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase3b');
   });
 
   it('skips agents whose run is already marked complete (TS-25)', async () => {
@@ -201,11 +210,12 @@ describe('PipelineEngine', () => {
   });
 
   it('does not block phase entry when the required gate is approved (TS-27)', async () => {
-    // Approve gate1 only; later gates left unapproved so we can observe the
-    // pipeline proceeding past phase2/phase3 before stopping at gate2_3.
+    // Approve gate1 and gate2 only; gate3 left unapproved so we can observe
+    // the pipeline proceeding past phase2/phase3 before stopping at gate3.
     mockProject = freshProject({
       reviewGates: {
         gate1: { id: 'gate1', afterPhases: ['phase1', 'phase1b'], approved: true, approvedAt: Date.now() },
+        gate2: { id: 'gate2', afterPhases: ['phase2'], approved: true, approvedAt: Date.now() },
       },
     });
     const callbacks = makeCallbacks();
@@ -218,14 +228,21 @@ describe('PipelineEngine', () => {
     expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase2');
     expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase3');
 
-    // gate2_3 fires after phase3 and is unapproved -> pipeline pauses
-    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate2_3');
+    // phase3b (securityCompliance) now runs before gate3 fires
+    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('securityCompliance', expect.any(String));
+    expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase3b');
+
+    // gate3 fires after phase3b and is unapproved -> pipeline pauses
+    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate3');
     expect(mockProject.status).toBe('paused');
     expect(mockProject.currentPhase).toBe('phase4');
   });
 
   it('records agent error, calls onAgentError and onPipelineError, and sets status to error (TS-28)', async () => {
     mockProject = freshProject();
+    // mockRejectedValueOnce fails the FIRST api.callAgent invocation. phase0
+    // (sdlcOrchestrator) now runs before phase1 (manager), so the first agent
+    // to be called — and therefore the one that errors — is sdlcOrchestrator.
     vi.mocked(api.callAgent).mockRejectedValueOnce(new Error('rate limited'));
 
     const callbacks = makeCallbacks();
@@ -233,11 +250,11 @@ describe('PipelineEngine', () => {
 
     await engine.run();
 
-    expect(callbacks.onAgentError).toHaveBeenCalledWith('manager', 'rate limited');
+    expect(callbacks.onAgentError).toHaveBeenCalledWith('sdlcOrchestrator', 'rate limited');
     expect(callbacks.onPipelineError).toHaveBeenCalledWith('rate limited');
     expect(mockProject.status).toBe('error');
-    expect(mockProject.agentRuns.manager?.status).toBe('error');
-    expect(mockProject.agentRuns.manager?.error).toBe('rate limited');
+    expect(mockProject.agentRuns.sdlcOrchestrator?.status).toBe('error');
+    expect(mockProject.agentRuns.sdlcOrchestrator?.error).toBe('rate limited');
 
     // pipeline should not have proceeded to mark anything complete
     expect(callbacks.onPipelineComplete).not.toHaveBeenCalled();
@@ -260,8 +277,8 @@ describe('PipelineEngine', () => {
   });
 
   it('run(startFromPhase) pauses immediately if the resumed phase requires an unapproved gate (TS-27b)', async () => {
-    // gate2_3 is required *before* phase4 (GATE_AFTER_PHASE_INDEX.gate2_3 = idx(phase4)).
-    // Resuming directly at phase4 with gate2_3 unapproved should hit the
+    // gate3 is required *before* phase4 (GATE_AFTER_PHASE_INDEX.gate3 = idx(phase4)).
+    // Resuming directly at phase4 with gate3 unapproved should hit the
     // "required gate before phase" branch (getGateRequiredBefore), which is
     // otherwise unreachable during normal sequential execution.
     mockProject = freshProject({ status: 'paused', currentPhase: 'phase4', reviewGates: {} });
@@ -270,7 +287,7 @@ describe('PipelineEngine', () => {
 
     await engine.run('phase4');
 
-    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate2_3');
+    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate3');
     expect(callbacks.onAgentStart).not.toHaveBeenCalled();
     expect(mockProject.status).toBe('paused');
     expect(mockProject.currentPhase).toBe('phase4');

@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * App-level default Domain Knowledge briefs, one per domain.
  *
  * Precedence (resolved in NewProjectModal when a domain is selected):

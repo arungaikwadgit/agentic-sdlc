@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useEffect, useState } from 'react';
 import { useIntegrations } from '@/hooks/useIntegrations';
 import { api, type GithubPushResult } from '@/services/api';

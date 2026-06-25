@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Thin wrapper around fast-json-patch for prompt override diffs.
  * Stores only the patch (delta) rather than the full prompt.
  */

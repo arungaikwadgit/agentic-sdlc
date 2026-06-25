@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { saveAs } from 'file-saver';
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel,
@@ -84,46 +88,86 @@ function inlineRuns(text: string, opts: { size?: number; color?: string } = {}):
   return runs;
 }
 
-function tableCell(text: string, opts: { header?: boolean } = {}): TableCell {
+// Content width for US Letter with 1" margins (DXA: 1440 = 1 inch)
+const CONTENT_WIDTH_DXA = 9360;
+
+// Standard table border used everywhere
+const TBL_BORDER = { style: BorderStyle.SINGLE, size: 4, color: RULE };
+const TBL_BORDER_INNER = { style: BorderStyle.SINGLE, size: 2, color: RULE };
+const TBL_BORDERS = {
+  top: TBL_BORDER, bottom: TBL_BORDER,
+  left: TBL_BORDER, right: TBL_BORDER,
+  insideHorizontal: TBL_BORDER_INNER,
+  insideVertical: TBL_BORDER_INNER,
+};
+
+// Colour palette for table rows
+const ROW_EVEN_BG  = 'F7F9FC'; // subtle blue-grey stripe
+const ROW_ODD_BG   = 'FFFFFF';
+const HEADER_BG    = '1F3864'; // dark navy header
+
+function tableCell(
+  text: string,
+  opts: { header?: boolean; evenRow?: boolean; widthDxa?: number; center?: boolean } = {},
+): TableCell {
+  const fill = opts.header ? HEADER_BG : opts.evenRow ? ROW_EVEN_BG : ROW_ODD_BG;
   return new TableCell({
+    ...(opts.widthDxa ? { width: { size: opts.widthDxa, type: WidthType.DXA } } : {}),
+    borders: {
+      top: TBL_BORDER, bottom: TBL_BORDER,
+      left: TBL_BORDER, right: TBL_BORDER,
+    },
+    shading: { fill, type: ShadingType.CLEAR },
+    verticalAlign: VerticalAlign.CENTER,
+    margins: { top: 80, bottom: 80, left: 120, right: 120 },
     children: [
       new Paragraph({
-        children: inlineRuns(text, { size: 21, color: opts.header ? 'ffffff' : '1e293b' }),
+        alignment: opts.center ? AlignmentType.CENTER : AlignmentType.LEFT,
+        children: inlineRuns(text, {
+          size: 20,
+          color: opts.header ? 'FFFFFF' : '1e293b',
+        }),
       }),
     ],
-    shading: opts.header
-      ? { type: ShadingType.SOLID, color: ACCENT, fill: ACCENT }
-      : undefined,
-    verticalAlign: VerticalAlign.CENTER,
-    margins: { top: 60, bottom: 60, left: 100, right: 100 },
   });
 }
 
 function buildMarkdownTable(headerLine: string, bodyLines: string[]): Table {
   const headerCells = splitTableRow(headerLine);
+  const colCount = headerCells.length || 1;
+
+  // Distribute content width equally across columns (DXA)
+  const colW = Math.floor(CONTENT_WIDTH_DXA / colCount);
+  // Last column absorbs rounding remainder
+  const colWidths = Array.from({ length: colCount }, (_, i) =>
+    i === colCount - 1 ? CONTENT_WIDTH_DXA - colW * (colCount - 1) : colW
+  );
+
   const rows: TableRow[] = [
     new TableRow({
-      children: headerCells.map((c) => tableCell(c, { header: true })),
       tableHeader: true,
+      children: headerCells.map((c, i) =>
+        tableCell(c, { header: true, widthDxa: colWidths[i] })
+      ),
     }),
   ];
-  for (const line of bodyLines) {
+
+  bodyLines.forEach((line, rowIdx) => {
     const cells = splitTableRow(line);
-    // Pad/truncate to header column count for consistency
-    while (cells.length < headerCells.length) cells.push('');
-    rows.push(new TableRow({ children: cells.slice(0, headerCells.length).map((c) => tableCell(c)) }));
-  }
+    while (cells.length < colCount) cells.push('');
+    const even = rowIdx % 2 === 0;
+    rows.push(new TableRow({
+      children: cells.slice(0, colCount).map((c, i) =>
+        tableCell(c, { evenRow: even, widthDxa: colWidths[i] })
+      ),
+    }));
+  });
+
   return new Table({
+    width: { size: CONTENT_WIDTH_DXA, type: WidthType.DXA },
+    columnWidths: colWidths,
+    borders: TBL_BORDERS,
     rows,
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    borders: {
-      top: { style: BorderStyle.SINGLE, size: 4, color: RULE },
-      bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE },
-      left: { style: BorderStyle.SINGLE, size: 4, color: RULE },
-      right: { style: BorderStyle.SINGLE, size: 4, color: RULE },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: RULE },
-      insideVertical: { style: BorderStyle.SINGLE, size: 2, color: RULE },
-    },
   });
 }
 
@@ -137,14 +181,14 @@ const HEADING_SPACING = {
 // Load mermaid from CDN once (shared with DocumentViewer's lazy-load approach)
 let mermaidLoadPromise: Promise<void> | null = null;
 function loadMermaidLib(): Promise<void> {
-  // @ts-ignore
+  // @ts-expect-error - mermaid is loaded dynamically via CDN script, no type declarations
   if (window.mermaid) return Promise.resolve();
   if (mermaidLoadPromise) return mermaidLoadPromise;
   mermaidLoadPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
     script.onload = () => {
-      // @ts-ignore
+      // @ts-expect-error - mermaid is loaded dynamically via CDN script, no type declarations
       window.mermaid?.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose' });
       resolve();
     };
@@ -163,7 +207,7 @@ function loadMermaidLib(): Promise<void> {
 async function renderMermaidToPng(code: string): Promise<{ data: Uint8Array; width: number; height: number } | null> {
   try {
     await loadMermaidLib();
-    // @ts-ignore
+    // @ts-expect-error - mermaid is loaded dynamically via CDN script, no type declarations
     const mermaid = window.mermaid;
     if (!mermaid) return null;
 
@@ -262,7 +306,6 @@ function buildDiagramParagraph(image: { data: Uint8Array; width: number; height:
     spacing: { before: 120, after: 160 },
     children: [
       new ImageRun({
-        type: 'png',
         data: image.data,
         transformation: { width, height },
       }),
@@ -554,10 +597,15 @@ export async function exportAllArtifactsZip(
   const usedNames = new Set<string>();
   for (const { title, markdown, phaseNumber, agentLabel } of artifacts) {
     const blob = await buildDocxBlob(markdown, title, projectName);
-    let filename = buildArtifactFilename(projectName, phaseNumber, agentLabel);
+    const baseFilename = buildArtifactFilename(projectName, phaseNumber, agentLabel);
+    let filename = baseFilename;
     let i = 2;
     while (usedNames.has(filename)) {
-      filename = buildArtifactFilename(projectName, phaseNumber, `${agentLabel}_${i}`);
+      // Append the disambiguating suffix to the already-built filename rather
+      // than to agentLabel before sanitization — sanitizeSegment() strips
+      // underscores, so `${agentLabel}_${i}` would collapse to "Architecture2"
+      // instead of producing "..._Architecture_2.docx".
+      filename = baseFilename.replace(/\.docx$/, `_${i}.docx`);
       i++;
     }
     usedNames.add(filename);
@@ -566,4 +614,75 @@ export async function exportAllArtifactsZip(
 
   const zipBlob = await zip.generateAsync({ type: 'blob' });
   saveAs(zipBlob, `${projectShortName(projectName)}_artifacts.zip`);
+}
+
+/**
+ * Export a single agent output as a PDF using a styled print window.
+ * Opens a hidden iframe, injects the rendered HTML, and triggers print-to-PDF.
+ * No extra dependencies needed.
+ */
+export function exportPdf(markdown: string, title: string, projectName: string): void {
+  const lines = markdown.split('\n');
+  // Minimal markdown-to-HTML conversion for print
+  const html = lines.map((line) => {
+    if (/^# /.test(line))   return `<h1>${line.slice(2)}</h1>`;
+    if (/^## /.test(line))  return `<h2>${line.slice(3)}</h2>`;
+    if (/^### /.test(line)) return `<h3>${line.slice(4)}</h3>`;
+    if (/^#### /.test(line))return `<h4>${line.slice(5)}</h4>`;
+    if (/^[-*] /.test(line))return `<li>${line.slice(2)}</li>`;
+    if (/^\d+\. /.test(line)) return `<li>${line.replace(/^\d+\. /, '')}</li>`;
+    if (/^\|/.test(line) && !/^\|[-:]+/.test(line)) {
+      // peek ahead: if next non-empty line is a separator this is the header row
+      const nextLine = lines[lines.indexOf(line) + 1] ?? '';
+      const isHeader = /^\|[-:]+/.test(nextLine);
+      const tag = isHeader ? 'th' : 'td';
+      const cells = line.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => `<${tag}>${c.trim()}</${tag}>`).join('');
+      return `<tr>${cells}</tr>`;
+    }
+    if (/^\|[-:]+/.test(line)) return '';
+    if (line.trim() === '') return '<br/>';
+    return `<p>${line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>').replace(/`([^`]+)`/g, '<code>$1</code>')}</p>`;
+  }).join('\n')
+    .replace(/(<li>.*<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`)
+    .replace(/(<tr>.*<\/tr>\n?)+/g, (m) => `<table>${m}</table>`);
+
+  const printDoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>${title} — ${projectName}</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 12pt; color: #111; margin: 2cm; }
+  h1 { font-size: 20pt; color: #1d4ed8; border-bottom: 2px solid #1d4ed8; padding-bottom: 6px; margin-bottom: 16px; }
+  h2 { font-size: 15pt; color: #1e40af; margin-top: 24px; }
+  h3 { font-size: 13pt; color: #1e3a8a; margin-top: 18px; }
+  h4 { font-size: 11pt; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+  p { margin: 0 0 8px; line-height: 1.6; }
+  ul { margin: 4px 0 10px 20px; }
+  li { margin-bottom: 4px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 11pt; }
+  td, th { border: 1px solid #cbd5e1; padding: 7px 10px; vertical-align: top; word-break: break-word; }
+  th { background: #1F3864; color: #ffffff; font-weight: 700; font-size: 10pt; text-transform: uppercase; letter-spacing: 0.04em; }
+  tbody tr:nth-child(even) td { background: #F7F9FC; }
+  tbody tr:hover td { background: #e8f0fe; }
+  code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-family: monospace; font-size: 10pt; }
+  .header { border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 24px; color: #64748b; font-size: 10pt; }
+  @media print { body { margin: 1.5cm; } }
+</style>
+</head>
+<body>
+<div class="header">${projectName} &nbsp;›&nbsp; ${title}</div>
+${html}
+</body>
+</html>`;
+
+  const w = window.open('', '_blank', 'width=900,height=700');
+  if (!w) return;
+  w.document.write(printDoc);
+  w.document.close();
+  w.focus();
+  // Give the new document a moment to lay out (images/fonts) before printing.
+  w.setTimeout(() => {
+    w.print();
+  }, 250);
 }

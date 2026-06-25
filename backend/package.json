@@ -1,21 +1,43 @@
 {
   "name": "agentic-sdlc-backend",
-  "version": "1.0.0",
-  "description": "Express proxy for Agentic SDLC Framework",
+  "version": "2.0.0",
+  "description": "Autonomous Agent Runtime — backend API + legacy LLM proxy",
   "main": "src/proxy.js",
   "scripts": {
     "start": "node src/proxy.js",
-    "dev": "nodemon src/proxy.js"
+    "dev": "nodemon src/proxy.js",
+    "runtime:dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "runtime:build": "tsc --project tsconfig.json",
+    "runtime:start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "migrate:up": "node-pg-migrate up --migrations-dir migrations --database-url-var POSTGRES_URL",
+    "migrate:down": "node-pg-migrate down --migrations-dir migrations --database-url-var POSTGRES_URL",
+    "migrate:up:test": "node-pg-migrate up --migrations-dir migrations --database-url-var POSTGRES_URL_TEST",
+    "test": "jest --testPathPattern=src/",
+    "worker": "ts-node-dev --respawn --transpile-only src/worker/index.ts"
   },
   "dependencies": {
+    "@agentic-sdlc/shared-types": "file:../shared-types",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
     "https-proxy-agent": "^7.0.4",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "pg": "^8.12.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.6",
+    "jest": "^29.7.0",
+    "node-pg-migrate": "^7.5.0",
+    "nodemon": "^3.1.4",
+    "ts-jest": "^29.4.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.5"
   }
 }

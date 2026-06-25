@@ -321,9 +321,9 @@ describe('AppSettingsModal — Projects tab', () => {
     // The "Archived {date}" text is part of a larger "{n}/{n} agents · Archived {date}"
     // text node, so match on substring via a custom text matcher.
     const expectedDateText = `Archived ${new Date(archivedDate).toLocaleDateString()}`;
-    expect(
-      screen.getByText((_content, element) => element?.textContent?.includes(expectedDateText) ?? false)
-    ).toBeInTheDocument();
+    // Multiple ancestor elements share the same text content; verify at least one leaf contains it.
+    const matches = screen.getAllByText((_content, element) => element?.textContent?.includes(expectedDateText) ?? false);
+    expect(matches.length).toBeGreaterThan(0);
   });
 });
 

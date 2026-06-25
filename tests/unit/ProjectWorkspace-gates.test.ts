@@ -23,12 +23,16 @@ describe('gateForPhase', () => {
     expect(gateForPhase('phase1')).toBe('gate1');
   });
 
-  it('returns gate2_3 for phase3 (TS-171)', () => {
-    expect(gateForPhase('phase3')).toBe('gate2_3');
+  it('returns gate3 for phase3 (TS-171)', () => {
+    expect(gateForPhase('phase3')).toBe('gate3');
   });
 
-  it('returns gate2_3 for phase2 as well (both covered by gate2_3)', () => {
-    expect(gateForPhase('phase2')).toBe('gate2_3');
+  it('returns gate3 for phase3b (gate3 now covers phase3 + phase3b)', () => {
+    expect(gateForPhase('phase3b')).toBe('gate3');
+  });
+
+  it('returns gate2 for phase2', () => {
+    expect(gateForPhase('phase2')).toBe('gate2');
   });
 
   it('returns undefined for phase4 — no covering gate (TS-172)', () => {
@@ -43,8 +47,8 @@ describe('gateForPhase', () => {
     expect(gateForPhase('phase5')).toBe('gate5');
   });
 
-  it('returns gate6 for phase6', () => {
-    expect(gateForPhase('phase6')).toBe('gate6');
+  it('returns undefined for phase6 — gate6 is unused (phase6 is empty)', () => {
+    expect(gateForPhase('phase6')).toBeUndefined();
   });
 
   it('returns undefined for phase7 — no covering gate', () => {

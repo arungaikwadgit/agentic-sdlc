@@ -1,10 +1,15 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/database';
 import { updateProject, updateAgentRun } from '@/db/projectRepository';
 import { PipelineEngine } from '@/services/pipelineEngine';
-import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES } from '@/agents/constants';
+import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
+import { getPromptDefaults } from '@/agents/promptDefaults';
 import { api } from '@/services/api';
 import DocumentViewer from '../documents/DocumentViewer';
 import ReviewGateModal from '../reviewGate/ReviewGateModal';
@@ -12,6 +17,12 @@ import ProjectSettings from '../settings/ProjectSettings';
 import { initials } from '../settings/ProjectSettings';
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';
+import AgentThinkingPanel from './AgentThinkingPanel';
+import ReviewImprovePanel from './ReviewImprovePanel';
+import MockupPreview from '../documents/MockupPreview';
+import DiagramPreview from '../documents/DiagramPreview';
+import OrchestratorView from './OrchestratorView';
+import PrototypeViewer from '../documents/PrototypeViewer';
 import { exportTraceabilityCSV } from '@/services/traceability';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
@@ -21,10 +32,10 @@ import styles from './ProjectWorkspace.module.css';
 
 // ── Gate locking ──────────────────────────────────────────────────────────────
 const GATE_UNLOCKS_AFTER: Record<string, string> = {
-  gate1: 'phase1',
-  gate2_3: 'phase3',
+  gate1: 'phase1b',
+  gate2: 'phase2',
+  gate3: 'phase3b',
   gate5: 'phase5',
-  gate6: 'phase6',
 };
 
 function getLockedPhases(project: import('@/types/project.types').Project): Set<string> {
@@ -46,6 +57,16 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
     .find(([, phases]) => phases.includes(phase))?.[0];
 }
 
+// Agents whose output contains Mermaid diagrams
+const DIAGRAM_AGENTS = new Set<AgentId>([
+  'dataModel', 'architecture', 'apiDesign', 'devopsEngineer', 'infraEngineer', 'observabilityEngineer',
+]);
+
+function providerLabel(p?: string): string {
+  if (!p || p === 'auto') return '';
+  return p === 'claude' ? 'Claude' : 'OpenAI';
+}
+
 interface Props {
   projectId: string;
   onBack: () => void;
@@ -60,13 +81,21 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function ProjectWorkspace({ projectId, onBack }: Props) {
-  const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
+  // useLiveQuery returns `undefined` while the query is initialising.
+  // Once it resolves, undefined means "not found", so we track the first non-undefined result.
+  const queryResult = useLiveQuery(() => db.projects.get(projectId), [projectId]);
+  const hasResolved = useRef(false);
+  if (queryResult !== undefined) hasResolved.current = true;
+  const project = queryResult;
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [downloadingArtifacts, setDownloadingArtifacts] = useState(false);
   const [showGithubPush, setShowGithubPush] = useState(false);
+  const [apiReady, setApiReady] = useState<boolean | null>(null);
+  const [docViewMode, setDocViewMode] = useState<'spec' | 'preview' | 'thinking'>('spec');
+  const [showReview, setShowReview] = useState(false);
   const engineRef = useRef<PipelineEngine | null>(null);
 
   // ── Re-run state ────────────────────────────────────────────────────────────
@@ -74,12 +103,51 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [rerunPrompt, setRerunPrompt] = useState('');
   const [rerunning, setRerunning] = useState(false);
   const [rerunError, setRerunError] = useState<string | null>(null);
+  const [rerunUserExtra, setRerunUserExtra] = useState('');
   const [promptSaved, setPromptSaved] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(true);
+  const [rerunPendingProvider, setRerunPendingProvider] = useState<'openai' | 'claude' | 'auto'>('auto');
+
+  // Auto-start flag: set by EditProjectModal "Save & Restart Pipeline"
+  const [shouldAutoStart, setShouldAutoStart] = useState(() => {
+    const key = `sdlc_autostart_${projectId}`;
+    if (sessionStorage.getItem(key)) { sessionStorage.removeItem(key); return true; }
+    return false;
+  });
+
+  // Once project loads and auto-start is requested, kick off the full pipeline
+  useEffect(() => {
+    if (!shouldAutoStart || !project) return;
+    setShouldAutoStart(false);
+    // Small delay so the workspace finishes rendering first
+    const t = setTimeout(() => startPipeline(undefined), 300);
+    return () => clearTimeout(t);
+  }, [shouldAutoStart, project]);
 
   useEffect(() => {
     if (project && (project.teamMembers ?? []).length === 0) setShowTeamPanel(true);
   }, [project?.id]);
+
+  // Check API key availability
+  useEffect(() => {
+    api.callAgent({ systemPrompt: 'ping', userPrompt: 'ping', testMode: true })
+      .then(() => setApiReady(true))
+      .catch(() => setApiReady(false));
+  }, []);
+
+  // Auto-switch to preview for orchestrator and prototype agents
+  useEffect(() => {
+    if (selectedAgent === 'sdlcOrchestrator' || selectedAgent === 'workingPrototype') {
+      const run = project?.agentRuns[selectedAgent];
+      if (run?.status === 'complete' && (run.output ?? '').length > 100) {
+        setDocViewMode('preview');
+      }
+    } else {
+      setDocViewMode('spec');
+    }
+    setShowReview(false);
+  }, [selectedAgent]);
 
   const startPipeline = useCallback(async (fromPhase?: PhaseId) => {
     if (!project) return;
@@ -103,12 +171,24 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     updateProject(projectId, (p) => { p.status = 'paused'; });
   };
 
-  // ── Re-run: open panel, pre-fill with saved override or built-in default ───
-  function openRerun(agentId: AgentId) {
+  // ── Re-run: open panel, pre-fill respecting the same 3-level precedence as pipelineEngine ──
+  // Level 1: project.promptOverrides[agentId]          (project-specific saved prompt)
+  // Level 2: app:promptDefaults[agentId]               (app-wide default via App Settings)
+  // Level 3: AGENT_DEFINITIONS[agentId].systemPrompt   (hardcoded — always quality-upgraded)
+  async function openRerun(agentId: AgentId) {
     const def = AGENT_DEFINITIONS[agentId];
     const savedOverride = project?.promptOverrides?.find((o) => o.agentId === agentId);
+    let effectivePrompt: string;
+    if (savedOverride?.fullPrompt) {
+      effectivePrompt = savedOverride.fullPrompt;                          // Level 1
+    } else {
+      const appDefaults = await getPromptDefaults();
+      effectivePrompt = appDefaults[agentId] ?? def?.systemPrompt ?? '';  // Level 2 or 3
+    }
     setRerunAgent(agentId);
-    setRerunPrompt(savedOverride?.fullPrompt ?? def?.systemPrompt ?? '');
+    setRerunPrompt(effectivePrompt);
+    setRerunUserExtra('');
+    setShowAdvanced(true);
     setRerunError(null);
     setPromptSaved(false);
   }
@@ -151,14 +231,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   }
 
-  // ── Reset saved override back to the built-in default ─────────────────────
+  // ── Reset saved override back to the effective default (level 2 or 3) ──────
   async function resetPromptOverride(agentId: AgentId) {
     await updateProject(projectId, (p) => {
       p.promptOverrides = p.promptOverrides.filter((o) => o.agentId !== agentId);
     });
     if (rerunAgent === agentId) {
       const def = AGENT_DEFINITIONS[agentId];
-      setRerunPrompt(def?.systemPrompt ?? '');
+      const appDefaults = await getPromptDefaults();
+      setRerunPrompt(appDefaults[agentId] ?? def?.systemPrompt ?? '');
       setPromptSaved(false);
     }
   }
@@ -167,11 +248,47 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     if (!rerunAgent || !project) return;
     const def = AGENT_DEFINITIONS[rerunAgent];
     if (!def) return;
+
+    const agentIdToRun = rerunAgent;
+
+    // ── Full restart when re-running Phase 0 (sdlcOrchestrator) ──────────────
+    // Clear all agent runs and review gates, save the (possibly edited) prompt
+    // override, reset project status to draft, then kick off the full pipeline
+    // from scratch so all phases re-run in sequence.
+    if (agentIdToRun === 'sdlcOrchestrator') {
+      setRerunning(true);
+      setRerunError(null);
+      try {
+        await updateProject(projectId, (p) => {
+          // Save the current rerun prompt as the persistent override for this agent
+          const existing = p.promptOverrides.findIndex((o) => o.agentId === 'sdlcOrchestrator');
+          const entry = { agentId: 'sdlcOrchestrator' as AgentId, patch: [] as object[], fullPrompt: rerunPrompt, updatedAt: Date.now() };
+          if (existing >= 0) p.promptOverrides[existing] = entry;
+          else p.promptOverrides.push(entry);
+
+          // Wipe all previous runs and approvals
+          p.agentRuns = {} as typeof p.agentRuns;
+          p.reviewGates = {} as typeof p.reviewGates;
+          p.status = 'draft';
+          p.currentPhase = 'phase0';
+        });
+        setRerunAgent(null);
+        setSelectedAgent(null);
+        setPendingGate(null);
+        // Start the full pipeline from Phase 0
+        startPipeline(undefined);
+      } catch (e) {
+        setRerunError(String(e));
+      } finally {
+        setRerunning(false);
+      }
+      return;
+    }
+
     setRerunning(true);
     setRerunError(null);
 
     try {
-      // Build context same as pipeline engine
       const { DOMAINS } = await import('@/agents/domains');
       const domain = DOMAINS[project.domain];
       const members = project.teamMembers ?? [];
@@ -184,25 +301,36 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         name: m.name, role: m.role,
         agents: assignments.filter((a) => a.memberIds.includes(m.id)).map((a) => a.agentId),
       }));
-      // Prepend domain knowledge if set
       const domainContext = project.domainKnowledge
         ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
         : domain.context;
       const ctx = {
         projectName: project.name, projectDescription: project.description,
         domain: domain.id, domainContext, priorOutputs, teamRoster,
+        brandingGuidelines: project.brandingGuidelines,
       };
 
-      const userPrompt = def.buildUserPrompt(ctx);
-      const resp = await api.callAgent({ systemPrompt: rerunPrompt, userPrompt });
+      const userPromptBase = def.buildUserPrompt(ctx);
+      const userPrompt = rerunUserExtra.trim()
+        ? `${userPromptBase}\n\n---\nAdditional instructions: ${rerunUserExtra.trim()}`
+        : userPromptBase;
+
+      const resp = await api.callAgent({
+        systemPrompt: rerunPrompt,
+        userPrompt,
+        provider: rerunPendingProvider === 'auto' ? undefined : rerunPendingProvider,
+        agentId: agentIdToRun,
+      });
       const output = api.extractText(resp);
 
-      await updateAgentRun(projectId, rerunAgent, {
-        agentId: rerunAgent, status: 'complete', output,
-        tokensUsed: resp.usage?.total_tokens ?? 0, completedAt: Date.now(),
+      await updateAgentRun(projectId, agentIdToRun, {
+        agentId: agentIdToRun, status: 'complete', output,
+        tokensUsed: resp.usage?.total_tokens ?? 0,
+        completedAt: Date.now(),
+        provider: resp.provider,
+        model: resp.model,
       });
 
-      // If this agent lives in a gated phase, reset that gate so it needs re-approval
       const agentPhase = def.phase as PhaseId;
       const coveringGate = gateForPhase(agentPhase);
       if (coveringGate) {
@@ -222,7 +350,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         setPendingGate(coveringGate);
       }
 
-      setSelectedAgent(rerunAgent);
+      setSelectedAgent(agentIdToRun);
       setRerunAgent(null);
     } catch (e) {
       setRerunError(String(e));
@@ -231,7 +359,28 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   }
 
-  if (!project) return <div className={styles.loading}>Loading project...</div>;
+  // Still initialising (first render before useLiveQuery resolves)
+  if (!hasResolved.current) {
+    return (
+      <div className={styles.loading}>
+        <div className={styles.spinner} />
+        <p style={{ color: 'var(--text-muted)', marginTop: 12 }}>Loading project…</p>
+      </div>
+    );
+  }
+  // Resolved but project is undefined — project doesn't exist in this database
+  if (!project) {
+    return (
+      <div className={styles.loading} style={{ flexDirection: 'column', gap: 16 }}>
+        <div style={{ fontSize: 48 }}>🔍</div>
+        <h2 style={{ color: 'var(--text)', margin: 0 }}>Project not found</h2>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+          This project may have been deleted or doesn&apos;t exist on this device.
+        </p>
+        <button className="btn-primary" onClick={onBack}>{'← Back to Dashboard'}</button>
+      </div>
+    );
+  }
 
   const members = project.teamMembers ?? [];
   const isAdmin = !!project.activeAdminId && members.find((m) => m.id === project.activeAdminId)?.isAdmin;
@@ -240,7 +389,6 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const unmappedAgents = allAgentIds.filter(
     (a) => !(assignments.find((x) => x.agentId === a)?.memberIds?.length)
   );
-  // Only one hard requirement: at least one team member. Agent mapping is optional.
   const teamReady = members.length > 0;
   const lockedPhases = getLockedPhases(project);
   const selectedRun = selectedAgent ? project.agentRuns[selectedAgent] : null;
@@ -273,10 +421,38 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   }
 
+  // ── Review & Improve: save enriched prompt and trigger re-run ───────────────
+  async function handleReviewRegenerate(enrichedPrompt: string, _userExtra: string) {
+    if (!selectedAgent || !project) return;
+    // Save as project-level prompt override so it persists
+    await updateProject(projectId, (p) => {
+      const existing = p.promptOverrides.findIndex((o) => o.agentId === selectedAgent);
+      const entry = {
+        agentId: selectedAgent,
+        patch: [] as object[],
+        fullPrompt: enrichedPrompt,
+        updatedAt: Date.now(),
+      };
+      if (existing >= 0) p.promptOverrides[existing] = entry;
+      else p.promptOverrides.push(entry);
+    });
+    setShowReview(false);
+    // Open the re-run panel pre-filled with the enriched prompt
+    setRerunAgent(selectedAgent);
+    setRerunPrompt(enrichedPrompt);
+    setRerunUserExtra('');
+    setPromptSaved(false);
+  }
+
+  // Helpers: avoid backtick string literals inside JSX (causes TSC JSX parse errors)
+  const BACKTICK = String.fromCharCode(96);
+  const hasMermaid = (s?: string | null) => (s ?? '').includes(BACKTICK + BACKTICK + BACKTICK + 'mermaid');
+  const hasHtml    = (s?: string | null) => (s ?? '').includes(BACKTICK + BACKTICK + BACKTICK + 'html');
+
   return (
     <div className={styles.layout}>
       <header className={styles.topbar}>
-        <button className="btn-secondary" onClick={onBack} style={{ fontSize: 12 }}>← Dashboard</button>
+        <button className="btn-secondary" onClick={onBack} style={{ fontSize: 12 }}>&#8592; Dashboard</button>
         <div className={styles.projectInfo}>
           <h2>{project.name}</h2>
           <span className={styles.modeBadge}>{project.mode === 'expert' ? 'Expert' : 'Simple'}</span>
@@ -293,15 +469,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             >
               {project.status === 'draft' ? 'Run Pipeline' :
                project.status === 'paused' ? 'Resume Pipeline' :
-               project.status === 'complete' ? 'Complete ✓' : 'Run Pipeline'}
+               project.status === 'complete' ? 'Complete' : 'Run Pipeline'}
             </button>
           )}
           <button className="btn-secondary" onClick={() => exportPipelineMetricsXlsx(project)} style={{ fontSize: 12 }}>Metrics XLSX</button>
           <button className="btn-secondary" onClick={() => exportTraceabilityCSV(projectId, project.name)} style={{ fontSize: 12 }}>Traceability CSV</button>
           <button className="btn-secondary" onClick={downloadAllArtifacts} disabled={downloadingArtifacts} style={{ fontSize: 12 }}>
-            {downloadingArtifacts ? 'Zipping...' : 'Download All Artifacts'}
+            {downloadingArtifacts ? 'Zipping...' : 'Download All'}
           </button>
-          <button className="btn-secondary" onClick={() => setShowTeamPanel(true)}>⚙ Settings</button>
+          <button className="btn-secondary" onClick={() => setShowTeamPanel(true)}>Settings</button>
           <button className="btn-secondary" onClick={() => updateProject(projectId, (p) => { p.mode = p.mode === 'simple' ? 'expert' : 'simple'; })}>
             {project.mode === 'simple' ? 'Expert Mode' : 'Simple Mode'}
           </button>
@@ -310,8 +486,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
       {!teamReady && (
         <div className={styles.teamRequiredBanner}>
-          <span>⚠ Add at least one team member before running the pipeline.</span>
-          <button className="btn-primary" style={{ fontSize: 12 }} onClick={() => setShowTeamPanel(true)}>Set Up Team →</button>
+          <span>Add at least one team member before running the pipeline.</span>
+          <button className="btn-primary" style={{ fontSize: 12 }} onClick={() => setShowTeamPanel(true)}>Set Up Team</button>
+        </div>
+      )}
+
+      {apiReady === false && (
+        <div className={styles.noKeyBanner}>
+          <span>No API key configured — agents cannot run.</span>
+          <span className={styles.noKeyHint}>Go to Dashboard &#8594; App Settings &#8594; API &amp; Model tab to add your OpenAI or Claude key.</span>
         </div>
       )}
 
@@ -341,10 +524,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             return (
               <div key={phase} className={`${styles.phaseGroup} ${isPhaseGateLocked ? styles.phaseGroupLocked : ''}`}>
                 <div className={styles.phaseHeader}>
-                  <span className={styles.phaseLabel}>{PHASE_LABELS[phase]}</span>
+                  <span className={styles.phaseHeaderText}>
+                    <span className={styles.phaseLabel}>{PHASE_LABELS[phase]}</span>
+                    {PHASE_SDLC_STAGE[phase] && (
+                      <span className={styles.phaseStage}>{PHASE_SDLC_STAGE[phase]}</span>
+                    )}
+                  </span>
                   {isPhaseGateLocked
-                    ? <span className={styles.phaseLockIcon}>🔒</span>
-                    : allComplete && <span style={{ color: 'var(--success)', fontSize: 12 }}>✓</span>}
+                    ? <span className={styles.phaseLockIcon}>&#x1F512;</span>
+                    : allComplete && <span style={{ color: 'var(--success)', fontSize: 12 }}>&#x2713;</span>}
                 </div>
                 {isPhaseGateLocked && (
                   <div className={styles.phaseLockedHint}>
@@ -356,7 +544,6 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   const def = AGENT_DEFINITIONS[agentId];
                   const status = run?.status ?? 'idle';
                   const isSelected = selectedAgent === agentId;
-                  const isAgentUnmapped = unmappedAgents.includes(agentId);
                   const hasCustomPrompt = promptOverrideMap.has(agentId);
                   const assignment = project.agentAssignments?.find((a) => a.agentId === agentId);
                   const assignedMembers = assignment
@@ -379,7 +566,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       </span>
                       <span className={styles.agentName}>{def?.name ?? agentId}</span>
                       {hasCustomPrompt && (
-                        <span className={styles.customPromptBadge} title="Custom prompt saved">✏</span>
+                        <span className={styles.customPromptBadge} title="Custom prompt saved">&#x270F;</span>
                       )}
                       <span className={styles.agentAvatars}>
                         {(assignedMembers as any[]).slice(0, 3).map((m: any) => (
@@ -399,9 +586,9 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                     onClick={isActiveGate ? () => setPendingGate(gateAfterThisPhase as ReviewGateId) : undefined}
                     title={isActiveGate ? 'Waiting for approval — click to review' : gateAfterState?.approved ? `Approved${gateApprover ? ` by ${gateApprover.name}` : ''}` : 'Review gate'}
                   >
-                    {isActiveGate ? '⏸ Waiting for your approval' :
-                     gateAfterState?.approved ? `✓ Approved${gateApprover ? ` · ${gateApprover.name}` : ''}` :
-                     '🔒 Review gate'}
+                    {isActiveGate ? 'Waiting for your approval' :
+                     gateAfterState?.approved ? `Approved${gateApprover ? ` by ${gateApprover.name}` : ''}` :
+                     'Review gate'}
                   </div>
                 )}
               </div>
@@ -410,11 +597,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         </aside>
 
         <main className={styles.content}>
-          {/* ── Re-run panel (shown when user clicks Re-run) ── */}
+          {/* ── Re-run panel ── */}
           {rerunAgent && (
             <div className={styles.rerunPanel}>
               <div className={styles.rerunPanelTitle}>
-                ↺ Re-run: {AGENT_DEFINITIONS[rerunAgent]?.name}
+                Re-run: {AGENT_DEFINITIONS[rerunAgent]?.name}
                 {gateForPhase(AGENT_DEFINITIONS[rerunAgent]?.phase as PhaseId) && (
                   <span className={styles.rerunWarning}>
                     {' '}&mdash; Re-running will reset the gate and require re-approval.
@@ -422,14 +609,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 )}
               </div>
 
-              {/* Saved-override indicator */}
               {promptOverrideMap.has(rerunAgent) && !promptSaved && (
                 <p className={styles.overrideActive}>
-                  ✏ Using saved custom prompt for this agent.{' '}
-                  <button
-                    className={styles.resetPromptBtn}
-                    onClick={() => resetPromptOverride(rerunAgent)}
-                  >
+                  Using saved custom prompt for this agent.{' '}
+                  <button className={styles.resetPromptBtn} onClick={() => resetPromptOverride(rerunAgent)}>
                     Reset to built-in default
                   </button>
                 </p>
@@ -444,29 +627,27 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 onChange={(e) => { setRerunPrompt(e.target.value); setPromptSaved(false); }}
                 rows={6}
               />
-              {rerunError && <p style={{ fontSize: 12, color: 'var(--error)', margin: 0 }}>⚠ {rerunError}</p>}
-              {promptSaved && <p style={{ fontSize: 12, color: 'var(--success)', margin: 0 }}>✓ Saved as project default. Future runs will use this prompt.</p>}
+              {rerunError && <p style={{ fontSize: 12, color: 'var(--error)', margin: 0 }}>{rerunError}</p>}
+              {promptSaved && <p style={{ fontSize: 12, color: 'var(--success)', margin: 0 }}>Saved as project default.</p>}
               <div className={styles.rerunActions}>
                 <button className="btn-primary" onClick={confirmRerun} disabled={rerunning}>
-                  {rerunning ? '⟳ Running...' : '▶ Confirm Re-run'}
+                  {rerunning ? 'Running...' : 'Confirm Re-run'}
                 </button>
                 <button
                   className={styles.savePromptBtn}
                   onClick={savePromptOverride}
                   disabled={rerunning || promptSaved}
-                  title="Save this prompt as the default for future pipeline runs of this agent"
                 >
-                  {promptSaved ? '✓ Saved' : '💾 Save as project default'}
+                  {promptSaved ? 'Saved' : 'Save as project default'}
                 </button>
                 <button
                   className="btn-secondary"
                   onClick={enhanceRerunPrompt}
                   disabled={rerunning || enhancing || !rerunPrompt.trim()}
-                  title="Use AI to rewrite this prompt for clarity and output quality"
                 >
-                  {enhancing ? '⟳ Enhancing...' : '✨ Enhance prompt'}
+                  {enhancing ? 'Enhancing...' : 'Enhance prompt'}
                 </button>
-                <button className="btn-secondary" onClick={() => { setRerunAgent(null); setRerunError(null); setPromptSaved(false); }} disabled={rerunning}>
+                <button className="btn-secondary" onClick={() => { setRerunAgent(null); setRerunError(null); setPromptSaved(false); setRerunUserExtra(''); setShowAdvanced(false); }} disabled={rerunning}>
                   Cancel
                 </button>
               </div>
@@ -479,34 +660,99 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 <div>
                   <h3>{selectedDef.outputLabel}</h3>
                   <span className={styles.docMeta}>
-                    {selectedRun.tokensUsed ? `${selectedRun.tokensUsed.toLocaleString()} tokens` : ''}
+                    {selectedRun.provider ? `${selectedRun.provider === 'claude' ? 'Claude' : 'OpenAI'}${selectedRun.model ? ` · ${selectedRun.model}` : ''}` : ''}
+                    {selectedRun.tokensUsed ? `${selectedRun.provider ? ' · ' : ''}${selectedRun.tokensUsed.toLocaleString()} tokens` : ''}
                     {selectedRun.completedAt ? ` · ${new Date(selectedRun.completedAt).toLocaleTimeString()}` : ''}
                     {promptOverrideMap.has(selectedAgent!) && (
-                      <span className={styles.docCustomBadge} title="Generated with a custom saved prompt"> · ✏ custom prompt</span>
+                      <span className={styles.docCustomBadge} title="Generated with a custom saved prompt"> · custom prompt</span>
                     )}
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {selectedAgent && DIAGRAM_AGENTS.has(selectedAgent) && hasMermaid(selectedRun.output) && (
+                    <div className={styles.docTabs}>
+                      <button className={`${styles.docTab} ${docViewMode === 'spec' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('spec')}>Spec</button>
+                      <button className={`${styles.docTab} ${docViewMode === 'preview' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('preview')}>Diagrams</button>
+                    </div>
+                  )}
+                  {selectedAgent === 'uxMockups' && hasHtml(selectedRun.output) && (
+                    <div className={styles.docTabs}>
+                      <button className={`${styles.docTab} ${docViewMode === 'spec' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('spec')}>Spec</button>
+                      <button className={`${styles.docTab} ${docViewMode === 'preview' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('preview')}>Preview</button>
+                    </div>
+                  )}
+                  {selectedAgent === 'sdlcOrchestrator' && (selectedRun.output ?? '').length > 100 && (
+                    <div className={styles.docTabs}>
+                      <button className={`${styles.docTab} ${docViewMode === 'spec' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('spec')}>Spec</button>
+                      <button className={`${styles.docTab} ${docViewMode === 'preview' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('preview')}>Pipeline Plan</button>
+                    </div>
+                  )}
+                  {selectedAgent === 'workingPrototype' && (selectedRun.output ?? '').length > 100 && (
+                    <div className={styles.docTabs}>
+                      <button className={`${styles.docTab} ${docViewMode === 'spec' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('spec')}>Spec</button>
+                      <button className={`${styles.docTab} ${docViewMode === 'preview' ? styles.docTabActive : ''}`} onClick={() => setDocViewMode('preview')}>Prototype</button>
+                    </div>
+                  )}
+                  <button
+                    className={`${styles.thinkingBtn} ${docViewMode === 'thinking' ? styles.thinkingBtnActive : ''}`}
+                    onClick={() => setDocViewMode(docViewMode === 'thinking' ? 'spec' : 'thinking')}
+                    title={selectedRun?.l3 ? `L3 trace — ${selectedRun.l3.iterationCount} iterations, ${selectedRun.l3.toolTrace.length} tool calls` : 'Agent execution mode'}
+                  >
+                    Thinking{selectedRun?.l3 ? ` (${selectedRun.l3.iterationCount}i)` : ''}
+                  </button>
                   <button
                     className={styles.rerunBtn}
                     onClick={() => openRerun(selectedAgent!)}
                     title="Re-run this agent with an editable prompt"
                   >
-                    ↺ Re-run
+                    Re-run
+                  </button>
+                  <button
+                    className={`${styles.reviewBtn}${showReview ? ` ${styles.reviewBtnActive}` : ''}`}
+                    onClick={() => { setShowReview((v) => !v); setRerunAgent(null); }}
+                    title="AI-powered gap analysis — get questions to improve this document"
+                  >
+                    ✦ Review
                   </button>
                   <ExportMenu agentId={selectedAgent!} project={project} />
                   {isAdmin && project.githubIntegrationId && (selectedAgent === 'sprintPlanner' || selectedAgent === 'taskBreakdown') && (
                     <button
                       className="btn-secondary"
                       onClick={() => setShowGithubPush(true)}
-                      title="Parse this document into GitHub issues and push them to the connected repo"
                     >
-                      ⇪ Push to GitHub
+                      Push to GitHub
                     </button>
                   )}
                 </div>
               </div>
-              <DocumentViewer markdown={selectedRun.output ?? ''} />
+              {showReview ? (
+                <ReviewImprovePanel
+                  agentId={selectedAgent!}
+                  project={project}
+                  onRegenerate={handleReviewRegenerate}
+                  onClose={() => setShowReview(false)}
+                />
+              ) : docViewMode === 'thinking' ? (
+                <AgentThinkingPanel run={selectedRun} />
+              ) : selectedAgent === 'sdlcOrchestrator' && docViewMode === 'preview' ? (
+                <OrchestratorView
+                  markdown={selectedRun.output ?? ''}
+                  projectId={projectId}
+                  onRunAll={() => startPipeline('phase1')}
+                  isRunning={engineRunning}
+                />
+              ) : selectedAgent === 'workingPrototype' && docViewMode === 'preview' ? (
+                <PrototypeViewer
+                  markdown={selectedRun.output ?? ''}
+                  projectName={project.name}
+                />
+              ) : selectedAgent === 'uxMockups' && docViewMode === 'preview' && hasHtml(selectedRun.output) ? (
+                <MockupPreview markdown={selectedRun.output ?? ''} />
+              ) : selectedAgent && DIAGRAM_AGENTS.has(selectedAgent) && docViewMode === 'preview' && hasMermaid(selectedRun.output) ? (
+                <DiagramPreview markdown={selectedRun.output ?? ''} />
+              ) : (
+                <DocumentViewer markdown={selectedRun.output ?? ''} />
+              )}
               {showGithubPush && selectedAgent && (
                 <GithubPushModal
                   project={project}
@@ -518,23 +764,60 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               )}
             </div>
           ) : selectedRun?.status === 'running' || rerunning ? (
-            <div className={styles.placeholder}>
-              <div className={styles.spinner} />
-              <p>{rerunning ? `Re-running ${selectedDef?.name ?? selectedAgent}...` : `${selectedDef?.name ?? selectedAgent} is running...`}</p>
+            // M-09 fix: content skeleton instead of blank spinner — gives users
+            // visual structure so the wait feels shorter on slow connections.
+            <div className={styles.skeletonWrap} aria-busy="true" aria-label={`${selectedDef?.name ?? selectedAgent} is generating…`}>
+              <div className={styles.skeletonHeader}>
+                <div className={styles.skeletonLine} style={{ width: '60%', height: 22 }} />
+                <div className={styles.skeletonBadge} />
+              </div>
+              {[100, 85, 92, 70, 88].map((w, i) => (
+                <div key={i} className={styles.skeletonLine} style={{ width: `${w}%`, animationDelay: `${i * 0.1}s` }} />
+              ))}
+              <div className={styles.skeletonLine} style={{ width: '40%', marginTop: 16 }} />
+              {[95, 80, 88, 75].map((w, i) => (
+                <div key={i + 5} className={styles.skeletonLine} style={{ width: `${w}%`, animationDelay: `${(i + 5) * 0.1}s` }} />
+              ))}
+              <p className={styles.skeletonLabel}>
+                {rerunning ? `Re-running ${selectedDef?.name ?? selectedAgent}` : `${selectedDef?.name ?? selectedAgent} is generating`}
+                {'…'}&nbsp;
+                <span style={{ opacity: 0.6, fontWeight: 400 }}>
+                  {providerLabel(rerunning ? rerunPendingProvider : selectedRun?.pendingProvider)}
+                </span>
+              </p>
             </div>
           ) : selectedRun?.status === 'error' ? (
             <div className={styles.placeholder} style={{ color: 'var(--error)' }}>
-              <p>⚠ Error: {selectedRun.error}</p>
+              <p>Error: {selectedRun.error}</p>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button className="btn-primary" onClick={() => startPipeline(project.currentPhase)}>Retry Pipeline</button>
-                <button className="btn-secondary" onClick={() => openRerun(selectedAgent!)}>↺ Re-run with edited prompt</button>
+                <button className="btn-secondary" onClick={() => openRerun(selectedAgent!)}>Re-run with edited prompt</button>
               </div>
             </div>
           ) : !rerunAgent ? (
             <div className={styles.placeholder}>
-              <p style={{ color: 'var(--text-muted)' }}>
-                {selectedAgent ? 'Run the pipeline to generate this document.' : 'Select an agent from the left panel.'}
-              </p>
+              {(!!selectedAgent && !!selectedDef) ? (
+                <div>
+                  <p style={{ color: 'var(--text-muted)', marginBottom: 12 }}>This agent has not run yet.</p>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn-primary"
+                      disabled={engineRunning || !teamReady || (apiReady === false)}
+                      onClick={() => { if (selectedDef) startPipeline(selectedDef.phase); }}
+                    >
+                      Run {selectedDef!.name}
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={() => { if (selectedAgent) openRerun(selectedAgent); }}
+                    >
+                      Edit prompt and run
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p style={{ color: 'var(--text-muted)' }}>Select an agent from the left panel.</p>
+              )}
             </div>
           ) : null}
         </main>
@@ -545,27 +828,31 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           gateId={pendingGate}
           project={project}
           onApprove={async (notes, approvedById) => {
+            const gateToNext: Record<string, PhaseId> = {
+              gate1: 'phase2',
+              gate2: 'phase3',
+              gate3: 'phase4',
+              gate5: 'phase6',
+            };
             await updateProject(projectId, (p) => {
               p.reviewGates[pendingGate] = {
-                id: pendingGate, afterPhases: [], approved: true,
-                approvedAt: Date.now(), approvedBy: approvedById, notes,
+                // id and afterPhases satisfy ReviewGate interface; afterPhases not needed post-approval
+                id: pendingGate,
+                afterPhases: [],
+                approved: true,
+                approvedAt: Date.now(),
+                approvedBy: approvedById,
+                notes,
               };
+              p.status = 'running';
             });
+            const nextPhase = gateToNext[pendingGate] as PhaseId | undefined;
             setPendingGate(null);
-            setEngineRunning(true);
-            startPipeline(project.currentPhase);
+            if (nextPhase) startPipeline(nextPhase);
           }}
-          onReject={() => {
-            setPendingGate(null);
-            setEngineRunning(false);
-            updateProject(projectId, (p) => { p.status = 'paused'; });
-          }}
+          onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}
         />
-      )}
-
-      {showTeamPanel && (
-        <ProjectSettings project={project} onClose={() => setShowTeamPanel(false)} />
       )}
     </div>
   );

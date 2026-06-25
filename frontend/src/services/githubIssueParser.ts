@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Parses Sprint Plan / Task Breakdown agent output (free-form markdown) into a
  * list of discrete GitHub issue drafts ({ title, body, labels? }).
  *
@@ -43,6 +47,7 @@ function cleanInlineLabel(line: string): string {
     .replace(/^\d+[.)]\s+/, '')
     .replace(/^\*\*([^*]+)\*\*:?\s*/, '') // "**Task ID: T-101** ..." or "**Title:** ..."
     .replace(/^[A-Za-z][A-Za-z _-]{0,30}:\s*/, '') // "Task ID: ..." / "Title: ..."
+    .replace(/^\*+\s*/, '') // strip any leftover "**" markers (e.g. from "**Title:** ..." after field-prefix strip)
     .trim();
 }
 

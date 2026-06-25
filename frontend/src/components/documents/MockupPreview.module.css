@@ -1,0 +1,344 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/* ── Root: full height column ───────────────────────────────────────────── */
+.docRoot {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Sticky toolbar ──────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-height: 44px;
+}
+
+.toolbarGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbarDivider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.toolbarSpacer {
+  flex: 1;
+}
+
+.toolbarHint {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.toolbarRange {
+  width: 72px;
+  accent-color: var(--primary, #4f46e5);
+  cursor: pointer;
+}
+
+/* Viewport buttons */
+.vpBtn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  white-space: nowrap;
+}
+.vpBtn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+.vpBtnActive {
+  background: var(--primary, #4f46e5);
+  border-color: var(--primary, #4f46e5);
+  color: #fff;
+}
+.vpBtnActive:hover {
+  background: var(--primary, #4f46e5);
+  color: #fff;
+}
+.vpLabel {
+  font-weight: 600;
+}
+
+/* Palette preset dots */
+.paletteBtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.paletteBtn:hover {
+  transform: scale(1.18);
+  box-shadow: 0 0 0 2px var(--border);
+}
+.paletteBtnReset {
+  border: 2px dashed var(--border);
+}
+
+/* Color pickers */
+.colorPicker {
+  width: 28px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Font button + menu */
+.fontBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.fontBtn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.fontMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.14);
+  z-index: 200;
+  min-width: 200px;
+  overflow: hidden;
+}
+.fontOption {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  text-align: left;
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+.fontOption:hover {
+  background: var(--surface2);
+}
+
+/* Reset button */
+.resetBtn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.resetBtn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* ── Document body ───────────────────────────────────────────────────────── */
+.docBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* Article — full width, no centred column cap */
+.article {
+  width: 100%;
+  padding: 20px 24px 48px;
+}
+
+/* Markdown prose sections */
+.mdSection {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.mdSection h1 { font-size: 22px; font-weight: 700; margin: 24px 0 10px; color: var(--text); }
+.mdSection h2 { font-size: 18px; font-weight: 700; margin: 22px 0 8px;  color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.mdSection h3 { font-size: 15px; font-weight: 600; margin: 16px 0 6px;  color: var(--text); }
+.mdSection h4 { font-size: 13px; font-weight: 600; margin: 12px 0 4px;  color: var(--text); }
+.mdSection p, .mdSection ul, .mdSection ol { margin: 0 0 10px; }
+.mdSection ul, .mdSection ol { padding-left: 20px; }
+.mdSection li { margin-bottom: 3px; }
+.mdSection table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+.mdSection td, .mdSection th { padding: 7px 12px; border: 1px solid var(--border); text-align: left; }
+.mdSection th { background: var(--surface2); font-weight: 600; }
+.mdSection code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--surface2); padding: 1px 5px; border-radius: 3px; }
+.mdSection hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.mdSection blockquote { border-left: 3px solid var(--primary, #4f46e5); padding-left: 12px; color: var(--text-muted); margin: 8px 0; }
+.mdSection strong { font-weight: 700; }
+.mdSection em { font-style: italic; }
+
+/* ── HTML frame block ────────────────────────────────────────────────────── */
+.htmlFrame {
+  margin: 24px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.htmlFrameHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 16px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.htmlFrameLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Viewport constraint wrapper — centers the iframe at tablet/mobile widths */
+.htmlFrameViewport {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  background: #e5e7eb;
+  transition: max-width 0.25s ease;
+}
+
+/* The iframe itself — fills full width of its viewport wrapper */
+.htmlFrameIframe {
+  width: 100%;
+  border: none;
+  background: #fff;
+  display: block;
+  flex-shrink: 0;
+  transition: height 0.2s ease;
+}
+
+/* Download button */
+.downloadBtn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.downloadBtn:hover {
+  background: var(--primary, #4f46e5);
+  border-color: var(--primary, #4f46e5);
+  color: #fff;
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+.empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+/* ── Side-by-side 2-up mockup layout ────────────────────────────────────── */
+.sideBySide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidePane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.sidePane:last-child {
+  border-right: none;
+}
+
+.sidePaneLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+/* In side-by-side mode the htmlFrame should fill the pane */
+.sidePane .htmlFrame {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidePane .htmlFrameHeader {
+  border-radius: 0;
+}

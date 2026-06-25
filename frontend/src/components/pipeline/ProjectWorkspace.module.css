@@ -1,3 +1,7 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 .loading {
   display: flex;
   align-items: center;
@@ -75,12 +79,28 @@
   padding: 6px 14px 4px;
 }
 
+.phaseHeaderText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .phaseLabel {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
+}
+
+.phaseStage {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: capitalize;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 .agentRow {
@@ -154,7 +174,7 @@
 
 .content {
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -164,7 +184,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .docHeader {
@@ -185,6 +205,39 @@
 .docMeta {
   font-size: 11px;
   color: var(--text-muted);
+}
+
+/* ── Spec/Preview tab toggle ────────────────────────────────────────────── */
+.docTabs {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-right: 4px;
+}
+
+.docTab {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.docTab:not(:first-child) {
+  border-left: 1px solid var(--border);
+}
+
+.docTab:hover {
+  color: var(--text);
+}
+
+.docTabActive {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-hover);
 }
 
 .placeholder {
@@ -210,6 +263,52 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.skeletonWrap {
+  flex: 1;
+  padding: 32px 40px;
+  overflow: hidden;
+}
+
+.skeletonHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.skeletonBadge {
+  width: 64px;
+  height: 22px;
+  border-radius: 99px;
+  background: linear-gradient(90deg,
+    var(--border) 25%, var(--bg-secondary) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.skeletonLine {
+  height: 14px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  background: linear-gradient(90deg,
+    var(--border) 25%, var(--bg-secondary) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeletonLabel {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* Review gate indicators in sidebar */
@@ -302,6 +401,52 @@
   margin-left: 2px;
 }
 /* ── Re-run panel ────────────────────────────────────────────────────────── */
+.thinkingBtn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.thinkingBtn:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.thinkingBtnActive {
+  background: color-mix(in srgb, var(--accent, #06b6d4) 12%, var(--surface));
+  border-color: var(--accent, #06b6d4);
+  color: var(--accent, #06b6d4);
+  font-weight: 600;
+}
+
+.previewBtn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--primary, #4f46e5);
+  background: transparent;
+  color: var(--primary, #4f46e5);
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+.previewBtn:hover {
+  background: color-mix(in srgb, var(--primary, #4f46e5) 12%, transparent);
+}
+.previewBtnActive {
+  background: var(--primary, #4f46e5);
+  color: #fff;
+  border-color: var(--primary, #4f46e5);
+}
+.previewBtnActive:hover {
+  background: color-mix(in srgb, var(--primary, #4f46e5) 85%, black);
+  color: #fff;
+}
+
 .rerunBtn {
   font-size: 12px;
   padding: 4px 10px;
@@ -349,7 +494,7 @@
   background: var(--surface);
   color: var(--text);
   resize: vertical;
-  min-height: 100px;
+  min-height: 280px;
   box-sizing: border-box;
 }
 .rerunTextarea:focus {
@@ -418,4 +563,48 @@
 .docCustomBadge {
   font-size: 11px;
   color: var(--warning, #f59e0b);
+}
+
+/* ── No API key banner ──────────────────────────────────────────────────────── */
+.noKeyBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 10%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 30%, transparent);
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.noKeyHint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.reviewBtn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #8b5cf6;
+  background: transparent;
+  color: #8b5cf6;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.reviewBtn:hover {
+  background: color-mix(in srgb, #8b5cf6 12%, transparent);
+}
+.reviewBtnActive {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+}
+.reviewBtnActive:hover {
+  opacity: 0.88;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
 }

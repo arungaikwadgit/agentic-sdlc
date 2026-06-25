@@ -1,15 +1,41 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Thin client for the Express proxy (OpenAI-backed).
  * Retries once on JSON parse failure.
  */
 
 const API_URL = import.meta.env.VITE_API_URL ?? '/api';
+// H-05 fix: prefer Supabase JWT over a bundled shared secret.
+// VITE_PROXY_TOKEN is kept only as a fallback for admin-mode (no Supabase session).
 const PROXY_TOKEN = import.meta.env.VITE_PROXY_TOKEN ?? '';
+
+/** Returns the best available auth header for the current session. */
+export async function getAuthHeader(): Promise<Record<string, string>> {
+  try {
+    const { supabase, isSupabaseConfigured } = await import('@/lib/supabase');
+    if (isSupabaseConfigured) {
+      const { data } = await supabase.auth.getSession();
+      const jwt = data?.session?.access_token;
+      if (jwt) return { Authorization: `Bearer ${jwt}` };
+    }
+  } catch { /* supabase unavailable — fall through */ }
+  // Admin-mode or local dev: use the (optional) static token
+  return PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {};
+}
 
 export interface AgentRequest {
   systemPrompt: string;
   userPrompt: string;
   testMode?: boolean;
+  /** Explicit provider override — bypasses per-agent routing hints and the default provider. */
+  provider?: 'openai' | 'claude';
+  /** Used by the backend for per-agent provider routing hints when `provider` is not set. */
+  agentId?: string;
+  /** Optional AbortSignal for request cancellation / timeout (H-06 fix). */
+  signal?: AbortSignal;
 }
 
 // OpenAI chat completion response shape
@@ -19,6 +45,53 @@ export interface AgentResponse {
     finish_reason: string;
   }>;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  /** Echoed back by the proxy: which provider actually served this request. */
+  provider?: 'openai' | 'claude';
+  /** Echoed back by the proxy: which model actually served this request. */
+  model?: string;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+
+/**
+ * Turn a raw HTTP error response (which may be HTML, JSON, or plain text) into
+ * a short, human-readable error string suitable for display in the UI.
+ */
+function parseErrorDetail(status: number, raw: string): string {
+  // 1. Try JSON — structured errors from our own APIs look like { error: "..." }
+  if (raw.trim().startsWith('{')) {
+    try {
+      const json = JSON.parse(raw) as Record<string, unknown>;
+      const msg = (json.error ?? json.message ?? json.detail) as string | undefined;
+      if (typeof msg === 'string' && msg.length > 0) {
+        return `${status}: ${msg}`;
+      }
+    } catch { /* fall through */ }
+  }
+
+  // 2. Strip HTML — Express default error pages, nginx 502s, etc.
+  if (/<[a-z]/i.test(raw)) {
+    // Pull text out of <pre> or <p> tags first (most useful in Express errors)
+    const preMatch = raw.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+    const pMatch   = raw.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+    const candidate = (preMatch?.[1] ?? pMatch?.[1] ?? raw)
+      .replace(/<[^>]+>/g, ' ')           // strip remaining tags
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')              // collapse whitespace
+      .trim()
+      .slice(0, 200);                     // cap length
+    return candidate.length > 0 ? `${status}: ${candidate}` : `HTTP ${status}`;
+  }
+
+  // 3. Plain text — trim and cap
+  const trimmed = raw.trim().slice(0, 200);
+  return trimmed.length > 0 ? `${status}: ${trimmed}` : `HTTP ${status}`;
 }
 
 async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse> {
@@ -26,14 +99,28 @@ async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse>
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Token': PROXY_TOKEN,
+      ...(await getAuthHeader()),
     },
     body: JSON.stringify(req),
+    // H-06 fix: thread through caller-supplied AbortSignal for timeout/cancel support
+    signal: req.signal,
   });
 
+  // 429 Too Many Requests — back off and retry up to 4 times
+  if (res.status === 429 && attempt <= 4) {
+    // Honour Retry-After header if present, otherwise exponential back-off
+    const retryAfter = res.headers.get('Retry-After');
+    const waitMs = retryAfter
+      ? parseFloat(retryAfter) * 1000
+      : Math.min(2000 * 2 ** (attempt - 1), 30_000); // 2s, 4s, 8s, 16s
+    await sleep(waitMs);
+    return callAgent(req, attempt + 1);
+  }
+
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
-    throw new Error(`API error ${res.status}: ${detail}`);
+    const raw = await res.text().catch(() => '');
+    const detail = parseErrorDetail(res.status, raw);
+    throw new Error(detail);
   }
 
   let data: AgentResponse;
@@ -88,66 +175,164 @@ async function enhancePrompt(currentPrompt: string, agentName?: string): Promise
   return text;
 }
 
-/**
- * Ask the model to act as a domain expert and produce a comprehensive,
- * detailed, reusable Domain Knowledge brief for the project's Knowledge tab.
- * This brief is prepended to every agent's system prompt as domain context,
- * so it should be thorough, well-structured, and project-specific (not generic).
- *
- * Note: this calls the standard OpenAI Chat Completions endpoint via the proxy —
- * it does not have live internet access. "Thorough research" here means the
- * model draws deeply on its trained knowledge of the domain, not real-time
- * web lookups.
- *
- * If the current input is sparse, the model is instructed to make explicit,
- * clearly-labeled assumptions (rather than asking back-and-forth questions,
- * which this single-shot UI can't support) and list open questions for the
- * user to confirm/edit at the top of the output.
- */
-async function generateDomainKnowledge(opts: {
-  domainLabel: string;
-  domainTemplate?: string;
-  projectName: string;
-  projectDescription?: string;
-  currentInput?: string;
-}): Promise<string> {
-  const { domainLabel, domainTemplate, projectName, projectDescription, currentInput } = opts;
+// Branding signals extracted from a live site by the backend's /api/fetch-site
+export type LlmProvider = 'openai' | 'claude';
 
-  const metaSystemPrompt = [
-    `You are a senior ${domainLabel} domain consultant and solutions architect with deep, current expertise in this industry's regulations, architecture patterns, integration ecosystems, and operational standards.`,
-    'You are writing a "Domain Knowledge Brief" that will be saved to a software project and prepended to the system prompt of every AI agent (requirements, architecture, design, development, QA) working on that project. It must give those agents enough grounded, specific context to produce domain-correct outputs without further research.',
-    '',
-    'Requirements for your response:',
-    '1. Begin with a section titled "## Assumptions & Open Questions" — a short bullet list of any assumptions you made about the project (target users, scale, geography, regulatory scope, etc.) due to missing information, and any clarifying questions the user should answer to sharpen this brief. If the input is already detailed, keep this section brief or note that no major assumptions were needed.',
-    '2. Then produce the full brief in well-organized markdown with clear ## headings, covering (at minimum, adapted to the project): Project-Specific Context, Key Regulatory & Compliance Requirements, Architecture Considerations, Integration Landscape (named real-world systems/vendors/standards where relevant), Data & Security Considerations, and Non-Functional Requirements (availability, performance, scalability targets).',
-    '3. Be specific and concrete: name real standards, protocols, vendors, and patterns relevant to this domain rather than generic advice. Prefer specifics the user provided over generic domain defaults.',
-    '4. Write it so it remains useful and reusable throughout the project lifecycle — avoid one-off details that would go stale after a single phase.',
-    '5. Output ONLY the markdown brief (starting with the Assumptions & Open Questions section). No commentary, no preamble, no code fences.',
-  ].join('\n');
-
-  const userPromptParts = [
-    `Project name: ${projectName}`,
-    projectDescription ? `Project description: ${projectDescription}` : null,
-    `Domain: ${domainLabel}`,
-    currentInput?.trim()
-      ? `Current draft / notes from the project team (use these as the primary source of truth, expand and structure them):\n"""\n${currentInput.trim()}\n"""`
-      : null,
-    !currentInput?.trim() && domainTemplate
-      ? `No project-specific notes have been entered yet. Here is the generic starter template for this domain — use it only as a structural reference, and replace its generic placeholders with a thorough, project-tailored brief:\n"""\n${domainTemplate}\n"""`
-      : null,
-  ].filter(Boolean);
-
-  const resp = await callAgent({ systemPrompt: metaSystemPrompt, userPrompt: userPromptParts.join('\n\n') });
-  let text = extractText(resp).trim();
-
-  if (text.startsWith('```')) {
-    text = text.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
-  }
-
-  return text;
+export interface ProviderTestResult {
+  ok: boolean;
+  servedBy?: LlmProvider;
+  model?: string;
+  fellBack?: boolean;
+  sample?: string;
+  error?: string;
 }
 
-// Branding signals extracted from a live site by the backend's /api/fetch-site
+/**
+ * Convert a raw error string into a short, user-friendly message — strips
+ * stack traces, internal file paths, and HTML before classifying the error.
+ */
+function friendlyConnectionError(raw: string): string {
+  const stripped = raw
+    .replace(/([A-Z]:\\|\/[a-z]+\/)[\w\\/.\-]+(\.js|\.ts)(:\d+)?(:\d+)?/g, '')
+    .replace(/at\s+\S+\s+\([^)]+\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  const lower = stripped.toLowerCase();
+
+  if (lower.includes('cors') || lower.includes('not allowed'))
+    return "Cannot reach the proxy server. Check that the backend is running and ALLOWED_ORIGINS includes this app\'s URL.";
+  if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('econnrefused'))
+    return 'Network error — the proxy server is not reachable. Make sure it is running on the expected port.';
+  if (lower.includes('401') || lower.includes('unauthorized'))
+    return 'Authentication failed — check that your API key is correct and has not expired.';
+  if (lower.includes('403') || lower.includes('forbidden'))
+    return 'Access denied — your API key does not have permission for this model or endpoint.';
+  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many'))
+    return 'Rate limit reached — too many requests. Wait a moment then try again.';
+  if (lower.includes('500') || lower.includes('internal server'))
+    return 'The proxy server returned an internal error. Check backend logs for details.';
+  if (lower.includes('502') || lower.includes('503') || lower.includes('504'))
+    return 'The server is temporarily unavailable. Try again in a moment.';
+  if (lower.includes('timeout') || lower.includes('aborted') || lower.includes('abort'))
+    return 'The request timed out. The server may be overloaded — try again.';
+  if (lower.includes('json') || lower.includes('parse'))
+    return 'Received an unexpected response from the server. Check that the proxy URL is correct.';
+
+  return stripped.slice(0, 150) || 'Connection failed. Check your settings and try again.';
+}
+
+async function testProviderConnection(provider: LlmProvider): Promise<ProviderTestResult> {
+  try {
+    const resp = await callAgent({
+      systemPrompt: 'You are a connectivity test. Reply with exactly: OK',
+      userPrompt: 'Reply with exactly: OK',
+      provider,
+    });
+    const sample = extractText(resp).trim().slice(0, 120);
+    if (!resp.provider) {
+      return { ok: sample.length > 0, sample, error: sample.length > 0 ? undefined : 'Empty response from proxy.' };
+    }
+    return { ok: true, servedBy: resp.provider as LlmProvider, model: resp.model, fellBack: resp.provider !== provider, sample };
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: friendlyConnectionError(raw) };
+  }
+}
+
+export interface GenerateDomainKnowledgeRequest {
+  domainLabel: string;
+  domainTemplate: string;
+  projectName: string;
+  projectDescription: string;
+  currentInput: string;
+}
+
+async function generateDomainKnowledge(req: GenerateDomainKnowledgeRequest): Promise<string | null> {
+  const systemPrompt =
+    'You are an expert in the ' + req.domainLabel + ' domain. ' +
+    'Your task is to provide a complete, practical, and structured overview of domain knowledge for ' + req.domainLabel + '. ' +
+    'Use plain language but be precise. Assume the reader is new to the domain but technically capable. ' +
+    'If anything is uncertain, state assumptions clearly rather than guessing. ' +
+    'Format your response with ## section headers exactly matching the structure requested. ' +
+    'Be specific and actionable — this knowledge will be injected directly into AI agent prompts ' +
+    'to help them produce accurate, domain-appropriate SDLC documents.';
+
+  const userPrompt = [
+    'Project: ' + req.projectName,
+    'Description: ' + req.projectDescription,
+    'Domain: ' + req.domainLabel,
+    '',
+    'Provide a complete domain knowledge brief covering ALL of the following sections:',
+    '',
+    '## 1. Executive Summary',
+    'A concise 2-3 paragraph overview of the domain.',
+    '',
+    '## 2. Definition and Scope',
+    'What the domain covers, its boundaries, and what is out of scope.',
+    '',
+    '## 3. Core Business Processes and Workflows',
+    'The main end-to-end processes, step by step.',
+    '',
+    '## 4. Key Roles, Stakeholders, and Responsibilities',
+    'Who does what in this domain.',
+    '',
+    '## 5. Important Terminology and Concepts',
+    'Domain-specific language a team member must know.',
+    '',
+    '## 6. Common Systems, Tools, and Integrations',
+    'Typical software, platforms, and third-party services used.',
+    '',
+    '## 7. Standard Data Entities and Business Rules',
+    'Core data objects (e.g. Order, Customer, Invoice) and the rules that govern them.',
+    '',
+    '## 8. Typical Customer / User Journeys',
+    'Key user flows and touchpoints.',
+    '',
+    '## 9. Major Risks, Exceptions, and Edge Cases',
+    'What goes wrong, and how it is handled.',
+    '',
+    '## 10. Industry KPIs, Metrics, and Success Measures',
+    'How performance is measured in this domain.',
+    '',
+    '## 11. Compliance, Security, and Regulatory Considerations',
+    'Laws, standards, certifications, and data protection requirements (if applicable).',
+    '',
+    '## 12. Common Pain Points and Operational Challenges',
+    'Recurring problems teams face in this domain.',
+    '',
+    '## 13. Domain-Specific Best Practices',
+    'What high-performing teams do differently.',
+    '',
+    '## 14. Real-World Use Cases',
+    'Concrete examples of how this domain operates in practice.',
+    '',
+    '## 15. Glossary of Essential Terms',
+    'A table of key terms and their definitions.',
+    '',
+    '## 16. Common Interview Questions and Answers',
+    'A list of Q&A pairs someone should know to demonstrate domain competency.',
+    '',
+    '## 17. Competency Checklist',
+    'A checklist of what someone must know/do to be considered competent in this domain.',
+    '',
+    '## 18. Subdomains and Industry Variants',
+    'Related subdomains, industry-specific variants, and niche areas.',
+    '',
+    '## 19. Common System Failure Scenarios',
+    'Typical failure modes, what causes them, and how they are resolved.',
+    '',
+    '## 20. Questions to Ask Domain Experts',
+    'Validation questions to ask subject-matter experts to fill knowledge gaps.',
+    '',
+    req.currentInput ? ('Existing knowledge to enhance or replace:\n' + req.currentInput) : '',
+  ].filter(s => s !== null).join('\n');
+
+  const resp = await callAgent({ systemPrompt, userPrompt });
+  const text = extractText(resp).trim();
+  return text.length > 0 ? text : null;
+}
+
 export interface SiteBrandingSignals {
   url: string;
   title: string | null;
@@ -172,7 +357,7 @@ async function fetchSiteBranding(url: string): Promise<SiteBrandingSignals> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Token': PROXY_TOKEN,
+      ...(await getAuthHeader()),
     },
     body: JSON.stringify({ url }),
   });
@@ -291,7 +476,7 @@ async function testGithubConnection(params: GithubConnectionParams): Promise<Git
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Token': PROXY_TOKEN,
+      ...(await getAuthHeader()),
     },
     body: JSON.stringify(params),
   });
@@ -337,7 +522,7 @@ async function pushIssuesToGithub(params: GithubConnectionParams & { issues: Git
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Token': PROXY_TOKEN,
+      ...(await getAuthHeader()),
     },
     body: JSON.stringify(params),
   });
@@ -361,6 +546,7 @@ export const api = {
   callAgent,
   extractText,
   enhancePrompt,
+  testProviderConnection,
   generateDomainKnowledge,
   fetchSiteBranding,
   generateBrandingGuidelines,

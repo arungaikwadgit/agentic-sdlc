@@ -8,6 +8,24 @@ import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
 import type { ProjectSummary } from '../../frontend/src/types/project.types';
 
+// ── jsdom's Blob (and therefore File, which extends Blob) does not implement
+// .text() the way real browsers / Node do. Dashboard.tsx's handleExport
+// (new Blob([json]).text() via the test) and handleImport (file.text())
+// both rely on the real Web API, which is correct for production — this is
+// purely a test-environment gap. Polyfill it via FileReader, which jsdom
+// does implement, rather than changing production code to work around a
+// test-runner limitation. ──
+if (typeof Blob.prototype.text !== 'function') {
+  Blob.prototype.text = function (this: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result as string);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsText(this);
+    });
+  };
+}
+
 // ── Mock dexie-react-hooks' useLiveQuery (same pattern as Dashboard-archive.test.tsx) ──
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: (querier: () => Promise<unknown>, deps: unknown[] = []) => {
@@ -37,6 +55,9 @@ const importProjectsMock = vi.fn(async () => 0);
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
+  // Dashboard.tsx calls listVisibleProjects (access-control aware), not
+  // listProjects directly — route it through the same mock/store.
+  listVisibleProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
   deleteProject: (...args: Parameters<typeof deleteProjectMock>) => deleteProjectMock(...args),
   restoreProject: (...args: Parameters<typeof restoreProjectMock>) => restoreProjectMock(...args),
   exportAllProjects: (...args: unknown[]) => exportAllProjectsMock(...(args as [])),

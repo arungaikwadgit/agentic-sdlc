@@ -1,0 +1,328 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/* ── Root ─────────────────────────────────────────────────────────────────── */
+.root {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── L2 notice ───────────────────────────────────────────────────────────── */
+.l2Notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 24px;
+}
+.l2Icon { font-size: 24px; }
+.l2Notice strong { font-size: 14px; color: var(--text); }
+.l2Notice p { font-size: 12px; color: var(--text-muted); margin: 4px 0 0; }
+
+/* ── Full trace container ────────────────────────────────────────────────── */
+.trace {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Section label ───────────────────────────────────────────────────────── */
+.sectionLabel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 0 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+/* ── Goal block ──────────────────────────────────────────────────────────── */
+.goalBlock {
+  background: color-mix(in srgb, var(--primary, #4f46e5) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 25%, transparent);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.goalText {
+  font-size: 13px;
+  color: var(--text);
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+/* ── Stats bar ───────────────────────────────────────────────────────────── */
+.statsBar {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border);
+  background: var(--surface2);
+}
+.stat:last-child { border-right: none; }
+.statNum {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--primary, #4f46e5);
+  font-variant-numeric: tabular-nums;
+}
+.statLabel {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+/* ── Plan block ──────────────────────────────────────────────────────────── */
+.planBlock {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #06b6d4);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+}
+.planHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.planBadge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent, #06b6d4);
+}
+.planTime {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+.planReason {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 6px;
+}
+.planSteps {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.planStep {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+/* ── Timeline ────────────────────────────────────────────────────────────── */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  padding-left: 12px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+}
+.timelineItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+}
+.timelineItem::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary, #4f46e5);
+  border: 2px solid var(--surface);
+}
+
+/* ── Tool call block ─────────────────────────────────────────────────────── */
+.toolBlock {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.toolBlockError {
+  border-color: color-mix(in srgb, var(--error, #ef4444) 40%, transparent);
+}
+.toolHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  cursor: pointer;
+  user-select: none;
+}
+.toolHeader:hover { background: color-mix(in srgb, var(--border) 40%, var(--surface2)); }
+.toolIcon { font-size: 14px; flex-shrink: 0; }
+.toolName {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  flex: 1;
+}
+.toolStep {
+  font-size: 10px;
+  background: var(--primary, #4f46e5);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-weight: 600;
+}
+.toolDuration {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+.toolTime {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+}
+.toolToggle {
+  font-size: 9px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Args row */
+.toolArgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+}
+.toolArg {
+  font-size: 11px;
+  background: color-mix(in srgb, var(--primary, #4f46e5) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 20%, transparent);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.toolArgKey { color: var(--text-muted); font-weight: 600; }
+.toolArgVal { color: var(--text); }
+
+/* Result */
+.toolResult {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.toolResultError { background: color-mix(in srgb, var(--error, #ef4444) 6%, var(--surface)); }
+.toolResultLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.toolResultPre {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* ── Decision block ──────────────────────────────────────────────────────── */
+.decisionBlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.decisionIcon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.decisionBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.decisionType {
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--text);
+  font-size: 11px;
+}
+.decisionRationale { color: var(--text-muted); line-height: 1.4; }
+.decisionConf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.confBar {
+  font-family: monospace;
+  font-size: 9px;
+  color: var(--primary, #4f46e5);
+  letter-spacing: -1px;
+}
+.decisionTime {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ── Final output marker ─────────────────────────────────────────────────── */
+.finalOutput {
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--success, #22c55e) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--success, #22c55e) 30%, transparent);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success, #22c55e);
+}

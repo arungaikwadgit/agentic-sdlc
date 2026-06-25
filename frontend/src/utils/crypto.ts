@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * AES-GCM encryption/decryption using Web Crypto API.
  * Key is derived from a password via PBKDF2 (SHA-256, 100k iterations).
  * Used for storing integration credentials in IndexedDB.
@@ -8,7 +12,7 @@ const PBKDF2_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
 
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(password: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -26,11 +30,12 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   );
 }
 
-function toBase64(buf: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+function toBase64(buf: ArrayBuffer | Uint8Array<ArrayBuffer>): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  return btoa(String.fromCharCode(...bytes));
 }
 
-function fromBase64(str: string): Uint8Array {
+function fromBase64(str: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
 }
 
@@ -42,8 +47,8 @@ export interface EncryptedPayload {
 
 export async function encrypt(plaintext: string, password: string): Promise<EncryptedPayload> {
   const enc = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES)) as Uint8Array<ArrayBuffer>;
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES)) as Uint8Array<ArrayBuffer>;
   const key = await deriveKey(password, salt);
 
   const cipherBuf = await crypto.subtle.encrypt(

@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import type { DomainDefinition, DomainId } from '@/types/domain.types';
 
 export const DOMAINS: Record<DomainId, DomainDefinition> = {

@@ -40,6 +40,7 @@ function setup() {
 async function fillDetailsAndProceed(user: ReturnType<typeof userEvent.setup>, name: string, description: string) {
   await user.type(screen.getByPlaceholderText(/payment processing platform/i), name);
   await user.type(screen.getByPlaceholderText(/describe the project goals/i), description);
+  await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
   const next = screen.getByRole('button', { name: /next: domain knowledge/i });
   await user.click(next);
 }
@@ -64,7 +65,11 @@ describe('NewProjectModal', () => {
     expect(nameInput.value).toBe('');
     expect(descInput.value).toBe('');
 
-    const domainSelect = screen.getByRole('combobox') as HTMLSelectElement;
+    // Multiple selects exist (projectType, priority, domain); find domain select by its default value
+    const domainSelect = screen.getAllByRole('combobox').find(
+      (el) => (el as HTMLSelectElement).value === 'saas'
+    ) as HTMLSelectElement;
+    expect(domainSelect).toBeTruthy();
     expect(domainSelect.value).toBe('saas');
 
     const next = screen.getByRole('button', { name: /next: domain knowledge/i });
@@ -80,7 +85,9 @@ describe('NewProjectModal', () => {
 
     const nameInput = screen.getByPlaceholderText(/payment processing platform/i) as HTMLInputElement;
     const descInput = screen.getByPlaceholderText(/describe the project goals/i) as HTMLTextAreaElement;
-    const domainSelect = screen.getByRole('combobox') as HTMLSelectElement;
+    const domainSelect = screen.getAllByRole('combobox').find(
+      (el) => (el as HTMLSelectElement).querySelector('option[value="fintech"]') !== null
+    ) as HTMLSelectElement;
 
     expect(nameInput.value).toContain('FinPay');
     expect(descInput.value.length).toBeGreaterThan(0);
@@ -99,6 +106,9 @@ describe('NewProjectModal', () => {
     expect(next).toBeDisabled();
 
     await user.type(descInput, 'A description');
+    // Owner is also required — still disabled until owner is filled
+    expect(next).toBeDisabled();
+    await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
     expect(next).not.toBeDisabled();
   });
 
@@ -115,8 +125,10 @@ describe('NewProjectModal', () => {
     expect((textarea as HTMLTextAreaElement).value).toBe('My custom brief');
 
     // Go back to Details and change the domain.
-    await user.click(screen.getByRole('button', { name: /back/i }));
-    const domainSelect = screen.getByRole('combobox') as HTMLSelectElement;
+    await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
+    const domainSelect = screen.getAllByRole('combobox').find(
+      (el) => (el as HTMLSelectElement).querySelector('option[value="healthcare"]') !== null
+    ) as HTMLSelectElement;
     await user.selectOptions(domainSelect, 'healthcare');
 
     // Proceed to Domain Knowledge again — it should now show the
@@ -156,7 +168,7 @@ describe('NewProjectModal', () => {
     await user.type(textarea, 'A custom edited brief');
 
     getEffectiveDomainKnowledgeDefaultMock.mockClear();
-    await user.click(screen.getByRole('button', { name: /back/i }));
+    await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
     await user.click(screen.getByRole('button', { name: /next: domain knowledge/i }));
 
     const textarea2 = await screen.findByPlaceholderText(/describe the domain context/i);
@@ -209,7 +221,13 @@ describe('NewProjectModal', () => {
     expect(createObjectURLSpy).toHaveBeenCalledTimes(1);
     const blobArg = createObjectURLSpy.mock.calls[0][0] as Blob;
     expect(blobArg.type).toBe('text/markdown');
-    const text = await blobArg.text();
+    // jsdom's Blob polyfill doesn't implement .text(), so read via FileReader instead.
+    const text = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsText(blobArg);
+    });
     expect(text).toBe('Edited brief content');
 
     expect(clickSpy).toHaveBeenCalledTimes(1);
@@ -223,7 +241,7 @@ describe('NewProjectModal', () => {
     await fillDetailsAndProceed(user, 'My Project', 'A description');
     await screen.findByPlaceholderText(/describe the domain context/i);
 
-    await user.click(screen.getByRole('button', { name: /back/i }));
+    await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
 
     expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
     const nameInput = screen.getByPlaceholderText(/payment processing platform/i) as HTMLInputElement;
@@ -248,15 +266,17 @@ describe('NewProjectModal', () => {
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledTimes(1);
     });
-    expect(createProjectMock).toHaveBeenCalledWith({
-      name: 'My Project',
-      description: 'A description',
-      domain: 'saas',
-      status: 'draft',
-      mode: 'simple',
-      domainKnowledge: DEFAULT_BY_DOMAIN.saas,
-      brandingGuidelines: undefined,
-    });
+    expect(createProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'My Project',
+        description: 'A description',
+        domain: 'saas',
+        status: 'draft',
+        mode: 'simple',
+        domainKnowledge: DEFAULT_BY_DOMAIN.saas,
+        owner: 'Test Owner',
+      })
+    );
     expect(onCreated).toHaveBeenCalledWith('new-proj-1');
   });
 

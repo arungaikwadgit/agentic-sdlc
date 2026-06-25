@@ -1,0 +1,482 @@
+-- ============================================================================
+-- seed_mock_data.sql
+-- Realistic sample data for the Agentic SDLC Framework.
+-- Run this AFTER 000_full_schema.sql (or 001 + 002 migrations).
+--
+-- What this creates:
+--   - 1 sample project  (FinPulse — a FinTech SaaS)
+--   - 4 team members    (project_owner, editor, reviewer, viewer)
+--   - 12 agent runs     (covering all agents across multiple SDLC phases)
+--   - 4 memory records  (2 project-scoped, 1 domain-shared)
+--   - 2 action_proposals + 1 rollback_log entry
+--   - 5 invite_log entries (full audit trail)
+--
+-- Safe to re-run: uses INSERT … ON CONFLICT DO NOTHING where natural keys exist.
+-- ============================================================================
+
+BEGIN;
+
+-- ── Fixed UUIDs ───────────────────────────────────────────────────────────────
+-- Using hard-coded UUIDs so the seed is deterministic and can be re-run.
+
+-- Project
+\set project_id 'a1b2c3d4-0001-0001-0001-000000000001'
+
+-- Team members
+\set owner_id   'b1b2c3d4-0001-0001-0001-000000000001'   -- Sarah Chen (project_owner)
+\set editor_id  'b1b2c3d4-0001-0001-0001-000000000002'   -- Marcus Webb (editor)
+\set reviewer_id 'b1b2c3d4-0001-0001-0001-000000000003'  -- Priya Sharma (reviewer)
+\set viewer_id  'b1b2c3d4-0001-0001-0001-000000000004'   -- James Okafor (viewer)
+
+-- Agent runs
+\set run_manager     'c1000000-0000-0000-0000-000000000001'
+\set run_research    'c1000000-0000-0000-0000-000000000002'
+\set run_architect   'c1000000-0000-0000-0000-000000000003'
+\set run_datamodel   'c1000000-0000-0000-0000-000000000004'
+\set run_api         'c1000000-0000-0000-0000-000000000005'
+\set run_ux          'c1000000-0000-0000-0000-000000000006'
+\set run_devops      'c1000000-0000-0000-0000-000000000007'
+\set run_security    'c1000000-0000-0000-0000-000000000008'
+\set run_infra       'c1000000-0000-0000-0000-000000000009'
+\set run_observ      'c1000000-0000-0000-0000-000000000010'
+\set run_loganalysis 'c1000000-0000-0000-0000-000000000011'
+\set run_sprint      'c1000000-0000-0000-0000-000000000012'
+
+-- Memory records
+\set mem_req     'd1000000-0000-0000-0000-000000000001'
+\set mem_arch    'd1000000-0000-0000-0000-000000000002'
+\set mem_domain  'd1000000-0000-0000-0000-000000000003'
+
+-- Action proposals
+\set prop_doc    'e1000000-0000-0000-0000-000000000001'
+\set prop_flag   'e1000000-0000-0000-0000-000000000002'
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 1. PROJECT
+-- ═════════════════════════════════════════════════════════════════════════════
+
+INSERT INTO projects (id, name, description, industry, team_size, methodology, created_at, updated_at)
+VALUES (
+    :'project_id',
+    'FinPulse',
+    'AI-powered personal finance dashboard that aggregates bank accounts, credit cards, and investments into a single real-time view with anomaly detection and smart budget recommendations.',
+    'FinTech',
+    '6-20',
+    'Agile',
+    NOW() - INTERVAL '14 days',
+    NOW() - INTERVAL '1 hour'
+)
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 2. TEAM MEMBERS
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Sarah Chen — Project Owner (accepted, no token)
+INSERT INTO team_members (
+    id, project_id, email, name, role, is_admin,
+    app_role, invite_status, invite_token, invited_at, accepted_at, created_at
+) VALUES (
+    :'owner_id', :'project_id',
+    'sarah.chen@finpulse.io', 'Sarah Chen',
+    'admin', TRUE,
+    'project_owner', 'accepted', NULL,
+    NOW() - INTERVAL '14 days', NOW() - INTERVAL '13 days',
+    NOW() - INTERVAL '14 days'
+) ON CONFLICT (id) DO NOTHING;
+
+-- Marcus Webb — Editor (accepted, no token)
+INSERT INTO team_members (
+    id, project_id, email, name, role, is_admin,
+    app_role, invite_status, invite_token, invited_at, accepted_at, created_at
+) VALUES (
+    :'editor_id', :'project_id',
+    'marcus.webb@finpulse.io', 'Marcus Webb',
+    'product_owner', FALSE,
+    'editor', 'accepted', NULL,
+    NOW() - INTERVAL '12 days', NOW() - INTERVAL '11 days',
+    NOW() - INTERVAL '12 days'
+) ON CONFLICT (id) DO NOTHING;
+
+-- Priya Sharma — Reviewer (accepted, no token)
+INSERT INTO team_members (
+    id, project_id, email, name, role, is_admin,
+    app_role, invite_status, invite_token, invited_at, accepted_at, created_at
+) VALUES (
+    :'reviewer_id', :'project_id',
+    'priya.sharma@outlook.com', 'Priya Sharma',
+    'product_owner', FALSE,
+    'reviewer', 'accepted', NULL,
+    NOW() - INTERVAL '10 days', NOW() - INTERVAL '9 days',
+    NOW() - INTERVAL '10 days'
+) ON CONFLICT (id) DO NOTHING;
+
+-- James Okafor — Viewer (invite still pending — shows how a pending invite looks)
+INSERT INTO team_members (
+    id, project_id, email, name, role, is_admin,
+    app_role, invite_status, invite_token, invited_at, accepted_at, created_at
+) VALUES (
+    :'viewer_id', :'project_id',
+    'james.okafor@gmail.com', 'James Okafor',
+    'product_owner', FALSE,
+    'viewer', 'pending', 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+    NOW() - INTERVAL '2 days', NULL,
+    NOW() - INTERVAL '2 days'
+) ON CONFLICT (id) DO NOTHING;
+
+-- Set project active_admin to Sarah
+UPDATE projects
+SET    active_admin_id = :'owner_id'
+WHERE  id = :'project_id'
+  AND  active_admin_id IS NULL;
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 3. AGENT RUNS
+--    Covers all 12 agents so the full pipeline history is visible in the UI.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- ── Phase 0: Manager ─────────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_manager', :'project_id', 'manager', 'succeeded',
+    'openai', 'gpt-4o',
+    'Orchestrate the full SDLC for FinPulse, a FinTech personal finance SaaS.',
+    '["clarify_requirements","delegate_research","delegate_architecture","delegate_data_model","delegate_api_design","delegate_ux","review_outputs","compile_project_plan"]'::jsonb,
+    '{"projectName":"FinPulse","industry":"FinTech","teamSize":"6-20","methodology":"Agile"}'::jsonb,
+    E'## FinPulse — Project Overview\n\n**Goal:** Build an AI-powered personal finance dashboard.\n\n### Key Decisions\n- Tech stack: React 18 + Node.js (Express) + PostgreSQL\n- Auth: OAuth 2.0 via Plaid Link + JWT sessions\n- AI layer: OpenAI GPT-4o for anomaly detection and recommendations\n\n### Delegated Agents\n1. Market Research — ✅ Complete\n2. Architecture Design — ✅ Complete\n3. Data Model — ✅ Complete\n4. API Design — ✅ Complete\n5. UX Mockups — ✅ Complete\n6. DevOps Pipeline — ✅ Complete\n7. Security Review — ✅ Complete\n8. Infrastructure — ✅ Complete\n9. Observability — ✅ Complete\n10. Sprint Planning — ✅ Complete',
+    NOW() - INTERVAL '13 days',
+    NOW() - INTERVAL '13 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '13 days' + INTERVAL '18 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 0: Market Research ──────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_research', :'project_id', 'marketResearch', 'succeeded',
+    'openai', 'gpt-4o',
+    'Analyse the personal finance app market and identify competitive gaps for FinPulse.',
+    '["define_scope","survey_competitors","identify_target_segments","map_feature_gaps","summarise_findings"]'::jsonb,
+    '{"projectName":"FinPulse","industry":"FinTech"}'::jsonb,
+    E'## Market Research Report — FinPulse\n\n### Market Size\nThe global personal finance software market is projected to reach **$1.57 billion by 2027** (CAGR 5.8%).\n\n### Key Competitors\n| Product | MAU | Strength | Gap |\n|---|---|---|---|\n| Mint | 4.5M | Free, established | Shutting down |\n| YNAB | 1.2M | Budgeting depth | No investment view |\n| Monarch Money | 0.5M | Modern UX | Limited AI |\n| Copilot | 0.3M | iOS-first design | No web app |\n\n### Target Segments\n1. **Young professionals (25-35)** — want automated categorisation\n2. **Dual-income families** — need shared budgets\n3. **Freelancers** — irregular income tracking\n\n### Recommended Differentiators\n- Real-time anomaly detection (AI)\n- Unified investment + banking view\n- Plaid-powered open banking integration\n- Proactive "save more" nudges',
+    NOW() - INTERVAL '13 days' + INTERVAL '20 seconds',
+    NOW() - INTERVAL '13 days' + INTERVAL '22 seconds',
+    NOW() - INTERVAL '13 days' + INTERVAL '45 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 1: Architecture ─────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_architect', :'project_id', 'architecture', 'succeeded',
+    'openai', 'gpt-4o',
+    'Design the system architecture for FinPulse.',
+    '["select_stack","design_layers","define_boundaries","produce_c4_diagram","document_decisions"]'::jsonb,
+    '{"projectName":"FinPulse","industry":"FinTech","requirements":"Real-time finance aggregation with AI anomaly detection"}'::jsonb,
+    E'## System Architecture — FinPulse\n\n### Tech Stack\n- **Frontend:** React 18, TypeScript, Vite, TailwindCSS\n- **Backend:** Node.js 20 (Express), TypeScript\n- **Database:** PostgreSQL 16 (primary), Redis 7 (cache/sessions)\n- **AI:** OpenAI GPT-4o via function calling\n- **Auth:** Plaid Link (banking OAuth), JWT (app sessions)\n- **Infra:** Railway (backend + DB), Vercel (frontend)\n\n### C4 Context Diagram\n\n```mermaid\nC4Context\n  title FinPulse — System Context\n  Person(user, "End User", "Views finance dashboard")\n  System(finpulse, "FinPulse", "Personal finance SaaS")\n  System_Ext(plaid, "Plaid API", "Bank account aggregation")\n  System_Ext(openai, "OpenAI API", "AI recommendations")\n  System_Ext(resend, "Resend", "Transactional email")\n  Rel(user, finpulse, "Uses", "HTTPS")\n  Rel(finpulse, plaid, "Fetches transactions", "REST")\n  Rel(finpulse, openai, "Sends context, receives insights", "REST")\n  Rel(finpulse, resend, "Sends alerts and invites", "REST")\n```\n\n### Key Architectural Decisions\n1. **Monorepo** — frontend + backend in one repo for simpler CI\n2. **Stateless API** — all state in Postgres; horizontal scaling is trivial\n3. **Plaid webhooks** — real-time transaction ingestion (no polling)',
+    NOW() - INTERVAL '12 days',
+    NOW() - INTERVAL '12 days' + INTERVAL '3 seconds',
+    NOW() - INTERVAL '12 days' + INTERVAL '32 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 1: Data Model ───────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_datamodel', :'project_id', 'dataModel', 'succeeded',
+    'openai', 'gpt-4o',
+    'Design the PostgreSQL data model for FinPulse.',
+    '["identify_entities","define_relationships","normalise","produce_er_diagram","add_indexes"]'::jsonb,
+    '{"projectName":"FinPulse"}'::jsonb,
+    E'## Data Model — FinPulse\n\n### Entity–Relationship Diagram\n\n```mermaid\nerDiagram\n  users {\n    uuid id PK\n    text email\n    text name\n    timestamptz created_at\n  }\n  plaid_items {\n    uuid id PK\n    uuid user_id FK\n    text access_token\n    text institution_name\n    timestamptz synced_at\n  }\n  accounts {\n    uuid id PK\n    uuid plaid_item_id FK\n    text name\n    text type\n    numeric balance\n  }\n  transactions {\n    uuid id PK\n    uuid account_id FK\n    numeric amount\n    text merchant_name\n    text category\n    date txn_date\n    boolean is_anomaly\n  }\n  budgets {\n    uuid id PK\n    uuid user_id FK\n    text category\n    numeric monthly_limit\n  }\n  insights {\n    uuid id PK\n    uuid user_id FK\n    text type\n    jsonb payload\n    timestamptz created_at\n  }\n  users ||--o{ plaid_items : "connects"\n  plaid_items ||--o{ accounts : "has"\n  accounts ||--o{ transactions : "contains"\n  users ||--o{ budgets : "sets"\n  users ||--o{ insights : "receives"\n```',
+    NOW() - INTERVAL '12 days' + INTERVAL '5 minutes',
+    NOW() - INTERVAL '12 days' + INTERVAL '5 minutes' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '12 days' + INTERVAL '5 minutes' + INTERVAL '28 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 1: API Design ───────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_api', :'project_id', 'apiDesign', 'succeeded',
+    'openai', 'gpt-4o',
+    'Design the REST API for FinPulse.',
+    '["list_resources","define_endpoints","design_auth_flow","produce_sequence_diagram","document_errors"]'::jsonb,
+    '{"projectName":"FinPulse"}'::jsonb,
+    E'## API Design — FinPulse\n\n### Base URL\n`https://api.finpulse.io/v1`\n\n### Auth Flow\n\n```mermaid\nsequenceDiagram\n  participant User\n  participant FE as Frontend\n  participant BE as Backend\n  participant Plaid\n  User->>FE: Click "Connect Bank"\n  FE->>BE: POST /auth/plaid/link-token\n  BE->>Plaid: Create link token\n  Plaid-->>BE: link_token\n  BE-->>FE: { link_token }\n  FE->>Plaid: Open Plaid Link (link_token)\n  Plaid-->>FE: public_token (on success)\n  FE->>BE: POST /auth/plaid/exchange { public_token }\n  BE->>Plaid: Exchange for access_token\n  Plaid-->>BE: access_token + item_id\n  BE->>BE: Store in plaid_items\n  BE-->>FE: { jwt, user }\n```\n\n### Key Endpoints\n| Method | Path | Description |\n|---|---|---|\n| POST | /auth/plaid/link-token | Generate Plaid link token |\n| POST | /auth/plaid/exchange | Exchange public_token for JWT |\n| GET | /accounts | List all connected accounts |\n| GET | /transactions | Paginated transaction list |\n| GET | /transactions/anomalies | AI-detected anomalies |\n| GET | /insights | AI-generated recommendations |\n| POST | /budgets | Create or update a budget |\n| POST | /webhooks/plaid | Receive Plaid transaction updates |',
+    NOW() - INTERVAL '11 days',
+    NOW() - INTERVAL '11 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '11 days' + INTERVAL '35 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 1: UX Mockups ───────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_ux', :'project_id', 'uxMockups', 'succeeded',
+    'openai', 'gpt-4o',
+    'Produce HTML/CSS mockups for the FinPulse dashboard.',
+    '["define_screens","layout_dashboard","design_transaction_list","design_budget_view","apply_brand"]'::jsonb,
+    '{"projectName":"FinPulse","industry":"FinTech"}'::jsonb,
+    E'## UX Mockups — FinPulse\n\n### Dashboard Screen\n\n```html\n<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<title>FinPulse Dashboard</title>\n<style>\n  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Inter, sans-serif; }\n  body { background: #0f172a; color: #e2e8f0; }\n  .nav { display:flex; justify-content:space-between; align-items:center; padding:16px 32px; background:#1e293b; border-bottom:1px solid #334155; }\n  .nav h1 { font-size:20px; font-weight:700; color:#38bdf8; }\n  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; padding:32px; }\n  .card { background:#1e293b; border-radius:12px; padding:24px; border:1px solid #334155; }\n  .card h3 { font-size:13px; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; }\n  .card .value { font-size:28px; font-weight:700; color:#f1f5f9; }\n  .card .delta { font-size:13px; color:#4ade80; margin-top:4px; }\n  .card .delta.neg { color:#f87171; }\n</style>\n</head>\n<body>\n  <nav class="nav"><h1>FinPulse</h1><span>sarah.chen@finpulse.io</span></nav>\n  <div class="grid">\n    <div class="card"><h3>Net Worth</h3><div class="value">$142,830</div><div class="delta">+$3,210 this month</div></div>\n    <div class="card"><h3>Monthly Spend</h3><div class="value">$4,127</div><div class="delta neg">+$340 vs budget</div></div>\n    <div class="card"><h3>Savings Rate</h3><div class="value">23%</div><div class="delta">+2% vs last month</div></div>\n  </div>\n</body>\n</html>\n```',
+    NOW() - INTERVAL '10 days',
+    NOW() - INTERVAL '10 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '10 days' + INTERVAL '40 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 2: DevOps ───────────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_devops', :'project_id', 'devopsEngineer', 'succeeded',
+    'openai', 'gpt-4o',
+    'Design the CI/CD pipeline for FinPulse.',
+    '["select_ci_platform","define_pipeline_stages","configure_secrets","set_deploy_targets","produce_flowchart"]'::jsonb,
+    '{"projectName":"FinPulse"}'::jsonb,
+    E'## DevOps Pipeline — FinPulse\n\n### CI/CD Flow\n\n```mermaid\nflowchart TD\n  A([Push to GitHub]) --> B{Branch?}\n  B -->|feature/*| C[Lint + Unit Tests]\n  B -->|main| D[Lint + Unit Tests]\n  C --> E[PR Review Required]\n  E --> F{Approved?}\n  F -->|No| G([Request Changes])\n  F -->|Yes| D\n  D --> H[Build Docker Image]\n  H --> I[Integration Tests]\n  I --> J{All pass?}\n  J -->|No| K([Notify Slack — fail])\n  J -->|Yes| L[Deploy to Railway Staging]\n  L --> M[Smoke Tests]\n  M --> N{Pass?}\n  N -->|No| O([Rollback + Alert])\n  N -->|Yes| P[Deploy to Railway Production]\n  P --> Q([Notify Slack — success])\n```\n\n### GitHub Actions Stages\n1. **lint** — ESLint + TypeScript check\n2. **test** — Vitest unit + integration\n3. **build** — Docker multi-stage (node:20-alpine)\n4. **deploy-staging** — Railway CLI deploy (on merge to main)\n5. **smoke** — curl health check + DB ping\n6. **deploy-prod** — Railway promote (manual approval gate)',
+    NOW() - INTERVAL '9 days',
+    NOW() - INTERVAL '9 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '9 days' + INTERVAL '30 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 2: Security ─────────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_security', :'project_id', 'securityEngineer', 'succeeded',
+    'openai', 'gpt-4o',
+    'Perform a security review of the FinPulse architecture.',
+    '["threat_model","review_auth","check_data_exposure","pci_dss_gaps","produce_remediation_plan"]'::jsonb,
+    '{"projectName":"FinPulse","industry":"FinTech"}'::jsonb,
+    E'## Security Review — FinPulse\n\n### Threat Model Summary\nFinPulse handles **PII** (email, name) and **financial read access** via Plaid tokens. It does NOT store raw banking credentials.\n\n### Risk Register\n| Risk | Severity | Mitigation |\n|---|---|---|\n| Plaid access_token leaked | Critical | Store encrypted (AES-256), never return to frontend |\n| JWT secret rotation | High | Use RS256 keypair; rotate every 90 days |\n| SQL injection | High | Parameterised queries only (enforced by pg driver) |\n| CORS misconfiguration | Medium | Allowlist exact frontend origin in production |\n| Rate limiting | Medium | express-rate-limit on /auth + /api routes |\n| Secrets in logs | Low | Redact token fields in Winston logger |\n\n### Compliance Notes (PCI DSS Lite)\n- FinPulse does **not** process card payments — full PCI DSS not required\n- Plaid handles all bank credential collection (SAQ-A equivalent scope)\n- Required: TLS 1.2+ enforced, annual penetration test, access logs retained 12 months\n\n### Immediate Actions\n1. Add `helmet` middleware (CSP, HSTS, X-Frame-Options)\n2. Enable Postgres SSL (`ssl: { rejectUnauthorized: true }`)\n3. Rotate all dev secrets before first Railway deploy',
+    NOW() - INTERVAL '8 days',
+    NOW() - INTERVAL '8 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '8 days' + INTERVAL '35 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 2: Infrastructure ───────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_infra', :'project_id', 'infraEngineer', 'succeeded',
+    'openai', 'gpt-4o',
+    'Define cloud infrastructure for FinPulse on Railway + Vercel.',
+    '["select_cloud","size_services","configure_networking","plan_backups","produce_topology"]'::jsonb,
+    '{"projectName":"FinPulse"}'::jsonb,
+    E'## Infrastructure Design — FinPulse\n\n### Cloud Topology\n\n```mermaid\nflowchart LR\n  Users([End Users]) --> CDN[Vercel CDN]\n  CDN --> FE[React SPA\nVercel Edge]\n  FE --> GW[Railway\nExpress API]\n  GW --> DB[(PostgreSQL\nRailway Plugin)]\n  GW --> Cache[(Redis\nRailway Plugin)]\n  GW --> Plaid([Plaid API])\n  GW --> OpenAI([OpenAI API])\n  GW --> Resend([Resend Email])\n  DB --> Backup[(Daily S3\nBackup)]\n```\n\n### Service Sizing (Launch)\n| Service | Plan | vCPU | RAM | Est. Cost/mo |\n|---|---|---|---|---|\n| Express API (Railway) | Starter | 0.5 | 512 MB | $5 |\n| PostgreSQL (Railway) | Starter | shared | 256 MB | $5 |\n| Redis (Railway) | Starter | shared | 256 MB | $5 |\n| Frontend (Vercel) | Hobby | — | — | $0 |\n| **Total** | | | | **~$15/mo** |\n\n### Scaling Triggers\n- API > 80% CPU for 5 min → scale to Hobby plan (1 vCPU / 2 GB RAM)\n- DB connections > 80% limit → enable PgBouncer connection pooling\n- Response p99 > 800ms → add Redis caching layer for `/accounts` + `/insights`',
+    NOW() - INTERVAL '7 days',
+    NOW() - INTERVAL '7 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '7 days' + INTERVAL '28 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 2: Observability ────────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_observ', :'project_id', 'observabilityEngineer', 'succeeded',
+    'openai', 'gpt-4o',
+    'Design the observability stack for FinPulse.',
+    '["select_tools","define_slos","instrument_api","set_alert_thresholds","produce_alerting_diagram"]'::jsonb,
+    '{"projectName":"FinPulse"}'::jsonb,
+    E'## Observability Design — FinPulse\n\n### Tool Stack\n- **Metrics:** Railway built-in metrics + Prometheus (self-hosted later)\n- **Logging:** Winston (structured JSON) → Railway log drain → Axiom\n- **Tracing:** OpenTelemetry SDK → Jaeger (phase 2)\n- **Alerting:** Axiom monitors → PagerDuty (on-call) + Slack (#alerts)\n\n### Service Level Objectives\n| Metric | SLO | Alert threshold |\n|---|---|---|\n| API availability | 99.5% / month | < 99% over 5 min |\n| p99 response time | < 500ms | > 800ms for 3 min |\n| Error rate | < 0.5% | > 2% for 2 min |\n| DB connection pool | < 80% | > 80% for 5 min |\n\n### Alerting Pipeline\n\n```mermaid\nsequenceDiagram\n  participant App as Express API\n  participant Axiom\n  participant PD as PagerDuty\n  participant Dev as On-Call Engineer\n  App->>Axiom: Structured JSON logs (Winston)\n  Axiom->>Axiom: Evaluate monitor rules every 60s\n  Axiom-->>PD: Trigger incident (threshold breached)\n  PD-->>Dev: Page via SMS + app\n  Dev->>App: Investigate + remediate\n  Dev->>PD: Resolve incident\n```',
+    NOW() - INTERVAL '6 days',
+    NOW() - INTERVAL '6 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '6 days' + INTERVAL '32 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 3: Log Analysis (a run that failed — shows error state) ────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, error, created_at, started_at, completed_at
+) VALUES (
+    :'run_loganalysis', :'project_id', 'logAnalysis', 'failed',
+    'openai', 'gpt-4o',
+    'Analyse application logs to detect anomalies in transaction processing.',
+    '["ingest_logs","parse_error_patterns","correlate_events","rank_anomalies","summarise"]'::jsonb,
+    '{"logSource":"railway","since":"24h"}'::jsonb,
+    'Log ingestion failed: no RAILWAY_LOG_DRAIN_URL configured. Set this environment variable to enable log analysis. See the deployment guide Section 4.',
+    NOW() - INTERVAL '3 days',
+    NOW() - INTERVAL '3 days' + INTERVAL '1 second',
+    NOW() - INTERVAL '3 days' + INTERVAL '3 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- ── Phase 3: Sprint Planning ──────────────────────────────────────────────────
+INSERT INTO agent_runs (
+    id, project_id, agent_key, status, provider, model,
+    goal, plan_steps,
+    input_payload, result, created_at, started_at, completed_at
+) VALUES (
+    :'run_sprint', :'project_id', 'sprintPlanning', 'succeeded',
+    'openai', 'gpt-4o',
+    'Create Sprint 1 plan for FinPulse MVP.',
+    '["identify_mvp_scope","estimate_stories","allocate_to_sprint","set_acceptance_criteria","produce_backlog"]'::jsonb,
+    '{"projectName":"FinPulse","sprintLength":14,"teamSize":3}'::jsonb,
+    E'## Sprint 1 Plan — FinPulse MVP\n**Duration:** 14 days | **Team:** 3 engineers\n\n### Sprint Goal\nUsers can connect a bank account via Plaid, see their transaction history, and receive one AI-generated insight.\n\n### Backlog\n| Story | Points | Assignee | Status |\n|---|---|---|---|\n| Project setup (monorepo, CI, Railway deploy) | 3 | Marcus | Done |\n| Plaid Link integration (frontend) | 5 | Marcus | In Progress |\n| /auth/plaid/exchange endpoint | 3 | Sarah | Done |\n| Transaction sync worker (Plaid webhook) | 8 | Sarah | Todo |\n| Dashboard UI — net worth card | 3 | Marcus | Todo |\n| Dashboard UI — transaction list | 5 | Marcus | Todo |\n| GPT-4o anomaly detection service | 8 | Sarah | Todo |\n| E2E smoke test suite | 3 | Priya | Todo |\n| **Total** | **38** | | |\n\n### Definition of Done\n- Feature merged to main with passing CI\n- Manual smoke test on Railway staging\n- Priya has reviewed and approved the PR',
+    NOW() - INTERVAL '5 days',
+    NOW() - INTERVAL '5 days' + INTERVAL '2 seconds',
+    NOW() - INTERVAL '5 days' + INTERVAL '25 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 4. MEMORY RECORDS
+-- ═════════════════════════════════════════════════════════════════════════════
+
+INSERT INTO memory_records (
+    id, project_id, scope, title, content, tags,
+    approved, created_by, created_at, updated_at
+) VALUES (
+    :'mem_req', :'project_id', 'project',
+    'FinPulse — Confirmed Requirements',
+    'Core requirements confirmed in kickoff:
+1. Connect up to 5 bank accounts per user via Plaid (read-only).
+2. AI anomaly detection on transactions above $500 outside normal spending pattern.
+3. Monthly budget by category; alert when 80% consumed.
+4. No card payment processing — Plaid read-only scope only.
+5. GDPR: users can export all data as JSON and request deletion.
+6. Mobile-responsive web app (no native app in v1).',
+    ARRAY['requirements', 'plaid', 'gdpr', 'mvp'],
+    TRUE, :'owner_id',
+    NOW() - INTERVAL '13 days',
+    NOW() - INTERVAL '13 days'
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO memory_records (
+    id, project_id, scope, title, content, tags,
+    approved, created_by, created_at, updated_at
+) VALUES (
+    :'mem_arch', :'project_id', 'project',
+    'Architecture Decision: PostgreSQL over MongoDB',
+    'Decision: Use PostgreSQL (not MongoDB) for all persistent storage.
+Rationale:
+- Transaction data is highly relational (user → accounts → transactions → budgets).
+- Need ACID guarantees for financial data integrity.
+- Railway Postgres plugin is first-class; no additional service needed.
+- Team has stronger SQL expertise.
+Rejected: MongoDB (document model is a poor fit for relational finance data).',
+    ARRAY['architecture', 'database', 'adr', 'postgresql'],
+    TRUE, :'owner_id',
+    NOW() - INTERVAL '12 days',
+    NOW() - INTERVAL '12 days'
+) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO memory_records (
+    id, project_id, scope, domain_id, title, content, tags,
+    approved, approved_by, approved_at, created_by, created_at, updated_at
+) VALUES (
+    :'mem_domain', :'project_id', 'domain_shared', 'fintech-v1',
+    'FinTech Regulatory Baseline (Shared)',
+    'Standard compliance requirements for FinTech SaaS products:
+- GDPR (EU): Data export + deletion endpoint required.
+- CCPA (California): Opt-out of data sale + deletion right.
+- SOC 2 Type II: Required for enterprise customers; plan audit by month 12.
+- PCI DSS: Only required if storing/processing card numbers (FinPulse: not applicable).
+- Open Banking (UK): PSD2 SCA required if serving UK users.
+Shared across all FinTech projects on this framework.',
+    ARRAY['compliance', 'gdpr', 'fintech', 'shared', 'regulatory'],
+    TRUE, :'owner_id',
+    NOW() - INTERVAL '10 days',
+    :'owner_id',
+    NOW() - INTERVAL '10 days',
+    NOW() - INTERVAL '10 days'
+) ON CONFLICT (id) DO NOTHING;
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 5. ACTION PROPOSALS
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Auto-approved low-risk proposal (generate document)
+INSERT INTO action_proposals (
+    id, project_id, agent_run_id,
+    action_type, risk_level, payload, status,
+    decided_by, decided_at, created_at
+) VALUES (
+    :'prop_doc', :'project_id', :'run_security',
+    'generate_document', 'low',
+    '{"document_key":"security_review","title":"FinPulse Security Review v1.0","target_agent":"securityEngineer"}'::jsonb,
+    'auto_approved',
+    NULL,
+    NOW() - INTERVAL '8 days' + INTERVAL '36 seconds',
+    NOW() - INTERVAL '8 days' + INTERVAL '35 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+-- Rollback snapshot for the auto-approved proposal above
+INSERT INTO rollback_log (id, proposal_id, snapshot, created_at)
+VALUES (
+    gen_random_uuid(), :'prop_doc',
+    '{"agent_key":"securityEngineer","output_preview":"## Security Review — FinPulse\n\n### Threat Model Summary\n(previous draft — no PCI DSS section)"}'::jsonb,
+    NOW() - INTERVAL '8 days' + INTERVAL '35 seconds'
+) ON CONFLICT DO NOTHING;
+
+-- High-risk proposal pending human approval (flag for review)
+INSERT INTO action_proposals (
+    id, project_id, agent_run_id,
+    action_type, risk_level, payload, status,
+    decided_by, decided_at, created_at
+) VALUES (
+    :'prop_flag', :'project_id', :'run_loganalysis',
+    'flag_for_review', 'high',
+    '{"reason":"Log analysis agent failed due to missing RAILWAY_LOG_DRAIN_URL. Manual configuration required before this agent can run successfully.","suggested_action":"Add RAILWAY_LOG_DRAIN_URL to Railway environment variables."}'::jsonb,
+    'pending',
+    NULL, NULL,
+    NOW() - INTERVAL '3 days' + INTERVAL '3 seconds'
+) ON CONFLICT (id) DO NOTHING;
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- 6. INVITE LOG (audit trail)
+-- ═════════════════════════════════════════════════════════════════════════════
+
+INSERT INTO invite_log (id, project_id, team_member_id, action, performed_by, created_at)
+VALUES
+    -- Marcus invited and accepted
+    (gen_random_uuid(), :'project_id', :'editor_id',   'sent',     'sarah.chen@finpulse.io', NOW() - INTERVAL '12 days'),
+    (gen_random_uuid(), :'project_id', :'editor_id',   'accepted', 'marcus.webb@finpulse.io', NOW() - INTERVAL '11 days'),
+    -- Priya invited and accepted
+    (gen_random_uuid(), :'project_id', :'reviewer_id', 'sent',     'sarah.chen@finpulse.io', NOW() - INTERVAL '10 days'),
+    (gen_random_uuid(), :'project_id', :'reviewer_id', 'accepted', 'priya.sharma@outlook.com', NOW() - INTERVAL '9 days'),
+    -- James invited (still pending)
+    (gen_random_uuid(), :'project_id', :'viewer_id',   'sent',     'sarah.chen@finpulse.io', NOW() - INTERVAL '2 days');
+
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- Verification queries — run these after seeding to confirm row counts.
+-- ═════════════════════════════════════════════════════════════════════════════
+/*
+SELECT 'projects'       AS tbl, COUNT(*) FROM projects;
+SELECT 'team_members'   AS tbl, COUNT(*) FROM team_members;
+SELECT 'agent_runs'     AS tbl, COUNT(*) FROM agent_runs;
+SELECT 'memory_records' AS tbl, COUNT(*) FROM memory_records;
+SELECT 'action_proposals' AS tbl, COUNT(*) FROM action_proposals;
+SELECT 'rollback_log'   AS tbl, COUNT(*) FROM rollback_log;
+SELECT 'invite_log'     AS tbl, COUNT(*) FROM invite_log;
+*/
+
+COMMIT;
+-- ── End of seed_mock_data.sql ─────────────────────────────────────────────────

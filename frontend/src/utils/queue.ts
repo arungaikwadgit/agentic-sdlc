@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Staggered parallel queue (ADR-002).
  * Starts each parallel agent after a 1.5s delay, max 5 concurrently.
  * This avoids hitting OpenAI / Anthropic rate limits (~50 req/min).

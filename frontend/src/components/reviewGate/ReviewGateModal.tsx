@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useState } from 'react';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getEffectivePromptDefault } from '@/agents/promptDefaults';
@@ -21,9 +25,12 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
 
 const GATE_LABELS: Record<ReviewGateId, string> = {
   gate1: 'Phase 1 Review Gate',
-  gate2_3: 'Phase 2 & 3 Review Gate',
+  gate2: 'Phase 2 Review Gate',
+  gate3: 'Phase 3 & 3B Review Gate',
   gate5: 'Phase 5 Review Gate',
-  gate6: 'Phase 6 Review Gate',
+  // gate6 is unused — phase6 is empty (securityCompliance now lives in phase3b,
+  // covered by gate3). Retained only to satisfy Record<ReviewGateId, string>.
+  gate6: '(Unused) Phase 6 Review Gate',
 };
 
 interface Props {
@@ -84,6 +91,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   const [promptSaved, setPromptSaved] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
 
   const def = AGENT_DEFINITIONS[selectedAgent];
   const run = project.agentRuns[selectedAgent];
@@ -152,12 +160,15 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   async function enhancePromptInSandbox() {
     if (!editedPrompt.trim()) return;
     setEnhancing(true);
+    setEnhanceError(null);
     try {
       const improved = await api.enhancePrompt(editedPrompt, def?.name);
       if (improved) {
         handlePromptChange(improved);
         setPromptSaved(false);
       }
+    } catch (e) {
+      setEnhanceError(`Enhance failed: ${String(e)}`);
     } finally {
       setEnhancing(false);
     }
@@ -219,6 +230,8 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
         status: 'complete',
         output,
         tokensUsed: resp.usage?.total_tokens ?? 0,
+        provider: resp.provider,
+        model: resp.model,
         completedAt: Date.now(),
       });
 
@@ -401,6 +414,11 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                   className={styles.editTextarea}
                   style={{ height: 180 }}
                 />
+                {enhanceError && (
+                  <p style={{ fontSize: 12, color: 'var(--error)', margin: 0 }}>
+                    ⚠ {enhanceError}
+                  </p>
+                )}
                 {promptSaved && (
                   <p style={{ fontSize: 12, color: 'var(--success)', margin: 0 }}>
                     ✓ Saved as project default. Future runs of this agent will use this prompt.

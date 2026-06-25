@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useRef, useState, useCallback } from 'react';
 import { PipelineEngine } from '@/services/pipelineEngine';
 import { updateProject } from '@/db/projectRepository';

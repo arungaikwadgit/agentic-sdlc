@@ -21,6 +21,7 @@ vi.mock('dexie-react-hooks', () => ({
 vi.mock('@/db/database', () => ({
   db: {
     projects: { get: vi.fn() },
+    settings: { get: vi.fn().mockResolvedValue(undefined) },
   },
 }));
 
@@ -33,11 +34,14 @@ vi.mock('@/db/projectRepository', () => ({
 }));
 
 // ── Mock @/services/pipelineEngine ──
+// vi.hoisted ensures runSingleAgentMock is available inside the hoisted vi.mock factory.
+const { runSingleAgentMock } = vi.hoisted(() => ({ runSingleAgentMock: vi.fn() }));
 vi.mock('@/services/pipelineEngine', () => ({
   PipelineEngine: vi.fn().mockImplementation(() => ({
     run: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
   })),
+  runSingleAgent: (...args: unknown[]) => runSingleAgentMock(...args),
 }));
 
 // ── Mock @/services/api ──
@@ -93,7 +97,7 @@ vi.mock('../../frontend/src/components/documents/GithubPushModal', () => ({
 import ProjectWorkspace from '../../frontend/src/components/pipeline/ProjectWorkspace';
 
 const SPRINT_PLANNER_DEF = AGENT_DEFINITIONS.sprintPlanner!; // phase4, no covering gate
-const ARCHITECTURE_DEF = AGENT_DEFINITIONS.architecture!; // phase3, covered by gate2_3
+const ARCHITECTURE_DEF = AGENT_DEFINITIONS.architecture!; // phase3, covered by gate3 (gate3 = [phase3, phase3b])
 
 function baseProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -109,9 +113,10 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     agentRuns: {},
     reviewGates: {
       gate1: { id: 'gate1', approved: true, afterPhases: [] },
-      gate2_3: { id: 'gate2_3', approved: true, afterPhases: [], approvedAt: 5000, approvedBy: 'member-1' },
+      gate2: { id: 'gate2', approved: true, afterPhases: [], approvedAt: 5000, approvedBy: 'member-1' },
+      gate3: { id: 'gate3', approved: true, afterPhases: [], approvedAt: 5000, approvedBy: 'member-1' },
       gate5: { id: 'gate5', approved: true, afterPhases: [] },
-      gate6: { id: 'gate6', approved: true, afterPhases: [] },
+      // gate6 intentionally omitted: phase6 is empty, gate6 never fires
     },
     promptOverrides: [],
     mode: 'expert',
@@ -145,8 +150,27 @@ describe('ProjectWorkspace — re-run flow', () => {
     updateProjectMock.mockClear();
     updateAgentRunMock.mockClear();
     callAgentMock.mockReset();
+    // Default resolved value so ProjectWorkspace's mount-time API-key-check
+    // ping (`api.callAgent({ ..., testMode: true })`) doesn't crash with
+    // "Cannot read properties of undefined (reading 'then')" before each
+    // test's own callAgentMock.mockResolvedValue(...) call takes effect.
+    callAgentMock.mockResolvedValue({ choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'stop' }] });
     extractTextMock.mockReset();
     enhancePromptMock.mockReset();
+    // Default runSingleAgent: call through to mocked api + updateAgentRun
+    runSingleAgentMock.mockReset();
+    runSingleAgentMock.mockImplementation(async (projectId: string, agentId: string, systemPrompt: string) => {
+      const resp = await callAgentMock({ systemPrompt, userPrompt: '', agentId });
+      const output = extractTextMock(resp);
+      const tokensUsed = (resp as any)?.usage?.total_tokens ?? 0;
+      await updateAgentRunMock(projectId, agentId, {
+        agentId,
+        status: 'complete',
+        output,
+        tokensUsed,
+        completedAt: Date.now(),
+      });
+    });
   });
 
   it('opening re-run with no saved override pre-fills the built-in systemPrompt (TS-186)', async () => {
@@ -156,7 +180,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
 
     const textarea = await screen.findByRole('textbox');
     expect((textarea as HTMLTextAreaElement).value).toBe(SPRINT_PLANNER_DEF.systemPrompt);
@@ -173,7 +197,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
 
     const textarea = await screen.findByRole('textbox');
     expect((textarea as HTMLTextAreaElement).value).toBe('MY CUSTOM SAVED PROMPT');
@@ -190,7 +214,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(await screen.findByRole('button', { name: /Reset to built-in default/i }));
 
     expect(updateProjectMock).toHaveBeenCalledWith('proj-1', expect.any(Function));
@@ -210,7 +234,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
 
     const textarea = await screen.findByRole('textbox');
     await user.clear(textarea);
@@ -238,7 +262,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(screen.getByRole('button', { name: /Enhance prompt/i }));
 
     await waitFor(() => {
@@ -257,7 +281,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     const textarea = await screen.findByRole('textbox') as HTMLTextAreaElement;
     const before = textarea.value;
 
@@ -277,7 +301,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
 
     await waitFor(() => {
@@ -316,7 +340,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(ARCHITECTURE_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
 
     // Warning about gate reset should be visible.
     expect(screen.getByText(/Re-running will reset the gate and require re-approval/i)).toBeInTheDocument();
@@ -334,23 +358,23 @@ describe('ProjectWorkspace — re-run flow', () => {
     const mutator = updateProjectMock.mock.calls[updateProjectMock.mock.calls.length - 1][1];
     const draft: any = {
       reviewGates: {
-        gate2_3: { id: 'gate2_3', approved: true, afterPhases: [], approvedAt: 5000, approvedBy: 'member-1' },
+        gate3: { id: 'gate3', approved: true, afterPhases: [], approvedAt: 5000, approvedBy: 'member-1' },
       },
       status: 'paused',
       currentPhase: 'phase4',
     };
     mutator(draft);
 
-    expect(draft.reviewGates.gate2_3.approved).toBe(false);
-    expect(draft.reviewGates.gate2_3.approvedAt).toBeUndefined();
-    expect(draft.reviewGates.gate2_3.approvedBy).toBeUndefined();
-    expect(draft.reviewGates.gate2_3.notes).toMatch(/Re-run of/);
+    expect(draft.reviewGates.gate3.approved).toBe(false);
+    expect(draft.reviewGates.gate3.approvedAt).toBeUndefined();
+    expect(draft.reviewGates.gate3.approvedBy).toBeUndefined();
+    expect(draft.reviewGates.gate3.notes).toMatch(/Re-run of/);
     expect(draft.status).toBe('paused');
     expect(draft.currentPhase).toBe('phase3');
 
     await waitFor(() => {
       const modal = screen.getByTestId('review-gate-modal');
-      expect(modal).toHaveAttribute('data-gate-id', 'gate2_3');
+      expect(modal).toHaveAttribute('data-gate-id', 'gate3');
     });
   });
 
@@ -368,7 +392,10 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    // Clear the mount-time API-key-check ping (api.callAgent({ testMode: true }))
+    // from the call tally — it's unrelated to the rerun action under test.
+    callAgentMock.mockClear();
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
 
     await waitFor(() => expect(callAgentMock).toHaveBeenCalled());
@@ -396,7 +423,10 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    // Clear the mount-time API-key-check ping (api.callAgent({ testMode: true }))
+    // from the call tally — it's unrelated to the rerun action under test.
+    callAgentMock.mockClear();
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
 
     await waitFor(() => expect(callAgentMock).toHaveBeenCalled());
@@ -416,7 +446,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
 
     expect(await screen.findByText(/api boom/i)).toBeInTheDocument();
@@ -433,7 +463,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = await selectAgent(SPRINT_PLANNER_DEF.name);
-    await user.click(await screen.findByRole('button', { name: /↺ Re-run/ }));
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
     expect(await screen.findByRole('textbox')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /Cancel/i }));

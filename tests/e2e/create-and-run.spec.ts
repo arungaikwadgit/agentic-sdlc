@@ -1,6 +1,7 @@
 // tests/e2e/create-and-run.spec.ts (Appendix K3)
 // Playwright E2E — project creation → pipeline run
 import { test, expect } from '@playwright/test';
+import { signIn } from './fixtures/auth';
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
 

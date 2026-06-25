@@ -22,11 +22,14 @@ vi.mock('@/db/database', () => ({
 }));
 
 // ── Mock @/agents/domainKnowledgeTemplates ──
-const FAKE_TEMPLATES: Record<string, string> = {
+// NOTE: vi.mock factories are hoisted above top-level const declarations, so
+// any value referenced inside the factory must itself be created via
+// vi.hoisted() to avoid a "Cannot access before initialization" error.
+const FAKE_TEMPLATES = vi.hoisted<Record<string, string>>(() => ({
   saas: '# SaaS Template',
   fintech: '# FinTech Template',
   healthcare: '# Healthcare Template',
-};
+}));
 vi.mock('@/agents/domainKnowledgeTemplates', () => ({
   DOMAIN_KNOWLEDGE_TEMPLATES: FAKE_TEMPLATES,
 }));

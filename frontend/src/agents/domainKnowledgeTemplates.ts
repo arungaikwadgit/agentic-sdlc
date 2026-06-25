@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Built-in domain knowledge templates.
  * These are editable briefs shown in the project-creation wizard.
  * They supplement (and are prepended to) the concise domain context strings in domains.ts.

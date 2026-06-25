@@ -1,6 +1,7 @@
 // tests/e2e/accessibility.spec.ts (Appendix K4)
 // axe-playwright accessibility scan — zero violations required (DoD item 7)
 import { test, expect } from '@playwright/test';
+import { signIn } from './fixtures/auth';
 import AxeBuilder from '@axe-core/playwright';
 
 const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';

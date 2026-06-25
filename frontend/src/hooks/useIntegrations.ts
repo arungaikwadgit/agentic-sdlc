@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/database';
 import { encrypt, decrypt } from '@/utils/crypto';

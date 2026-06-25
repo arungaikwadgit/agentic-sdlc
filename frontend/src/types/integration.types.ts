@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 export type IntegrationProvider = 'jira' | 'confluence' | 'github' | 'gitlab' | 'slack';
 
 export interface IntegrationCredential {

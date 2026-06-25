@@ -1,9 +1,30 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { useState } from 'react';
 import { createProject } from '@/db/projectRepository';
 import { DOMAINS } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
 import type { DomainId } from '@/types/domain.types';
+import type { ProjectPriority, ProjectType } from '@/types/project.types';
 import styles from './NewProjectModal.module.css';
+
+const PROJECT_TYPES: { value: ProjectType; label: string }[] = [
+  { value: 'web-app', label: 'Web App' },
+  { value: 'mobile-app', label: 'Mobile App' },
+  { value: 'api-backend', label: 'API / Backend' },
+  { value: 'internal-tool', label: 'Internal Tool' },
+  { value: 'data-ml', label: 'Data / ML Pipeline' },
+  { value: 'other', label: 'Other' },
+];
+
+const PRIORITIES: { value: ProjectPriority; label: string }[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'critical', label: 'Critical' },
+];
 
 const PRESETS = [
   {
@@ -49,6 +70,85 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [domainKnowledge, setDomainKnowledge] = useState('');
   const [brandingGuidelines, setBrandingGuidelines] = useState('');
   const [loading, setLoading] = useState(false);
+  // Figma pull state
+  const [showFigmaPull, setShowFigmaPull] = useState(false);
+  const [figmaUrl, setFigmaUrl] = useState('');
+  const [figmaToken, setFigmaToken] = useState('');
+  const [figmaLoading, setFigmaLoading] = useState(false);
+  const [figmaError, setFigmaError] = useState<string | null>(null);
+  const [figmaDone, setFigmaDone] = useState(false);
+
+  // New project metadata fields
+  const [owner, setOwner] = useState('');
+  const [team, setTeam] = useState('');
+  const [projectType, setProjectType] = useState<ProjectType | ''>('');
+  const [priority, setPriority] = useState<ProjectPriority>('medium');
+  const [startDate, setStartDate] = useState('');
+
+  async function pullFigmaStyles() {
+    setFigmaLoading(true);
+    setFigmaError(null);
+    setFigmaDone(false);
+    try {
+      // Extract file key from Figma URL — supports both /file/ and /design/ paths
+      const match = figmaUrl.match(/figma\.com\/(?:file|design)\/([A-Za-z0-9_-]+)/);
+      if (!match) {
+        setFigmaError('Could not parse Figma file key from URL. Use a link like https://www.figma.com/file/ABC123/...');
+        return;
+      }
+      const fileKey = match[1];
+      const API = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+      const { getAuthHeader } = await import('@/services/api');
+      const resp = await fetch(`${API}/figma/styles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({ fileKey, token: figmaToken }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setFigmaError(data.error ?? 'Figma request failed');
+        return;
+      }
+      const { colors, typography } = data as {
+        colors: { name: string; hex: string; opacity: number }[];
+        typography: { name: string; fontFamily: string; fontSize: number | null; fontWeight: number | null }[];
+      };
+      // Format extracted tokens into the branding guidelines textarea
+      const lines: string[] = ['## Figma Design Tokens (auto-imported)'];
+      if (colors.length > 0) {
+        lines.push('\n### Color Palette');
+        for (const c of colors.slice(0, 20)) {
+          lines.push(`- **${c.name}**: ${c.hex}${c.opacity < 100 ? ` (${c.opacity}% opacity)` : ''}`);
+        }
+      }
+      if (typography.length > 0) {
+        lines.push('\n### Typography');
+        const seen = new Set<string>();
+        for (const t of typography) {
+          const key = t.fontFamily;
+          if (!seen.has(key)) {
+            seen.add(key);
+            const detail = [t.fontFamily, t.fontSize ? `${t.fontSize}px` : '', t.fontWeight ? `weight ${t.fontWeight}` : ''].filter(Boolean).join(', ');
+            lines.push(`- **${t.name}**: ${detail}`);
+          }
+        }
+      }
+      setBrandingGuidelines((prev) =>
+        prev.trim() ? prev.trim() + '\n\n' + lines.join('\n') : lines.join('\n')
+      );
+      setFigmaDone(true);
+      setShowFigmaPull(false);
+    } catch (e) {
+      setFigmaError(`Error: ${String(e)}`);
+    } finally {
+      setFigmaLoading(false);
+    }
+  }
+  const [targetEndDate, setTargetEndDate] = useState('');
+  const [techStack, setTechStack] = useState('');
+  const [targetUsers, setTargetUsers] = useState('');
+  const [initialRisks, setInitialRisks] = useState('');
+  const [dateError, setDateError] = useState('');
 
   function applyPreset(preset: typeof PRESETS[0]) {
     setName(preset.name);
@@ -63,7 +163,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   }
 
   async function goToKnowledge() {
-    if (!name.trim() || !description.trim()) return;
+    if (!name.trim() || !description.trim() || !owner.trim() || dateError) return;
     // Pre-fill from the app-level default (or built-in template) if not yet customized
     if (!domainKnowledge) setDomainKnowledge(await getEffectiveDomainKnowledgeDefault(domain));
     setStep('domain-knowledge');
@@ -79,8 +179,18 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  function handleTargetEndDateChange(value: string) {
+    setTargetEndDate(value);
+    if (startDate && value && value < startDate) {
+      setDateError('Target end date must be on or after the start date.');
+    } else {
+      setDateError('');
+    }
+  }
+
   async function handleCreate() {
-    if (!name.trim() || !description.trim()) return;
+    if (!name.trim() || !description.trim() || !owner.trim()) return;
+    if (dateError) return;
     setLoading(true);
     try {
       const project = await createProject({
@@ -91,6 +201,15 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
         mode,
         domainKnowledge: domainKnowledge.trim() || undefined,
         brandingGuidelines: brandingGuidelines.trim() || undefined,
+        owner: owner.trim(),
+        team: team.trim() || undefined,
+        projectType: projectType || undefined,
+        priority,
+        startDate: startDate || undefined,
+        targetEndDate: targetEndDate || undefined,
+        techStack: techStack.trim() || undefined,
+        targetUsers: targetUsers.trim() || undefined,
+        initialRisks: initialRisks.trim() || undefined,
       });
       onCreated(project.id);
     } finally {
@@ -142,7 +261,28 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 maxLength={100}
               />
 
-              <label className={styles.label}>Description *</label>
+              <div className={styles.grid2}>
+                <div>
+                  <label className={styles.label}>Owner *</label>
+                  <input
+                    value={owner}
+                    onChange={(e) => setOwner(e.target.value)}
+                    placeholder="e.g. Jane Doe"
+                    maxLength={100}
+                  />
+                </div>
+                <div>
+                  <label className={styles.label}>Team</label>
+                  <input
+                    value={team}
+                    onChange={(e) => setTeam(e.target.value)}
+                    placeholder="e.g. Platform Squad"
+                    maxLength={100}
+                  />
+                </div>
+              </div>
+
+              <label className={styles.label}>Problem Statement *</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -151,12 +291,92 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 style={{ resize: 'vertical' }}
               />
 
+              <div className={styles.grid2}>
+                <div>
+                  <label className={styles.label}>Project Type</label>
+                  <select value={projectType} onChange={(e) => setProjectType(e.target.value as ProjectType | '')}>
+                    <option value="">Not specified</option>
+                    {PROJECT_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={styles.label}>Priority</label>
+                  <select value={priority} onChange={(e) => setPriority(e.target.value as ProjectPriority)}>
+                    {PRIORITIES.map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className={styles.grid2}>
+                <div>
+                  <label className={styles.label}>Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className={styles.label}>Target End Date</label>
+                  <input
+                    type="date"
+                    value={targetEndDate}
+                    onChange={(e) => handleTargetEndDateChange(e.target.value)}
+                  />
+                  {dateError && <p className={styles.fieldError}>{dateError}</p>}
+                </div>
+              </div>
+
               <label className={styles.label}>Domain</label>
               <select value={domain} onChange={(e) => handleDomainChange(e.target.value as DomainId)}>
                 {Object.values(DOMAINS).map((d) => (
                   <option key={d.id} value={d.id}>{d.label}</option>
                 ))}
               </select>
+              <p className={styles.hint}>
+                <strong>{DOMAINS[domain].label}</strong> — confirm domain-specific obligations during discovery.
+              </p>
+
+              <label className={styles.label}>Tech Stack</label>
+              <select
+                value={techStack}
+                onChange={(e) => setTechStack(e.target.value)}
+                className={styles.select}
+              >
+                <option value="">Select a tech stack…</option>
+                <option value="React + Node/Express + PostgreSQL">React + Node/Express + PostgreSQL</option>
+                <option value="React + Node/Express + MongoDB">React + Node/Express + MongoDB</option>
+                <option value="Next.js + PostgreSQL">Next.js + PostgreSQL</option>
+                <option value="Next.js + MongoDB">Next.js + MongoDB</option>
+                <option value="Vue 3 + Node/Express + PostgreSQL">Vue 3 + Node/Express + PostgreSQL</option>
+                <option value="Vue 3 + FastAPI + PostgreSQL">Vue 3 + FastAPI + PostgreSQL</option>
+                <option value="React + FastAPI + PostgreSQL">React + FastAPI + PostgreSQL</option>
+                <option value="Angular + Node/Express + PostgreSQL">Angular + Node/Express + PostgreSQL</option>
+                <option value="React Native + Node/Express + PostgreSQL">React Native + Node/Express + PostgreSQL</option>
+                <option value="Flutter + FastAPI + PostgreSQL">Flutter + FastAPI + PostgreSQL</option>
+              </select>
+
+              <label className={styles.label}>Target Users</label>
+              <textarea
+                className={styles.formTextarea}
+                value={targetUsers}
+                onChange={(e) => setTargetUsers(e.target.value)}
+                placeholder="Who will use this product day-to-day?"
+                rows={3}
+              />
+
+              <label className={styles.label}>Initial Risks</label>
+              <textarea
+                className={styles.formTextarea}
+                value={initialRisks}
+                onChange={(e) => setInitialRisks(e.target.value)}
+                placeholder="Known risks, dependencies, or open questions"
+                rows={3}
+              />
 
               <label className={styles.label}>Mode</label>
               <div className={styles.modeToggle}>
@@ -179,13 +399,61 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   : 'Simple mode runs the full pipeline automatically with review gates hidden.'}
               </p>
 
-              <label className={styles.label}>Branding Guidelines (optional)</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label className={styles.label} style={{ margin: 0 }}>Branding Guidelines (optional)</label>
+                <button
+                  type="button"
+                  style={{
+                    fontSize: 11, background: 'none', border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius)', padding: '2px 8px', cursor: 'pointer',
+                    color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                  onClick={() => { setShowFigmaPull((v) => !v); setFigmaError(null); }}
+                >
+                  🎨 Pull from Figma
+                </button>
+              </div>
+              {showFigmaPull && (
+                <div style={{
+                  background: 'var(--surface2)', border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: 8,
+                }}>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+                    Paste your Figma file URL and a personal access token to import color styles and typography automatically.
+                    <a href="https://www.figma.com/developers/api#access-tokens" target="_blank" rel="noreferrer"
+                      style={{ color: 'var(--accent)', marginLeft: 4 }}>How to get a token ↗</a>
+                  </p>
+                  <input
+                    style={{ width: '100%', marginBottom: 6, padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 12 }}
+                    placeholder="https://www.figma.com/file/ABC123/My-Design-File"
+                    value={figmaUrl}
+                    onChange={(e) => setFigmaUrl(e.target.value)}
+                  />
+                  <input
+                    type="password"
+                    style={{ width: '100%', marginBottom: 8, padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 12 }}
+                    placeholder="Personal Access Token (figd_...)"
+                    value={figmaToken}
+                    onChange={(e) => setFigmaToken(e.target.value)}
+                  />
+                  {figmaError && <p style={{ fontSize: 11, color: 'var(--error)', margin: '0 0 6px' }}>⚠ {figmaError}</p>}
+                  {figmaDone && <p style={{ fontSize: 11, color: 'var(--success)', margin: '0 0 6px' }}>✓ Tokens imported into Branding Guidelines.</p>}
+                  <button
+                    className="btn-primary"
+                    style={{ fontSize: 12 }}
+                    onClick={pullFigmaStyles}
+                    disabled={figmaLoading || !figmaUrl.trim() || !figmaToken.trim()}
+                  >
+                    {figmaLoading ? '⟳ Importing…' : '⇩ Import tokens'}
+                  </button>
+                </div>
+              )}
               <textarea
+                className={styles.formTextarea}
                 value={brandingGuidelines}
                 onChange={(e) => setBrandingGuidelines(e.target.value)}
                 placeholder="Brand colors, typography, tone of voice, logo/style references... Used by the UX Mockups agent to tailor design concepts. Leave blank to use domain/industry defaults."
                 rows={4}
-                style={{ resize: 'vertical' }}
               />
               <p className={styles.hint}>
                 You can add or edit this later in the project's Settings tab.
@@ -197,7 +465,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <button
                 className="btn-primary"
                 onClick={goToKnowledge}
-                disabled={!name.trim() || !description.trim()}
+                disabled={!name.trim() || !description.trim() || !owner.trim() || !!dateError}
               >
                 Next: Domain Knowledge →
               </button>
@@ -232,7 +500,6 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
               <div className={styles.knowledgeActions}>
                 <button
-                  className="btn-secondary"
                   onClick={async () => setDomainKnowledge(await getEffectiveDomainKnowledgeDefault(domain))}
                   style={{ fontSize: 12 }}
                 >

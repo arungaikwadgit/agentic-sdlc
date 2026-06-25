@@ -17,6 +17,39 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
 const PROXY_TOKEN    = process.env.PROXY_TOKEN ?? '';
 
+// H-05 fix: Supabase JWT verification as the primary auth mechanism.
+// The frontend sends its Supabase session JWT as Authorization: Bearer <jwt>.
+// This means VITE_PROXY_TOKEN no longer needs to be bundled in the frontend.
+// PROXY_TOKEN remains as a fallback for admin-mode / server-to-server callers.
+const SUPABASE_URL     = process.env.SUPABASE_URL ?? '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
+let _supabaseClient = null;
+function getSupabase() {
+  if (_supabaseClient) return _supabaseClient;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    _supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return _supabaseClient;
+  } catch { return null; }
+}
+
+// Anthropic (Claude) — optional second provider
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
+const ANTHROPIC_MODEL   = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
+const ANTHROPIC_ENABLED = String(process.env.ANTHROPIC_ENABLED ?? '').toLowerCase() === 'true' && !!ANTHROPIC_API_KEY;
+const DEFAULT_LLM_PROVIDER = (process.env.DEFAULT_LLM_PROVIDER ?? 'openai').toLowerCase() === 'claude' ? 'claude' : 'openai';
+
+// Per-agent provider routing hints (agentId -> 'openai' | 'claude').
+// Falls back to DEFAULT_LLM_PROVIDER for any agent not listed here.
+// Example default: UX-related agents route to Claude when Claude is enabled.
+let AGENT_PROVIDER_MAP = {};
+try {
+  AGENT_PROVIDER_MAP = JSON.parse(process.env.AGENT_PROVIDER_MAP ?? '{}');
+} catch {
+  AGENT_PROVIDER_MAP = {};
+}
+
 // Corporate proxy — read from env or backend/.env
 const CORP_PROXY =
   process.env.HTTPS_PROXY ||
@@ -33,15 +66,55 @@ if (!OPENAI_API_KEY) {
 if (CORP_PROXY) console.log('Corporate proxy detected:', CORP_PROXY);
 
 // ── Middleware ────────────────────────────────────────────────────────────────
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '2mb' }));
+// C-02 fix: restrict CORS to an explicit allowlist instead of wildcard '*'.
+// Set ALLOWED_ORIGINS as a comma-separated list in your environment, e.g.:
+//   ALLOWED_ORIGINS=https://your-app.vercel.app,http://localhost:5173
+// In development (no ALLOWED_ORIGINS set), localhost origins are permitted automatically.
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : process.env.NODE_ENV === 'production'
+    ? []  // production with no explicit list = deny all (fail secure)
+    : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000'];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow server-to-server calls (no Origin header) and configured origins
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  credentials: true,
+}));
+app.use(express.json({ limit: '10mb' }));
 app.use('/api', rateLimit({ windowMs: 60_000, max: 120 }));
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-function checkToken(req, res, next) {
-  if (!PROXY_TOKEN) return next();
-  if (req.headers['x-api-token'] !== PROXY_TOKEN)
-    return res.status(401).json({ error: 'Unauthorized' });
+async function checkToken(req, res, next) {
+  // Path 1: Supabase JWT (preferred — frontend sends session token, not a bundled secret)
+  const authHeader = req.headers['authorization'] ?? '';
+  if (authHeader.startsWith('Bearer ')) {
+    const jwt = authHeader.slice(7);
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase.auth.getUser(jwt);
+      if (!error && data?.user) return next();
+      // JWT present but invalid — reject immediately, don't fall through
+      return res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
+    }
+    // Supabase not configured — treat as admin-mode JWT-less call, fall through
+  }
+
+  // Path 2: Shared secret (PROXY_TOKEN) — used by admin-mode and server-to-server calls.
+  // If neither SUPABASE_URL nor PROXY_TOKEN is set, allow (local dev with no auth configured).
+  if (!PROXY_TOKEN && !SUPABASE_URL) return next();
+  if (PROXY_TOKEN && req.headers['x-api-token'] === PROXY_TOKEN) return next();
+  // If we have Supabase configured but no valid JWT arrived, reject
+  if (SUPABASE_URL && !req.headers['authorization']) {
+    return res.status(401).json({ error: 'Authentication required. Please sign in.' });
+  }
+  // PROXY_TOKEN set but header missing or wrong
+  if (PROXY_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
 
@@ -125,24 +198,74 @@ function httpsPost(urlStr, headers, body) {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', model: OPENAI_MODEL, proxy: CORP_PROXY || null, ts: Date.now() });
+  res.json({
+    status: 'ok',
+    model: OPENAI_MODEL,
+    claudeEnabled: ANTHROPIC_ENABLED,
+    claudeModel: ANTHROPIC_ENABLED ? ANTHROPIC_MODEL : null,
+    defaultProvider: DEFAULT_LLM_PROVIDER,
+    proxy: CORP_PROXY || null,
+    ts: Date.now(),
+  });
 });
 
-// ── Agent ─────────────────────────────────────────────────────────────────────
-app.post('/api/agent', checkToken, async (req, res) => {
-  const { systemPrompt, userPrompt, testMode } = req.body ?? {};
+// ── Provider resolution ──────────────────────────────────────────────────────
+// Resolution order: explicit request `provider` -> per-agent routing hint
+// (AGENT_PROVIDER_MAP) -> DEFAULT_LLM_PROVIDER. Falls back to 'openai' if
+// Claude is requested/hinted but not enabled (missing key or disabled flag).
+function resolveProvider(requestedProvider, agentId) {
+  let provider = DEFAULT_LLM_PROVIDER;
 
-  if (!systemPrompt || !userPrompt)
-    return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
-
-  // Test mode — no OpenAI call
-  if (testMode) {
-    return res.json({
-      choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    });
+  if (agentId && AGENT_PROVIDER_MAP[agentId]) {
+    provider = AGENT_PROVIDER_MAP[agentId];
   }
 
+  if (requestedProvider === 'openai' || requestedProvider === 'claude') {
+    provider = requestedProvider;
+  }
+
+  if (provider === 'claude' && !ANTHROPIC_ENABLED) {
+    provider = 'openai';
+  }
+
+  return provider;
+}
+
+// Normalize an OpenAI-shaped response into our common shape.
+function fromOpenAiResponse(data) {
+  return {
+    choices: data.choices,
+    usage: data.usage,
+  };
+}
+
+// Normalize an Anthropic Messages API response into the OpenAI-shaped
+// `{ choices: [...], usage: {...} }` contract the frontend already expects.
+function fromAnthropicResponse(data) {
+  const text = (data.content || [])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('');
+
+  const promptTokens     = data.usage?.input_tokens ?? 0;
+  const completionTokens = data.usage?.output_tokens ?? 0;
+
+  return {
+    choices: [
+      {
+        message: { role: 'assistant', content: text },
+        finish_reason: data.stop_reason ?? 'stop',
+      },
+    ],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  };
+}
+
+async function callOpenAi(systemPrompt, userPrompt) {
   const requestBody = JSON.stringify({
     model:    OPENAI_MODEL,
     messages: [
@@ -150,36 +273,134 @@ app.post('/api/agent', checkToken, async (req, res) => {
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.4,
-    max_tokens:  4096,
+    max_tokens:  8192,
   });
 
+  const { status, body } = await httpsPost(
+    'https://api.openai.com/v1/chat/completions',
+    {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${OPENAI_API_KEY}`,
+    },
+    requestBody,
+  );
+
+  if (status < 200 || status >= 300) {
+    console.error(`OpenAI ${status}:`, body.slice(0, 300));
+    throw Object.assign(new Error(`OpenAI error ${status}: ${body.slice(0, 200)}`), { status });
+  }
+
+  let data;
   try {
-    const { status, body } = await httpsPost(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      requestBody,
+    data = JSON.parse(body);
+  } catch {
+    throw Object.assign(new Error('Invalid JSON from OpenAI'), { status: 502, raw: body.slice(0, 200) });
+  }
+
+  return fromOpenAiResponse(data);
+}
+
+async function callClaude(systemPrompt, userPrompt) {
+  const requestBody = JSON.stringify({
+    model:      ANTHROPIC_MODEL,
+    system:     systemPrompt,
+    messages:   [{ role: 'user', content: userPrompt }],
+    max_tokens: 8192,
+    temperature: 0.4,
+  });
+
+  const { status, body } = await httpsPost(
+    'https://api.anthropic.com/v1/messages',
+    {
+      'Content-Type':      'application/json',
+      'x-api-key':         ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    requestBody,
+  );
+
+  if (status < 200 || status >= 300) {
+    console.error(`Anthropic ${status}:`, body.slice(0, 300));
+    throw Object.assign(new Error(`Anthropic error ${status}: ${body.slice(0, 200)}`), { status });
+  }
+
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw Object.assign(new Error('Invalid JSON from Anthropic'), { status: 502, raw: body.slice(0, 200) });
+  }
+
+  return fromAnthropicResponse(data);
+}
+
+// ── Rate-limit retry helper ───────────────────────────────────────────────────
+// Retries the given async fn up to maxAttempts on 429, with exponential backoff.
+// Parses "Please try again in Xs" from the OpenAI error body when available.
+async function withRetry(fn, maxAttempts = 4) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const is429 = err.status === 429 || String(err.message).includes('429');
+      if (!is429 || attempt === maxAttempts) throw err;
+      // Parse suggested wait from OpenAI error body, e.g. "Please try again in 2.5s"
+      const match = String(err.message).match(/try again in (\d+(?:\.\d+)?)(s| second)/i);
+      const waitMs = match
+        ? Math.ceil(parseFloat(match[1])) * 1000 + 500
+        : Math.min(2000 * 2 ** (attempt - 1), 30_000); // 2s, 4s, 8s
+      console.warn(`429 rate limit — waiting ${waitMs}ms before retry ${attempt}/${maxAttempts - 1}`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+}
+
+// ── Agent ─────────────────────────────────────────────────────────────────────
+app.post('/api/agent', checkToken, async (req, res) => {
+  const { systemPrompt, userPrompt, testMode, agentId, provider: requestedProvider } = req.body ?? {};
+
+  if (!systemPrompt || !userPrompt)
+    return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
+
+  // M-05 fix: server-side prompt injection detection — client-side check is bypassable
+  const INJECTION_PATTERNS = [
+    /ignore previous/i, /ignore rules/i, /ignore (all )?instructions/i,
+    /forget your instructions/i, /disregard (all )?previous/i,
+    /you are now/i, /override (your )?system/i, /bypass (the )?filter/i,
+  ];
+  const combinedPrompt = `${systemPrompt} ${userPrompt}`;
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(combinedPrompt)) {
+      return res.status(400).json({ error: 'Request rejected: potential prompt injection detected.' });
+    }
+  }
+
+  const provider = resolveProvider(requestedProvider, agentId);
+  const model = provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL;
+
+  // Test mode — no external call
+  if (testMode) {
+    return res.json({
+      choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      provider,
+      model,
+    });
+  }
+
+  try {
+    const result = await withRetry(() =>
+      provider === 'claude'
+        ? callClaude(systemPrompt, userPrompt)
+        : callOpenAi(systemPrompt, userPrompt)
     );
 
-    if (status < 200 || status >= 300) {
-      console.error(`OpenAI ${status}:`, body.slice(0, 300));
-      return res.status(status).json({ error: `OpenAI error ${status}: ${body.slice(0, 200)}` });
-    }
-
-    let data;
-    try {
-      data = JSON.parse(body);
-    } catch {
-      return res.status(502).json({ error: 'Invalid JSON from OpenAI', raw: body.slice(0, 200) });
-    }
-
-    return res.json(data);
+    return res.json({ ...result, provider, model });
 
   } catch (err) {
     console.error('Proxy error:', err.message);
-    return res.status(502).json({ error: `Connection failed: ${err.message}` });
+    const status = err.status ?? 502;
+    return res.status(status).json({ error: err.message, raw: err.raw });
   }
 });
 
@@ -325,6 +546,110 @@ app.post('/api/fetch-site', checkToken, async (req, res) => {
   }
 });
 
+
+// ── Figma integration ─────────────────────────────────────────────────────────
+// Server-side because Figma REST API does not allow Authorization headers from
+// browser origins (CORS restriction). We proxy the request here.
+function figmaRequest(path, token) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.figma.com',
+        port: 443,
+        path,
+        method: 'GET',
+        headers: {
+          'X-Figma-Token': token,
+          'User-Agent': 'AgenticSDLC/1.0',
+        },
+        timeout: 15_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          let parsed;
+          try { parsed = JSON.parse(data); } catch { parsed = null; }
+          resolve({ status: res.statusCode, body: parsed });
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('Figma request timed out')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// POST /api/figma/styles — fetch color + text styles from a Figma file
+// Body: { fileKey: string, token: string }
+// Returns: { colors: [{name, hex}], typography: [{name, fontFamily, fontSize, fontWeight}] }
+app.post('/api/figma/styles', checkToken, async (req, res) => {
+  const { fileKey, token } = req.body ?? {};
+  if (!fileKey || !token)
+    return res.status(400).json({ error: 'fileKey and token are required' });
+
+  try {
+    const { status, body } = await figmaRequest(`/v1/files/${fileKey}/styles`, token);
+    if (status === 403) return res.status(403).json({ error: 'Invalid Figma token or insufficient permissions' });
+    if (status === 404) return res.status(404).json({ error: 'Figma file not found — check the file key' });
+    if (status < 200 || status >= 300) return res.status(502).json({ error: `Figma API responded with ${status}` });
+
+    const styles = body?.meta?.styles ?? [];
+
+    // Collect node IDs for FILL (color) and TEXT styles
+    const colorNodeIds = styles.filter(s => s.style_type === 'FILL').map(s => s.node_id);
+    const textNodeIds  = styles.filter(s => s.style_type === 'TEXT').map(s => s.node_id);
+    const allNodeIds   = [...colorNodeIds, ...textNodeIds].slice(0, 100); // cap at 100
+
+    if (allNodeIds.length === 0) {
+      return res.json({ colors: [], typography: [], rawStyleCount: styles.length });
+    }
+
+    // Fetch the actual node data to get fill colors and font properties
+    const nodeParam = allNodeIds.join(',');
+    const { status: ns, body: nb } = await figmaRequest(
+      `/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(nodeParam)}`,
+      token,
+    );
+    if (ns < 200 || ns >= 300) return res.status(502).json({ error: `Figma nodes API responded with ${ns}` });
+
+    const nodes = nb?.nodes ?? {};
+
+    const colors = [];
+    const typography = [];
+
+    for (const style of styles) {
+      const node = nodes[style.node_id]?.document;
+      if (!node) continue;
+
+      if (style.style_type === 'FILL') {
+        const fill = node.fills?.[0];
+        if (fill?.type === 'SOLID' && fill.color) {
+          const { r, g, b, a = 1 } = fill.color;
+          const toHex = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+          const hex = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+          colors.push({ name: style.name, hex, opacity: Math.round(a * 100) });
+        }
+      } else if (style.style_type === 'TEXT') {
+        const ts = node.style ?? {};
+        typography.push({
+          name: style.name,
+          fontFamily: ts.fontFamily ?? '',
+          fontSize: ts.fontSize ?? null,
+          fontWeight: ts.fontWeight ?? null,
+          lineHeight: ts.lineHeightPx ?? null,
+          letterSpacing: ts.letterSpacing ?? null,
+        });
+      }
+    }
+
+    return res.json({ colors, typography, rawStyleCount: styles.length });
+  } catch (err) {
+    console.error('figma/styles error:', err.message);
+    return res.status(502).json({ error: `Figma request failed: ${err.message}` });
+  }
+});
+
 // ── GitHub integration ─────────────────────────────────────────────────────────
 // Server-side because the GitHub REST API does not send CORS headers that allow
 // browser-based requests with an Authorization header from arbitrary origins.
@@ -427,12 +752,92 @@ app.post('/api/github/issues', checkToken, async (req, res) => {
   return res.json({ created, total: issues.length, results });
 });
 
-// ── Settings (write backend .env) ─────────────────────────────────────────────
-app.post('/api/settings', checkToken, (req, res) => {
-  const { openaiApiKey, proxyToken, openaiModel } = req.body ?? {};
+// ── Settings (read backend .env) ─────────────────────────────────────────────
+app.get('/api/settings', checkToken, (req, res) => {
   const fs   = require('fs');
   const path = require('path');
   const envPath = path.resolve(__dirname, '../.env');
+
+  try {
+    const lines = fs.existsSync(envPath)
+      ? fs.readFileSync(envPath, 'utf8').split('\n')
+      : [];
+
+    function readKey(key) {
+      const line = lines.find((l) => l.startsWith(key + '='));
+      return line ? line.slice(key.length + 1).trim() : '';
+    }
+
+    const openaiApiKey     = readKey('OPENAI_API_KEY');
+    const openaiModel      = readKey('OPENAI_MODEL');
+    const proxyToken       = readKey('PROXY_TOKEN');
+    const anthropicApiKey  = readKey('ANTHROPIC_API_KEY');
+    const anthropicModel   = readKey('ANTHROPIC_MODEL');
+    const anthropicEnabled = readKey('ANTHROPIC_ENABLED');
+    const defaultLlmProvider = readKey('DEFAULT_LLM_PROVIDER');
+    const agentProviderMapRaw = readKey('AGENT_PROVIDER_MAP');
+    const resendFrom       = readKey('RESEND_FROM');
+    const appUrl           = readKey('APP_URL');
+
+    let agentProviderMap = {};
+    try { agentProviderMap = agentProviderMapRaw ? JSON.parse(agentProviderMapRaw) : {}; } catch (_) {}
+
+    return res.json({
+      openaiApiKey:      openaiApiKey  ? '***' : '',          // never expose raw keys
+      anthropicApiKey:   anthropicApiKey ? '***' : '',
+      proxyToken:        proxyToken    ? '***' : '',
+      openaiModel:       openaiModel   || 'gpt-4o',
+      anthropicModel:    anthropicModel || 'claude-opus-4-5',
+      anthropicEnabled:  anthropicEnabled === 'true',
+      defaultLlmProvider: defaultLlmProvider || 'openai',
+      agentProviderMap,
+      hasOpenaiKey:      !!openaiApiKey,
+      hasAnthropicKey:   !!anthropicApiKey,
+      hasProxyToken:     !!proxyToken,
+      resendFrom,
+      appUrl,
+    });
+  } catch (err) {
+    console.error('Settings read error:', err.message);
+    return res.status(500).json({ error: 'Failed to read settings: ' + err.message });
+  }
+});
+
+// ── Settings (write backend .env) ─────────────────────────────────────────────
+// Values are written verbatim into a `KEY=value` line in backend/.env. Without
+// validation, a value containing a newline lets the caller inject arbitrary
+// extra lines into the file (e.g. a second KEY=VALUE pair, or content that
+// comments out an existing line) — a CRLF/env-injection vector. Reject any
+// field containing \r or \n before writing anything, and lock down the file's
+// permissions afterward since it holds plaintext API keys.
+function rejectsEnvInjection(value) {
+  return typeof value === 'string' && /[\r\n]/.test(value);
+}
+
+app.post('/api/settings', checkToken, (req, res) => {
+  const {
+    openaiApiKey, proxyToken, openaiModel,
+    anthropicApiKey, anthropicModel, anthropicEnabled,
+    defaultLlmProvider, agentProviderMap,
+    resendApiKey, resendFrom, appUrl,
+  } = req.body ?? {};
+  const fs   = require('fs');
+  const path = require('path');
+  const envPath = path.resolve(__dirname, '../.env');
+
+  const stringFields = {
+    openaiApiKey, proxyToken, openaiModel,
+    anthropicApiKey, anthropicModel,
+    defaultLlmProvider, resendApiKey, resendFrom, appUrl,
+  };
+  for (const [field, value] of Object.entries(stringFields)) {
+    if (rejectsEnvInjection(value)) {
+      return res.status(400).json({ error: `${field} cannot contain newline characters` });
+    }
+  }
+  if (agentProviderMap !== undefined && rejectsEnvInjection(JSON.stringify(agentProviderMap))) {
+    return res.status(400).json({ error: 'agentProviderMap cannot contain newline characters' });
+  }
 
   try {
     let lines = [];
@@ -441,7 +846,17 @@ app.post('/api/settings', checkToken, (req, res) => {
     }
 
     function upsert(arr, key, value) {
-      if (!value) return arr;
+      if (value === undefined || value === null || value === '') return arr;
+      const idx = arr.findIndex((l) => l.startsWith(key + '='));
+      const line = key + '=' + value;
+      if (idx >= 0) arr[idx] = line;
+      else arr.push(line);
+      return arr;
+    }
+
+    // upsertFlag writes even when value is false/empty string — used for
+    // booleans and fields that need an explicit "off"/cleared state.
+    function upsertFlag(arr, key, value) {
       const idx = arr.findIndex((l) => l.startsWith(key + '='));
       const line = key + '=' + value;
       if (idx >= 0) arr[idx] = line;
@@ -453,13 +868,283 @@ app.post('/api/settings', checkToken, (req, res) => {
     if (proxyToken)   upsert(lines, 'PROXY_TOKEN', proxyToken);
     if (openaiModel)  upsert(lines, 'OPENAI_MODEL', openaiModel);
 
+    if (anthropicApiKey)            upsert(lines, 'ANTHROPIC_API_KEY', anthropicApiKey);
+    if (anthropicModel)             upsert(lines, 'ANTHROPIC_MODEL', anthropicModel);
+    if (anthropicEnabled !== undefined) upsertFlag(lines, 'ANTHROPIC_ENABLED', anthropicEnabled ? 'true' : 'false');
+    if (defaultLlmProvider)         upsert(lines, 'DEFAULT_LLM_PROVIDER', defaultLlmProvider);
+    if (agentProviderMap)           upsertFlag(lines, 'AGENT_PROVIDER_MAP', JSON.stringify(agentProviderMap));
+
+    // Email / invite settings
+    if (resendApiKey) upsert(lines, 'RESEND_API_KEY', resendApiKey);
+    if (resendFrom)   upsert(lines, 'RESEND_FROM',    resendFrom);
+    if (appUrl)       upsert(lines, 'APP_URL',         appUrl);
+
     fs.writeFileSync(envPath, lines.filter((l) => l.trim()).join('\n') + '\n', 'utf8');
+    // Lock the file to owner read/write only — it holds plaintext API keys.
+    // Best-effort: chmod isn't meaningful on all platforms (e.g. Windows),
+    // so failures here shouldn't block the save.
+    try { fs.chmodSync(envPath, 0o600); } catch { /* not supported on this platform/fs */ }
     return res.json({ ok: true, message: 'Settings saved. Restart the backend for changes to take effect.' });
   } catch (err) {
     console.error('Settings write error:', err.message);
     return res.status(500).json({ error: 'Failed to write settings: ' + err.message });
   }
 });
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INVITE SYSTEM
+// ══════════════════════════════════════════════════════════════════════════════
+// In-memory store for invites (persistent via Postgres when DB is available).
+// Falls back to in-memory map when POSTGRES_URL is not set — suitable for
+// Railway/Render free-tier deployments where the DB is optional at first.
+
+const { Pool } = require('pg');
+const { randomUUID } = require('crypto');
+
+// Resend email client (optional — set RESEND_API_KEY to enable real emails)
+const RESEND_API_KEY   = process.env.RESEND_API_KEY ?? '';
+const RESEND_FROM      = process.env.RESEND_FROM ?? 'noreply@yourdomain.com';
+const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
+
+// In-memory fallback when Postgres is unavailable
+const inviteStore = new Map();
+
+// M-NEW-03 fix: warn loudly at startup if invite tokens will not be persisted.
+// A Railway restart (deploy, OOM, health-check failure) will silently drop all
+// pending invites when running without a database.
+if (!process.env.POSTGRES_URL) {
+  console.warn(
+    '[WARN] POSTGRES_URL is not set — invite tokens are stored in-memory only.\n' +
+    '       All pending invites will be lost if the backend process restarts.\n' +
+    '       Add POSTGRES_URL to your Railway environment to enable persistence.'
+  );
+} // token -> { projectId, projectName, email, name, appRole, invitedBy, invitedAt, acceptedAt }
+
+// Stricter rate limit for invite sends specifically — the general /api 120/min
+// limiter is far too loose for an action that triggers an outbound email and
+// could otherwise be used to spam arbitrary addresses or enumerate emails.
+// 5 invites per 15 minutes per IP.
+const inviteSendRateLimit = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many invite requests from this IP. Please try again in a few minutes.' },
+});
+
+// ── DB helpers (no-op if POSTGRES_URL not set) ────────────────────────────────
+let dbPool = null;
+if (process.env.POSTGRES_URL) {
+  try {
+    dbPool = new Pool({ connectionString: process.env.POSTGRES_URL });
+    dbPool.query('SELECT 1').then(() => console.log('Invite system: DB connected')).catch(() => {
+      console.warn('Invite system: DB connection failed, using in-memory store');
+      dbPool = null;
+    });
+  } catch { dbPool = null; }
+}
+
+async function dbUpsertMember({ projectId, name, email, appRole, inviteToken }) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    INSERT INTO team_members (project_id, name, email, role, app_role, invite_token, invite_status, invited_at)
+    VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
+    ON CONFLICT (project_id, email) DO UPDATE
+      SET app_role = $5, invite_token = $6, invite_status = 'pending', invited_at = NOW()
+  `, [projectId, name, email, appRole, appRole, inviteToken]);
+}
+
+async function dbAcceptInvite(token, email) {
+  if (!dbPool) return null;
+  const { rows } = await dbPool.query(`
+    UPDATE team_members
+    SET invite_status = 'accepted', accepted_at = NOW(), invite_token = NULL
+    WHERE invite_token = $1 AND email = $2 AND invite_status = 'pending'
+    RETURNING id, project_id, name, email, app_role
+  `, [token, email]);
+  return rows[0] ?? null;
+}
+
+async function dbGetTeam(projectId) {
+  if (!dbPool) return null;
+  const { rows } = await dbPool.query(`
+    SELECT id, name, email, role, app_role, invite_status, invited_at, accepted_at
+    FROM team_members WHERE project_id = $1 ORDER BY invited_at ASC
+  `, [projectId]);
+  return rows;
+}
+
+async function dbRevokeInvite(token) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    UPDATE team_members SET invite_status = 'revoked', invite_token = NULL WHERE invite_token = $1
+  `, [token]);
+}
+
+// ── Email sender (Resend) ─────────────────────────────────────────────────────
+async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
+  if (!RESEND_API_KEY) {
+    // Dev mode — log to console
+    console.log(`\n[INVITE LINK - no RESEND_API_KEY set]\nTo: ${to}\nLink: ${inviteLink}\n`);
+    return { ok: true, dev: true };
+  }
+
+  const roleLabel = {
+    project_owner: 'Project Owner',
+    editor: 'Editor',
+    reviewer: 'Reviewer',
+    viewer: 'Viewer',
+  }[appRole] ?? appRole;
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px;">
+      <h2 style="color:#2E4057;margin-bottom:8px;">You're invited to collaborate</h2>
+      <p style="color:#444;font-size:15px;">
+        <strong>${invitedBy}</strong> has invited you to join <strong>${projectName}</strong>
+        on the Agentic SDLC Framework as a <strong>${roleLabel}</strong>.
+      </p>
+      <p style="color:#666;font-size:14px;">
+        As a <strong>${roleLabel}</strong> you can:
+        ${appRole === 'project_owner' ? 'run agents, edit settings, invite team members, and manage the project.' : ''}
+        ${appRole === 'editor' ? 'run agents, upload documents, and edit project settings.' : ''}
+        ${appRole === 'reviewer' ? 'view all agent outputs and approve review gates.' : ''}
+        ${appRole === 'viewer' ? 'view all agent outputs (read-only).' : ''}
+      </p>
+      <a href="${inviteLink}" style="display:inline-block;margin:24px 0;padding:14px 28px;background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">
+        Accept Invitation
+      </a>
+      <p style="color:#999;font-size:12px;">This link is valid for 7 days. If you were not expecting this invite, you can safely ignore this email.</p>
+    </div>
+  `;
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: RESEND_FROM, to, subject: `You're invited to ${projectName}`, html }),
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, data };
+}
+
+// ── POST /api/invite/send ─────────────────────────────────────────────────────
+app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) => {
+  const { projectId, projectName, name, email, appRole, invitedBy } = req.body ?? {};
+
+  if (!projectId || !email || !appRole) {
+    return res.status(400).json({ error: 'projectId, email, and appRole are required' });
+  }
+  const validRoles = ['project_owner', 'editor', 'reviewer', 'viewer'];
+  if (!validRoles.includes(appRole)) {
+    return res.status(400).json({ error: `appRole must be one of: ${validRoles.join(', ')}` });
+  }
+
+  const token = randomUUID();
+  const inviteLink = `${APP_URL}/invite?token=${token}&email=${encodeURIComponent(email)}`;
+
+  // Store in memory
+  inviteStore.set(token, {
+    projectId, projectName, email: email.toLowerCase(), name, appRole,
+    invitedBy, invitedAt: Date.now(), acceptedAt: null,
+  });
+
+  // Persist to DB if available
+  await dbUpsertMember({ projectId, name, email: email.toLowerCase(), appRole, inviteToken: token }).catch(() => {});
+
+  // Send email
+  const emailResult = await sendInviteEmail({ to: email, name, projectName, appRole, inviteLink, invitedBy });
+
+  return res.json({
+    ok: true,
+    inviteLink,
+    token,
+    dev: emailResult.dev ?? false,
+    message: emailResult.dev
+      ? 'Invite link generated (no email sent — RESEND_API_KEY not set). Copy the link to share manually.'
+      : 'Invite email sent.',
+  });
+});
+
+// ── GET /api/invite/accept ────────────────────────────────────────────────────
+// Called by the frontend InviteAccept page when the invitee clicks "Accept".
+app.get('/api/invite/accept', async (req, res) => {
+  const { token, email } = req.query;
+  if (!token || !email) return res.status(400).json({ error: 'token and email are required' });
+
+  // Try DB first
+  const dbRow = await dbAcceptInvite(token, email.toLowerCase()).catch(() => null);
+  if (dbRow) {
+    inviteStore.delete(token);
+    return res.json({ ok: true, projectId: dbRow.project_id, appRole: dbRow.app_role, name: dbRow.name, email: dbRow.email });
+  }
+
+  // Fallback to in-memory
+  const invite = inviteStore.get(token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
+  if (invite.email !== email.toLowerCase()) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
+
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  if (Date.now() - invite.invitedAt > SEVEN_DAYS) {
+    inviteStore.delete(token);
+    return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+  }
+
+  invite.acceptedAt = Date.now();
+  inviteStore.set(token, invite);
+
+  return res.json({ ok: true, projectId: invite.projectId, projectName: invite.projectName, appRole: invite.appRole, name: invite.name, email: invite.email });
+});
+
+// ── GET /api/invite/validate ──────────────────────────────────────────────────
+// Called by the frontend to preview invite details before the user clicks Accept.
+app.get('/api/invite/validate', async (req, res) => {
+  const { token, email } = req.query;
+  if (!token) return res.status(400).json({ error: 'token is required' });
+
+  // DB lookup
+  if (dbPool) {
+    const { rows } = await dbPool.query(
+      `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
+       FROM team_members tm JOIN projects p ON p.id = tm.project_id
+       WHERE tm.invite_token = $1`, [token]
+    ).catch(() => ({ rows: [] }));
+    if (rows[0]) {
+      const r = rows[0];
+      if (r.invite_status !== 'pending') return res.status(409).json({ error: 'This invite is no longer valid.' });
+      return res.json({ ok: true, name: r.name, email: r.email, appRole: r.app_role, projectName: r.project_name });
+    }
+  }
+
+  // In-memory fallback
+  const invite = inviteStore.get(token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found.' });
+  if (invite.acceptedAt) return res.status(409).json({ error: 'Already accepted.' });
+  return res.json({ ok: true, name: invite.name, email: invite.email, appRole: invite.appRole, projectName: invite.projectName });
+});
+
+// ── DELETE /api/invite/revoke ─────────────────────────────────────────────────
+app.delete('/api/invite/revoke', checkToken, async (req, res) => {
+  const { token } = req.body ?? {};
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  await dbRevokeInvite(token).catch(() => {});
+  inviteStore.delete(token);
+  return res.json({ ok: true });
+});
+
+// ── GET /api/invite/team/:projectId ──────────────────────────────────────────
+app.get('/api/invite/team/:projectId', checkToken, async (req, res) => {
+  const { projectId } = req.params;
+  const dbRows = await dbGetTeam(projectId).catch(() => null);
+  if (dbRows) return res.json({ ok: true, members: dbRows });
+  // In-memory: filter by projectId
+  const members = [];
+  for (const [token, inv] of inviteStore.entries()) {
+    if (inv.projectId === projectId) members.push({ ...inv, token });
+  }
+  return res.json({ ok: true, members });
+});
+
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

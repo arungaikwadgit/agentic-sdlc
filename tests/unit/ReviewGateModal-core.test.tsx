@@ -57,15 +57,15 @@ vi.mock('../../frontend/src/utils/sanitize', () => ({
 
 import ReviewGateModal from '../../frontend/src/components/reviewGate/ReviewGateModal';
 
-// gate2_3 covers phase2 + phase3 — 10 agents combined, the richest agent
-// list among the four gates without being phase4 (which isn't gated).
-const GATE_ID = 'gate2_3' as const;
-const PHASE2_AGENTS = PHASE_AGENTS.phase2;
+// gate3 covers phase3 + phase3b — 6 agents combined (architecture, apiDesign,
+// uxResearch, interaction, uxMockups, securityCompliance).
+const GATE_ID = 'gate3' as const;
 const PHASE3_AGENTS = PHASE_AGENTS.phase3;
-const ALL_GATE_AGENTS = [...PHASE2_AGENTS, ...PHASE3_AGENTS];
+const PHASE3B_AGENTS = PHASE_AGENTS.phase3b;
+const ALL_GATE_AGENTS = [...PHASE3_AGENTS, ...PHASE3B_AGENTS];
 
-const COMPLETE_AGENT = PHASE2_AGENTS[0]; // e.g. 'stakeholder'
-const IDLE_AGENT = PHASE2_AGENTS[1]; // e.g. 'userStory'
+const COMPLETE_AGENT = PHASE3_AGENTS[0]; // 'architecture'
+const IDLE_AGENT = PHASE3_AGENTS[1]; // 'apiDesign'
 
 let currentProject: Project;
 
@@ -79,7 +79,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     version: 1,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    currentPhase: 'phase2',
+    currentPhase: 'phase3',
     agentRuns: {
       [COMPLETE_AGENT]: {
         agentId: COMPLETE_AGENT,
@@ -135,10 +135,10 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
   // TS-60
   it('renders the gate title and phase subtitle', () => {
     renderModal();
-    expect(screen.getByText('Phase 2 & 3 Review Gate')).toBeInTheDocument();
+    expect(screen.getByText('Phase 3 & 3B Review Gate')).toBeInTheDocument();
     const subtitle = screen.getByText(/Review outputs before the pipeline continues/);
-    expect(subtitle.textContent).toContain(PHASE_LABELS.phase2);
     expect(subtitle.textContent).toContain(PHASE_LABELS.phase3);
+    expect(subtitle.textContent).toContain(PHASE_LABELS.phase3b);
   });
 
   // TS-61
@@ -166,7 +166,7 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
   // TS-63 + TS-64
   it('defaults to the first agent and renders its output via DocumentViewer', () => {
     renderModal();
-    // First agent in PHASE2_AGENTS is the default selectedAgent.
+    // First agent in PHASE3_AGENTS is the default selectedAgent.
     const firstAgent = ALL_GATE_AGENTS[0];
     if (firstAgent === COMPLETE_AGENT) {
       const viewer = screen.getByTestId('document-viewer');

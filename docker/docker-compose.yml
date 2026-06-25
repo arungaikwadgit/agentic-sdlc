@@ -1,16 +1,12 @@
-version: '3.8'
-
-services:
-  app:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    ports:
-      - "3000:3000"
-      - "3001:3001"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
-      - PROXY_TOKEN=${PROXY_TOKEN}
-      - PORT=3001
-    restart: unless-stopped
+# DEPRECATED — DO NOT USE
+#
+# This file predates the backend/frontend → Agent Runtime split and is no longer
+# referenced by anything in this repo, CI, or documentation. The active compose
+# file is the one at the repo root (../../docker-compose.yml), which defines the
+# db, proxy, and runtime services.
+#
+# This file could not be deleted automatically — file deletion was blocked at
+# the filesystem mount level during this session (see remediation report for
+# details). Please delete this file manually:
+#
+#   rm docker/docker-compose.yml

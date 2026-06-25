@@ -1,0 +1,49 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+.badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+/* ExtractionMethod variants */
+.extracted {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.inferred {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.missing {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px dashed #cbd5e1;
+}
+
+.conflict {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* "user-edited" — CSS class has underscore so we use attribute trick */
+.user_edited {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.user_rejected {
+  background: #f1f5f9;
+  color: #94a3b8;
+  text-decoration: line-through;
+}

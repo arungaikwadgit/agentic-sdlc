@@ -16,28 +16,33 @@ const MOCK_CTX: AgentPromptContext = {
   ],
 };
 
-// All agent IDs declared across all phases (22 agents, 9 phases including phase1b)
+// All agent IDs declared across all phases (30 agents, 11 phases including
+// phase0/SDLC Orchestrator, phase1b, and phase3b)
 const ALL_AGENT_IDS: AgentId[] = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
 
 describe('PHASE_ORDER and PHASE_AGENTS', () => {
-  it('PHASE_ORDER has 9 phases', () => {
-    expect(PHASE_ORDER.length).toBe(9);
+  it('PHASE_ORDER has 11 phases', () => {
+    expect(PHASE_ORDER.length).toBe(11);
   });
 
-  it('starts with phase1', () => {
-    expect(PHASE_ORDER[0]).toBe('phase1');
+  it('starts with phase0 (SDLC Orchestrator)', () => {
+    expect(PHASE_ORDER[0]).toBe('phase0');
   });
 
   it('includes phase1b', () => {
     expect(PHASE_ORDER).toContain('phase1b');
   });
 
+  it('includes phase3b', () => {
+    expect(PHASE_ORDER).toContain('phase3b');
+  });
+
   it('has no duplicate phase IDs', () => {
     expect(new Set(PHASE_ORDER).size).toBe(PHASE_ORDER.length);
   });
 
-  it('covers exactly 22 agents across all phases', () => {
-    expect(ALL_AGENT_IDS).toHaveLength(22);
+  it('covers exactly 30 agents across all phases', () => {
+    expect(ALL_AGENT_IDS).toHaveLength(30);
   });
 
   it('has no duplicate agent IDs across phases', () => {
@@ -56,8 +61,8 @@ describe('AGENT_DEFINITIONS registry completeness', () => {
     }
   });
 
-  it('has exactly 22 entries — no extra definitions', () => {
-    expect(Object.keys(AGENT_DEFINITIONS)).toHaveLength(22);
+  it('has exactly 30 entries — no extra definitions', () => {
+    expect(Object.keys(AGENT_DEFINITIONS)).toHaveLength(30);
   });
 
   it('every definition has a non-empty name', () => {

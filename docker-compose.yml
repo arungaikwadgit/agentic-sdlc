@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # ── Postgres 15 ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpass}
+      POSTGRES_DB: ${POSTGRES_DB:-agentdb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentuser} -d ${POSTGRES_DB:-agentdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Legacy LLM proxy (existing) ────────────────────────────────────────────
+  proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "${PROXY_PORT:-3001}:3001"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - PROXY_TOKEN=${PROXY_TOKEN}
+      - PORT=3001
+    restart: unless-stopped
+
+  # ── Agent Runtime API (new TypeScript backend) ────────────────────────────
+  runtime:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runtime
+    ports:
+      - "${RUNTIME_PORT:-4000}:4000"
+    environment:
+      - RUNTIME_PORT=4000
+      - POSTGRES_URL=postgresql://${POSTGRES_USER:-agentuser}:${POSTGRES_PASSWORD:-agentpass}@db:5432/${POSTGRES_DB:-agentdb}
+      - NODE_ENV=${NODE_ENV:-development}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - runtime
+
+volumes:
+  postgres_data:

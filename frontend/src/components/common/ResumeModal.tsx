@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * B14 — Pipeline Resume on App Load.
  * On mount, checks for any project with status='running' and offers to resume.
  */

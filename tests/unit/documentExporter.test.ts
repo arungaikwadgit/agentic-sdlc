@@ -6,14 +6,22 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ── Mock file-saver ──
-const saveAsMock = vi.fn();
+// NOTE: vi.mock factories are hoisted above top-level const declarations, so
+// any value referenced inside a factory must be created via vi.hoisted()
+// (otherwise vitest silently fails to apply the mock and the real module
+// is loaded instead, which is what produced the
+// "i.createObjectURL is not a function" failures here).
+const { saveAsMock, zipFileMock, zipGenerateAsyncMock } = vi.hoisted(() => ({
+  saveAsMock: vi.fn(),
+  zipFileMock: vi.fn(),
+  zipGenerateAsyncMock: vi.fn(async () => new Blob(['zip-contents'])),
+}));
+
 vi.mock('file-saver', () => ({
   saveAs: (...args: unknown[]) => saveAsMock(...args),
 }));
 
 // ── Mock jszip (dynamic import) ──
-const zipFileMock = vi.fn();
-const zipGenerateAsyncMock = vi.fn(async () => new Blob(['zip-contents']));
 vi.mock('jszip', () => ({
   default: vi.fn().mockImplementation(() => ({
     file: zipFileMock,

@@ -1,3 +1,7 @@
+/*
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 .overlay {
   position: fixed;
   inset: 0;
@@ -10,210 +14,192 @@
 
 .panel {
   background: var(--surface);
-  width: 520px;
-  max-width: 95vw;
+  width: 580px;
+  max-width: 98vw;
   height: 100vh;
   overflow-y: auto;
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 0;
-  box-shadow: -4px 0 24px rgba(0,0,0,0.3);
+  box-shadow: -4px 0 32px rgba(0,0,0,0.3);
 }
 
+/* ── Header ─────────────────────────────────────────────────── */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
-
-.header h2 {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0;
-}
-
+.header h2 { font-size: 18px; font-weight: 700; margin: 0; }
 .closeBtn {
-  background: none;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--text-muted);
-  padding: 4px 8px;
+  background: none; border: none; font-size: 18px;
+  cursor: pointer; color: var(--text-muted); padding: 4px 8px;
 }
 .closeBtn:hover { color: var(--text); }
 
-.section {
-  margin-bottom: 28px;
+/* ── Tabs ───────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+.tab {
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+  padding: 8px 14px; border-radius: 6px 6px 0 0;
+  display: flex; align-items: center; gap: 6px;
+}
+.tab:hover { color: var(--text); }
+.tabActive { color: var(--accent); border-bottom: 2px solid var(--accent); }
+.tabCount {
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 10px;
 }
 
+/* ── Sections ───────────────────────────────────────────────── */
+.section { margin-bottom: 28px; }
 .section h3 {
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin: 0 0 12px 0;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--text-muted); margin: 0 0 12px;
 }
 
-.addForm {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* ── Add form ───────────────────────────────────────────────── */
+.addForm { display: flex; flex-direction: column; gap: 8px; }
+.formRow { display: flex; gap: 8px; }
+.formRow input { flex: 1; }
+.addForm input, .addForm select {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 13px;
+  color: var(--text); width: 100%; box-sizing: border-box;
+}
+.addForm input:focus, .addForm select:focus {
+  outline: none; border-color: var(--accent);
+}
+.roleSelect { min-width: 140px; }
+.roleHint { font-size: 12px; color: var(--text-muted); margin: 0; }
+.error { color: var(--error); font-size: 12px; margin: 0; }
+.hint { color: var(--text-muted); font-size: 13px; }
+
+/* ── Invite link banner ──────────────────────────────────────── */
+.inviteLinkBanner {
+  background: #fffbeb; border: 1px solid #fde68a;
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+}
+.inviteLinkBanner p { margin: 0 0 8px; font-size: 13px; color: #92400e; }
+.linkRow { display: flex; gap: 6px; }
+.linkInput {
+  flex: 1; font-size: 11px; font-family: monospace;
+  background: #fff; border: 1px solid #fde68a;
+  border-radius: 5px; padding: 6px 8px; color: #333;
+}
+.copyBtn {
+  background: #f59e0b; color: #fff; border: none;
+  border-radius: 5px; padding: 6px 12px; font-size: 12px;
+  font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.copyBtn:hover { background: #d97706; }
+.dismissLink {
+  background: none; border: none; color: #92400e;
+  font-size: 11px; cursor: pointer; margin-top: 6px; padding: 0;
+  text-decoration: underline;
 }
 
-.addForm input {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--text);
-  width: 100%;
-  box-sizing: border-box;
-}
-.addForm input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.error {
-  color: var(--error);
+/* ── Permissions table ──────────────────────────────────────── */
+.permTable {
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
   font-size: 12px;
-  margin: 4px 0 0;
+}
+.permHeader, .permRow {
+  display: grid; grid-template-columns: 1.4fr repeat(4, 1fr);
+  padding: 7px 12px; gap: 4px;
+}
+.permHeader {
+  background: var(--surface-2); font-weight: 700;
+  color: var(--text-muted); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+}
+.permRow { border-bottom: 1px solid var(--border); color: var(--text); }
+.permRow:last-child { border-bottom: none; }
+.permRow span:first-child { color: var(--text-muted); }
+.permRow span:not(:first-child) { text-align: center; }
+
+/* ── Badges ──────────────────────────────────────────────────── */
+.roleBadge, .statusBadge {
+  font-size: 10px; font-weight: 700; padding: 2px 7px;
+  border-radius: 10px; white-space: nowrap;
 }
 
-.hint {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-/* Member list */
-.memberList {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
+/* ── Member list ────────────────────────────────────────────── */
+.memberList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
 .memberRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--surface-2);
-  border-radius: 8px;
-  border: 1px solid var(--border);
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px; background: var(--surface-2);
+  border-radius: 8px; border: 1px solid var(--border);
 }
-
 .avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
-  flex-shrink: 0;
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0;
 }
-
 .avatarSmall {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  font-weight: 700;
-  color: #fff;
-  flex-shrink: 0;
-  margin-right: 4px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: #fff; flex-shrink: 0; margin-right: 4px;
 }
+.memberInfo { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.memberNameRow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.memberName { font-size: 14px; font-weight: 600; }
+.memberMeta { font-size: 11px; color: var(--text-muted); }
 
-.memberInfo {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+.memberActions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 
-.memberName {
-  font-size: 14px;
-  font-weight: 500;
+.roleSelectSmall {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 5px; padding: 4px 6px; font-size: 11px;
+  color: var(--text); cursor: pointer;
 }
+.roleSelectSmall:disabled { opacity: 0.5; cursor: default; }
 
-.memberMeta {
-  font-size: 12px;
-  color: var(--text-muted);
+.actionBtn {
+  font-size: 11px; font-weight: 600; padding: 4px 9px;
+  border-radius: 5px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-muted);
+  cursor: pointer; white-space: nowrap;
 }
+.actionBtn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
+.actionBtn:disabled { opacity: 0.4; cursor: default; }
+.revokeBtn:hover:not(:disabled) { background: var(--error); border-color: var(--error); }
 
 .removeBtn {
-  background: none;
-  border: none;
-  font-size: 14px;
-  cursor: pointer;
-  color: var(--text-muted);
-  padding: 2px 6px;
-  border-radius: 4px;
+  background: none; border: none; font-size: 14px;
+  cursor: pointer; color: var(--text-muted); padding: 2px 5px; border-radius: 4px;
 }
 .removeBtn:hover { color: var(--error); background: rgba(220,38,38,0.1); }
 
-/* Assignment table */
-.assignTable {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.phaseBlock {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
+/* ── Agent assignment table ──────────────────────────────────── */
+.assignTable { display: flex; flex-direction: column; gap: 12px; }
+.phaseBlock { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .phaseHeader {
-  background: var(--surface-2);
-  padding: 6px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
+  background: var(--surface-2); padding: 6px 12px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
-
 .assignRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  gap: 12px;
+  display: flex; align-items: center;
+  justify-content: space-between; padding: 8px 12px; gap: 12px;
   border-bottom: 1px solid var(--border);
 }
 .assignRow:last-child { border-bottom: none; }
-
-.agentLabel {
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-  flex: 1;
-  min-width: 0;
-}
-
+.agentLabel { display: flex; align-items: center; font-size: 13px; flex: 1; min-width: 0; }
 .assignSelect {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  min-width: 160px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px;
+  color: var(--text); cursor: pointer; min-width: 160px;
 }
 .assignSelect:focus { outline: none; border-color: var(--accent); }

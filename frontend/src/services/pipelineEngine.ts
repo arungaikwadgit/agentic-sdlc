@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Pipeline Engine — orchestrates agent execution across phases.
  *
  * - Sequential phases: run agents one by one
@@ -10,13 +14,15 @@
 import PQueue from 'p-queue';
 import { PHASE_ORDER, PARALLEL_PHASES, PHASE_AGENTS, REVIEW_GATES } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
-import { getPromptDefaults } from '@/agents/promptDefaults';
+import { getPromptDefaults, getAgentProviderHints } from '@/agents/promptDefaults';
 import { DOMAINS } from '@/agents/domains';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { api } from './api';
+import { runL3Agent } from './l3Runtime';
+import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import type { Project, ReviewGateId } from '@/types/project.types';
-import type { AgentId, PhaseId } from '@/types/agent.types';
+import type { AgentId, PhaseId, L3RuntimeMeta } from '@/types/agent.types';
 
 export interface PipelineCallbacks {
   onAgentStart: (agentId: AgentId) => void;
@@ -31,7 +37,9 @@ export interface PipelineCallbacks {
 // Which phases precede each gate — derive lookup from REVIEW_GATES
 const GATE_BEFORE_PHASE: Partial<Record<PhaseId, ReviewGateId>> = {};
 for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
-  // Gate fires after the last phase listed; block the *next* phase sequence
+  // Gate fires after the last phase listed; block the *next* phase sequence.
+  // Gates with no phases (e.g. gate6, now unused since phase6 is empty) never fire.
+  if (phases.length === 0) continue;
   const lastPhase = phases[phases.length - 1] as PhaseId;
   GATE_BEFORE_PHASE[lastPhase] = gateId as ReviewGateId;
 }
@@ -39,8 +47,14 @@ for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
 // Map gate → which phase follows it
 const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
   gate1: PHASE_ORDER.indexOf('phase2'),
-  gate2_3: PHASE_ORDER.indexOf('phase4'),
-  gate5: PHASE_ORDER.indexOf('phase6'),
+  gate2: PHASE_ORDER.indexOf('phase3'),
+  gate3: PHASE_ORDER.indexOf('phase4'),
+  // phase6 is now empty (securityCompliance moved to phase3b, gated by gate3), so gate5
+  // unlocks phase7 directly, skipping the empty phase6.
+  gate5: PHASE_ORDER.indexOf('phase7'),
+  // gate6 is unused (phase6 has no agents to gate) — value is never consulted because
+  // GATE_BEFORE_PHASE never maps to 'gate6' (REVIEW_GATES.gate6 is empty), but the
+  // Record<ReviewGateId, number> type requires an entry.
   gate6: PHASE_ORDER.indexOf('phase7'),
 };
 
@@ -160,7 +174,29 @@ export class PipelineEngine {
     if (project.agentRuns[agentId]?.status === 'complete') return;
 
     this.callbacks.onAgentStart(agentId);
-    await updateAgentRun(this.projectId, agentId, { agentId, status: 'running', startedAt: Date.now() });
+
+    // Per-agent provider routing hint (app-level, set via App Settings →
+    // AI Providers). 'auto'/unset lets the backend pick its own default.
+    // Resolved up front so the UI can show which provider is expected to
+    // execute this agent while the run is still in progress.
+    const providerHints = await getAgentProviderHints();
+    const providerHint = providerHints[agentId];
+    const provider = providerHint && providerHint !== 'auto' ? providerHint : undefined;
+
+    await updateAgentRun(this.projectId, agentId, {
+      agentId,
+      status: 'running',
+      startedAt: Date.now(),
+      pendingProvider: provider ?? 'auto',
+    });
+
+    // Persist to runtime DB (fire-and-forget — down runtime must not block execution)
+    const runtimeRunId = await syncRunStart({
+      project_id: this.projectId,
+      agent_key: agentId,
+      goal: typeof def.goal === 'function' ? def.goal(this.buildContext(project)) : undefined,
+      provider: provider ?? 'auto',
+    });
 
     try {
       const ctx = this.buildContext(project);
@@ -188,17 +224,73 @@ export class PipelineEngine {
       }
 
       const userPrompt = def.buildUserPrompt(ctx);
-      const resp = await api.callAgent({ systemPrompt, userPrompt });
-      const output = api.extractText(resp);
-      const tokensUsed = resp.usage?.total_tokens ?? 0;
+
+      // ── L3 path: agent declares goal + tools → plan/act/observe/revise loop ──
+      const isL3 = typeof def.goal === 'function' && (def.tools?.length ?? 0) > 0;
+
+      let output: string;
+      let tokensUsed: number;
+      let respProvider: 'openai' | 'claude' | undefined;
+      let respModel: string | undefined;
+      let l3Meta: L3RuntimeMeta | undefined;
+
+      if (isL3) {
+        const l3Result = await runL3Agent(def, ctx, {
+          systemPrompt,
+          userPrompt,
+          agentId,
+          provider,
+        });
+        output = l3Result.output;
+        tokensUsed = l3Result.tokensUsed;
+        respProvider = l3Result.provider;
+        respModel = l3Result.model;
+        l3Meta = l3Result.l3;
+      } else {
+        // ── L2 path (original single-shot call) ─────────────────────────────
+        // H-07 fix: 120s per-agent timeout
+        let resp = await api.callAgent({ systemPrompt, userPrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
+        output = api.extractText(resp);
+        tokensUsed = resp.usage?.total_tokens ?? 0;
+        respProvider = resp.provider;
+        respModel = resp.model;
+
+        // The UX Mockups agent must return exactly 2 ```html fenced documents
+        // so the Preview tab can render them.
+        if (agentId === 'uxMockups') {
+          const htmlBlockCount = (output.match(/```html/g) ?? []).length;
+          if (htmlBlockCount < 2) {
+            const correctivePrompt = [
+              userPrompt,
+              `\n---\nYour previous response did not contain 2 valid \`\`\`html fenced code blocks (found ${htmlBlockCount}). Do not describe the screens in prose, and do not use image placeholder links (e.g. via.placeholder.com) or diagrams. Respond again with EXACTLY 2 \`\`\`html fenced code blocks, each a complete standalone HTML document starting with <!DOCTYPE html> and containing the actual mockup markup and inline <style>.`,
+            ].join('\n');
+
+            const retryResp = await api.callAgent({ systemPrompt, userPrompt: correctivePrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
+            const retryOutput = api.extractText(retryResp);
+            const retryHtmlBlockCount = (retryOutput.match(/```html/g) ?? []).length;
+
+            if (retryHtmlBlockCount > htmlBlockCount) {
+              resp = retryResp;
+              output = retryOutput;
+              tokensUsed += retryResp.usage?.total_tokens ?? 0;
+              respProvider = retryResp.provider;
+              respModel = retryResp.model;
+            }
+          }
+        }
+      }
 
       await updateAgentRun(this.projectId, agentId, {
         agentId,
         status: 'complete',
         output,
         tokensUsed,
+        provider: respProvider,
+        model: respModel,
         completedAt: Date.now(),
+        ...(l3Meta ? { l3: l3Meta } : {}),
       });
+      syncRunSucceed(runtimeRunId, output);
       this.callbacks.onAgentComplete(agentId, output);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -208,8 +300,9 @@ export class PipelineEngine {
         error: msg,
         completedAt: Date.now(),
       });
+      syncRunFail(runtimeRunId, msg);
       this.callbacks.onAgentError(agentId, msg);
-      throw err; // re-throw so phase runner can decide whether to stop
+      throw err;
     }
   }
 
@@ -225,7 +318,6 @@ export class PipelineEngine {
 
     const teamRoster = buildTeamRoster(project);
 
-    // Prepend user-edited domain knowledge to the built-in domain context
     const domainContext = project.domainKnowledge
       ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
       : domain.context;
@@ -238,6 +330,150 @@ export class PipelineEngine {
       priorOutputs,
       teamRoster,
       brandingGuidelines: project.brandingGuidelines,
+      techStack: project.techStack,
     };
+  }
+}
+
+// ─── Standalone single-agent runner (used by Re-run in ProjectWorkspace) ──────
+//
+// This is the canonical path for running a single agent — it goes through the
+// same L3/L2 routing logic as the full pipeline, writes l3Meta to the run, and
+// fires onAgentStart / onAgentComplete / onAgentError callbacks so the UI
+// updates in real-time exactly the same way as the full pipeline does.
+//
+// ProjectWorkspace re-run MUST call this instead of api.callAgent directly.
+
+export interface SingleAgentCallbacks {
+  onStart?: () => void;
+  onComplete?: (output: string) => void;
+  onError?: (error: string) => void;
+}
+
+export async function runSingleAgent(
+  projectId: string,
+  agentId: AgentId,
+  systemPromptOverride: string,
+  callbacks: SingleAgentCallbacks = {},
+  userPromptExtra = '',
+): Promise<void> {
+  const def = AGENT_DEFINITIONS[agentId];
+  if (!def) throw new Error(`Agent definition not found: ${agentId}`);
+
+  const project = await getProject(projectId);
+  if (!project) throw new Error('Project not found');
+
+  callbacks.onStart?.();
+
+  // Resolve provider hint
+  const providerHints = await getAgentProviderHints();
+  const providerHint = providerHints[agentId];
+  const provider = providerHint && providerHint !== 'auto' ? providerHint : undefined;
+
+  await updateAgentRun(projectId, agentId, {
+    agentId,
+    status: 'running',
+    startedAt: Date.now(),
+    pendingProvider: provider ?? 'auto',
+  });
+
+  // Persist to runtime DB (fire-and-forget — down runtime must not block execution)
+  const runtimeRunId = await syncRunStart({
+    project_id: projectId,
+    agent_key: agentId,
+    provider: provider ?? 'auto',
+  });
+
+  try {
+    // Build context from current project state
+    const domain = DOMAINS[project.domain];
+    const priorOutputs: Partial<Record<AgentId, string>> = {};
+    for (const [id, run] of Object.entries(project.agentRuns)) {
+      if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;
+    }
+    const teamRoster = buildTeamRoster(project);
+    const domainContext = project.domainKnowledge
+      ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
+      : domain.context;
+
+    const ctx = {
+      projectName: project.name,
+      projectDescription: project.description,
+      domain: domain.id,
+      domainContext,
+      priorOutputs,
+      teamRoster,
+      brandingGuidelines: project.brandingGuidelines,
+      techStack: project.techStack,
+    };
+
+    const userPrompt = def.buildUserPrompt(ctx) +
+      (userPromptExtra.trim() ? `
+
+---
+
+## Additional Instructions
+${userPromptExtra.trim()}` : '');
+
+    // ── L3 or L2 routing — same logic as PipelineEngine.runAgent ──────────
+    const isL3 = typeof def.goal === 'function' && (def.tools?.length ?? 0) > 0;
+
+    let output: string;
+    let tokensUsed: number;
+    let respProvider: 'openai' | 'claude' | undefined;
+    let respModel: string | undefined;
+    let l3Meta: L3RuntimeMeta | undefined;
+
+    if (isL3) {
+      const l3Result = await runL3Agent(def, ctx, {
+        systemPrompt: systemPromptOverride,
+        userPrompt,
+        agentId,
+        provider,
+      });
+      output = l3Result.output;
+      tokensUsed = l3Result.tokensUsed;
+      respProvider = l3Result.provider;
+      respModel = l3Result.model;
+      l3Meta = l3Result.l3;
+    } else {
+      // H-07 fix: 120s timeout on single-agent re-run path
+      const resp = await api.callAgent({
+        systemPrompt: systemPromptOverride,
+        userPrompt,
+        agentId,
+        provider,
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      output = api.extractText(resp);
+      tokensUsed = resp.usage?.total_tokens ?? 0;
+      respProvider = resp.provider;
+      respModel = resp.model;
+    }
+
+    await updateAgentRun(projectId, agentId, {
+      agentId,
+      status: 'complete',
+      output,
+      tokensUsed,
+      provider: respProvider,
+      model: respModel,
+      completedAt: Date.now(),
+      ...(l3Meta ? { l3: l3Meta } : {}),
+    });
+
+    syncRunSucceed(runtimeRunId, output);
+    callbacks.onComplete?.(output);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await updateAgentRun(projectId, agentId, {
+      agentId,
+      status: 'error',
+      error: msg,
+      completedAt: Date.now(),
+    });
+    syncRunFail(runtimeRunId, msg);
+    callbacks.onError?.(msg);
   }
 }

@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Suggested project roles with recommended agent assignments.
  * These are starting suggestions — admins can override any mapping.
  */

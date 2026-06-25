@@ -2,58 +2,131 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, dev]
   pull_request:
     branches: [main]
 
 jobs:
-  build-and-test:
+  # ─── Backend: TypeScript typecheck + unit tests ─────────────────────────────
+  backend:
+    name: Backend (tsc + jest)
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: agentic_sdlc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      POSTGRES_URL_TEST: postgresql://postgres:postgres@localhost:5432/agentic_sdlc_test
+      NODE_ENV: test
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
           cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install root dependencies
-        run: npm install
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Install backend dependencies
-        run: cd backend && npm install
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: Install frontend dependencies
-        run: cd frontend && npm install
+      - name: Run migrations (test DB)
+        run: npm run migrate:up:test
 
-      - name: TypeScript check
-        run: cd frontend && npm run typecheck
+      - name: Run tests
+        run: npm test
 
-      - name: Lint
-        run: cd frontend && npm run lint || true
+  # ─── Frontend: tsc + vitest + coverage ──────────────────────────────────────
+  frontend:
+    name: Frontend (tsc + vitest)
+    runs-on: ubuntu-latest
 
-      - name: Unit + integration tests (Vitest)
-        run: cd frontend && npm run test:coverage || true
+    defaults:
+      run:
+        working-directory: frontend
 
-      - name: Install Playwright browsers
-        run: cd frontend && npx playwright install --with-deps chromium
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Build frontend (needed for E2E preview)
-        run: cd frontend && npm run build
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: E2E tests (Playwright)
-        env:
-          E2E_BASE_URL: http://localhost:4173
-        run: |
-          cd frontend && npx vite preview --port 4173 &
-          sleep 3
-          npm run test:e2e || true
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build Docker image
-        run: docker build -f docker/Dockerfile -t agentic-sdlc:${{ github.sha }} .
+      - name: Typecheck
+        run: npx tsc --noEmit
 
-      - name: Security audit
-        run: |
-          cd backend && npm audit --audit-level=high || true
-          cd ../frontend && npm audit --audit-level=high || true
+      - name: Run tests with coverage
+        run: npm run test:coverage -- --reporter=verbose
+
+  # ─── Server: tsc ──────────────────────────────────────────────────────────────
+  server:
+    name: Server (tsc)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+  # ─── Shared types: tsc ───────────────────────────────────────────────────────
+  shared-types:
+    name: Shared types (tsc)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: shared-types
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: shared-types/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit

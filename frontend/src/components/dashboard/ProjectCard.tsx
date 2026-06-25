@@ -1,3 +1,7 @@
+/**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
 import { DOMAINS } from '@/agents/domains';
 import type { ProjectSummary } from '@/types/project.types';
 import styles from './ProjectCard.module.css';
@@ -22,11 +26,13 @@ interface Props {
   project: ProjectSummary;
   onOpen: () => void;
   onDelete: () => void;
+  onDetails: () => void;
+  onEdit?: () => void;
   /** If provided, the card is in "archived" view: shows archive details and a Restore button instead of delete. */
   onRestore?: () => void;
 }
 
-export default function ProjectCard({ project, onOpen, onDelete, onRestore }: Props) {
+export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEdit, onRestore }: Props) {
   const domain = DOMAINS[project.domain];
   const progress = project.totalAgents > 0
     ? Math.round((project.completedAgents / project.totalAgents) * 100)
@@ -43,6 +49,16 @@ export default function ProjectCard({ project, onOpen, onDelete, onRestore }: Pr
   function handleRestore(e: React.MouseEvent) {
     e.stopPropagation();
     onRestore?.();
+  }
+
+  function handleDetails(e: React.MouseEvent) {
+    e.stopPropagation();
+    onDetails();
+  }
+
+  function handleEdit(e: React.MouseEvent) {
+    e.stopPropagation();
+    onEdit?.();
   }
 
   return (
@@ -79,13 +95,19 @@ export default function ProjectCard({ project, onOpen, onDelete, onRestore }: Pr
             ? `Archived ${new Date(project.archivedAt).toLocaleDateString()}`
             : new Date(project.updatedAt).toLocaleDateString()}
         </span>
-        {onRestore ? (
-          <button className="btn-secondary" onClick={handleRestore} aria-label="Restore project" style={{ padding: '4px 10px', fontSize: 12 }}>
-            ↩ Restore
-          </button>
-        ) : (
-          <button className={styles.deleteBtn} onClick={handleDelete} aria-label="Delete project">✕</button>
-        )}
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button className={styles.infoBtn} onClick={handleDetails} aria-label="View project details" title="Project details">ℹ</button>
+          {onEdit && !onRestore && (
+            <button className={styles.infoBtn} onClick={handleEdit} aria-label="Edit project" title="Edit project">✏</button>
+          )}
+          {onRestore ? (
+            <button className="btn-secondary" onClick={handleRestore} aria-label="Restore project" style={{ padding: '4px 10px', fontSize: 12 }}>
+              ↩ Restore
+            </button>
+          ) : (
+            <button className={styles.deleteBtn} onClick={handleDelete} aria-label="Delete project">✕</button>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,0 +1,153 @@
+/**
+ * shared-types — TypeScript interfaces shared between backend and frontend.
+ * Both packages reference this via path alias or local package reference.
+ * DO NOT import backend-specific packages (pg, express) here.
+ */
+export type AgentRunStatus = 'running' | 'succeeded' | 'failed' | 'retrying';
+export type AgentJobStatus = 'queued' | 'running' | 'succeeded' | 'failed';
+export type MemoryRecordScope = 'project' | 'domain_shared';
+export type ActionProposalStatus = 'pending' | 'auto_approved' | 'approved' | 'rejected';
+export type RiskLevel = 'low' | 'medium' | 'high';
+export type UserRole = 'admin' | 'product_owner';
+export type ActionType = 'generate_document' | 'tag_memory_record' | 'flag_for_review';
+export interface ToolTraceEntry {
+    type: 'llm_call' | 'tool_call' | 'retrieval';
+    name?: string;
+    input?: unknown;
+    output?: unknown;
+    tokens?: {
+        prompt: number;
+        completion: number;
+    };
+    duration_ms?: number;
+    timestamp: string;
+}
+export interface DecisionEntry {
+    type: string;
+    rationale: string;
+    confidence?: number;
+    timestamp: string;
+    failure_id?: string;
+    classification?: 'known_pattern' | 'novel';
+}
+export interface AgentRun {
+    id: string;
+    project_id: string;
+    agent_key: string;
+    status: AgentRunStatus;
+    goal?: string;
+    plan_steps?: string[];
+    tool_trace?: ToolTraceEntry[];
+    decisions?: DecisionEntry[];
+    memory_reads?: string[];
+    provider?: string;
+    model?: string;
+    input_payload?: unknown;
+    result?: string;
+    error?: string;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+}
+export interface AgentJob {
+    id: string;
+    project_id: string;
+    agent_key: string;
+    status: AgentJobStatus;
+    input_payload: unknown;
+    result?: string;
+    error?: string;
+    attempts: number;
+    next_attempt_after?: string;
+    agent_run_id?: string;
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+}
+export interface MemoryRecord {
+    id: string;
+    project_id: string;
+    scope: MemoryRecordScope;
+    domain_id?: string;
+    approved: boolean;
+    approved_by?: string;
+    approved_at?: string;
+    title: string;
+    content: string;
+    tags: string[];
+    created_by?: string;
+    created_at: string;
+    updated_at: string;
+}
+export interface ActionProposal {
+    id: string;
+    project_id: string;
+    agent_run_id: string;
+    action_type: ActionType;
+    risk_level: RiskLevel;
+    payload: unknown;
+    status: ActionProposalStatus;
+    decided_by?: string;
+    decided_at?: string;
+    created_at: string;
+}
+export interface RollbackLog {
+    id: string;
+    proposal_id: string;
+    snapshot: {
+        agent_key: string;
+        output_preview: string;
+    };
+    created_at: string;
+}
+export interface Project {
+    id: string;
+    name: string;
+    description?: string;
+    industry?: string;
+    team_size?: string;
+    methodology?: string;
+    active_admin_id?: string;
+    created_at: string;
+    updated_at: string;
+}
+export interface TeamMember {
+    id: string;
+    project_id: string;
+    email: string;
+    name: string;
+    role: UserRole;
+    is_admin: boolean;
+    created_at: string;
+}
+export interface EnqueueJobRequest {
+    agent_key: string;
+    input_payload?: unknown;
+}
+export interface EnqueueJobResponse {
+    id: string;
+    status: AgentJobStatus;
+    agent_key: string;
+    created_at: string;
+}
+export interface CreateMemoryRecordRequest {
+    scope: MemoryRecordScope;
+    domain_id?: string;
+    title: string;
+    content: string;
+    tags?: string[];
+}
+export interface CreateActionProposalRequest {
+    action_type: ActionType;
+    risk_level: RiskLevel;
+    payload?: unknown;
+}
+export interface FailureSummary {
+    failedRuns: AgentRun[];
+    failedJobs: AgentJob[];
+}
+export interface PolicyEvaluationResult {
+    status: ActionProposalStatus;
+    rule_applied: string;
+}
+//# sourceMappingURL=index.d.ts.map

@@ -1,0 +1,34 @@
+# ── Stage 1: Build shared-types ───────────────────────────────────
+FROM node:20-alpine AS shared-types-builder
+WORKDIR /shared-types
+COPY shared-types/package*.json ./
+RUN npm install
+COPY shared-types/ .
+RUN npm run build 2>/dev/null || npx tsc
+
+# ── Stage 2: Build the Agent Runtime (TypeScript backend) ─────────
+FROM node:20-alpine AS runtime-builder
+WORKDIR /backend
+COPY backend/package*.json ./
+RUN npm ci
+COPY --from=shared-types-builder /shared-types /shared-types
+COPY backend/ .
+RUN npm run runtime:build
+
+# ── Stage 3: Production image ──────────────────────────────────────
+FROM node:20-alpine
+WORKDIR /backend
+
+ENV NODE_ENV=production
+
+# Production-only backend dependencies
+COPY backend/package*.json ./
+RUN npm ci --omit=dev
+
+# Compiled runtime output + migrations (needed for migrate:up at startup/deploy time)
+COPY --from=runtime-builder /backend/dist ./dist
+COPY --from=runtime-builder /backend/migrations ./migrations
+
+EXPOSE 4000
+
+CMD ["node", "dist/index.js"]

@@ -44,9 +44,14 @@ vi.mock('@/services/pipelineEngine', () => ({
 }));
 
 // ── Mock @/services/api ──
+// callAgent must resolve (not return undefined) — ProjectWorkspace pings it
+// on mount via `testMode: true` to check API key availability, and chains
+// .then()/.catch() directly off the call.
 vi.mock('@/services/api', () => ({
   api: {
-    callAgent: vi.fn(),
+    callAgent: vi.fn().mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'stop' }],
+    }),
     extractText: vi.fn(),
     enhancePrompt: vi.fn(),
   },
@@ -99,9 +104,10 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     agentRuns: {},
     reviewGates: {
       gate1: { id: 'gate1', approved: true, afterPhases: [] },
-      gate2_3: { id: 'gate2_3', approved: true, afterPhases: [] },
+      gate2: { id: 'gate2', approved: true, afterPhases: [] },
+      gate3: { id: 'gate3', approved: true, afterPhases: [] },
       gate5: { id: 'gate5', approved: true, afterPhases: [] },
-      gate6: { id: 'gate6', approved: true, afterPhases: [] },
+      // gate6 intentionally omitted: phase6 is empty, gate6 never fires
     },
     promptOverrides: [],
     mode: 'simple',
@@ -138,10 +144,10 @@ describe('ProjectWorkspace — run/stop controls', () => {
     expect(screen.getByRole('button', { name: 'Resume Pipeline' })).toBeInTheDocument();
   });
 
-  it('shows "Complete ✓" and disables the button when status is complete (TS-176)', () => {
+  it('shows "Complete" and disables the button when status is complete (TS-176)', () => {
     currentProject = baseProject({ status: 'complete' });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    const btn = screen.getByRole('button', { name: 'Complete ✓' });
+    const btn = screen.getByRole('button', { name: 'Complete' });
     expect(btn).toBeDisabled();
   });
 

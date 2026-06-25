@@ -48,6 +48,10 @@ const importProjectsMock = vi.fn(async () => 0);
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
+  // Dashboard.tsx calls listVisibleProjects (access-control aware), not
+  // listProjects directly. For this archive-focused test there's no identity
+  // to filter by, so route it through the same mock/store as listProjects.
+  listVisibleProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
   deleteProject: (...args: Parameters<typeof deleteProjectMock>) => deleteProjectMock(...args),
   restoreProject: (...args: Parameters<typeof restoreProjectMock>) => restoreProjectMock(...args),
   exportAllProjects: (...args: unknown[]) => exportAllProjectsMock(...(args as [])),
@@ -135,7 +139,9 @@ describe('Dashboard — archived projects', () => {
     render(<Dashboard onOpenProject={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('No projects yet')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /\+ new project/i })).toBeInTheDocument();
+    // Dashboard renders "+ New Project" in both the toolbar and the empty-state CTA
+    const newProjectBtns = screen.getAllByRole('button', { name: /\+ new project/i });
+    expect(newProjectBtns.length).toBeGreaterThan(0);
   });
 
   it('renders archived metadata ("{archivedBy}: {archivedReason}" and "Archived {date}") on a card (TS-55)', async () => {

@@ -1,4 +1,8 @@
 /**
+ * © 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential — Unauthorized use prohibited.
+ */
+/**
  * Excel export for pipeline metrics and review checklists (Appendix v4.2).
  * Uses SheetJS (xlsx) to generate .xlsx files.
  */
