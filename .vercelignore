@@ -1,0 +1,6 @@
+# Exclude committed node_modules from Vercel build
+# These were accidentally committed from Windows and lack execute bits
+node_modules
+frontend/node_modules
+backend/node_modules
+backend/dist
