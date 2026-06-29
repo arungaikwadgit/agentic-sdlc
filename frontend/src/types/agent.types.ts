@@ -9,9 +9,13 @@ export type PhaseId =
   | 'phase1'
   | 'phase1b'
   | 'phase2'
+  | 'phase2a'   // dataModel (depends on businessRules from phase2)
   | 'phase3'
+  | 'phase3a'   // apiDesign + interaction (depend on phase3 outputs)
+  | 'phase3c'   // uxMockups (depends on phase3a outputs)
   | 'phase3b'
   | 'phase4'
+  | 'phase4a'   // codeReviewStandards + uiComponentLibrary + roadmapPlanner (depend on phase4)
   | 'phase5'
   | 'phase6'
   | 'phase7'
@@ -158,6 +162,19 @@ export interface AgentPromptContext {
   brandingGuidelines?: string;
   /** Explicit tech stack chosen during project creation (e.g. "React + Node/Express + PostgreSQL") */
   techStack?: string;
+  /** Context documents uploaded by the user (style guides, brand docs, design specs, etc.) */
+  contextDocuments?: Array<{
+    id: string;
+    name: string;
+    sizeKb: number;
+    kind: string;
+    content: string;
+  }>;
+  /**
+   * Number of distinct mockup versions the UX Mockups agent should generate.
+   * Range 1–4. Defaults to 2 when absent.
+   */
+  mockupVersionCount?: number;
 }
 
 export interface AgentRun {

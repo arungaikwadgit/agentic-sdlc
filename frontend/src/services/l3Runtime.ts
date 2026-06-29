@@ -291,9 +291,12 @@ export async function runL3Agent(
       ? turns[turns.length - 1].content + limitReminder
       : limitReminder || 'Continue. Call another tool or emit FINAL_OUTPUT: with your complete document.';
 
-    // Inter-iteration delay to spread token usage across time (avoids TPM limits)
+    // Inter-iteration delay to spread token usage across time (avoids TPM limits).
+    // Configurable via VITE_L3_ITER_DELAY_MS (default: 1500ms). Set to 0 in tests
+    // or reduce in local dev to speed up iteration.
     if (iteration > 0) {
-      await new Promise((r) => setTimeout(r, 1500));
+      const delayMs = Number(import.meta.env.VITE_L3_ITER_DELAY_MS ?? 1500);
+      await new Promise((r) => setTimeout(r, isNaN(delayMs) ? 1500 : delayMs));
     }
 
     // Call the LLM - retries automatically on 429 with backoff
@@ -357,12 +360,20 @@ export async function runL3Agent(
       };
       l3Meta.toolTrace.push(traceEntry);
 
-      // Append the assistant's tool call and the tool result to conversation
+      // Append the assistant's tool call and the tool result to conversation.
+      // Cap tool result size to avoid blowing up the context on large outputs
+      // (e.g. get_agent_output returning a full 10k-char prior document).
+      const MAX_TOOL_RESULT_CHARS = 4_000;
+      const rawToolResult = JSON.stringify(toolResult, null, 2);
+      const toolResultStr = rawToolResult.length > MAX_TOOL_RESULT_CHARS
+        ? rawToolResult.slice(0, MAX_TOOL_RESULT_CHARS) + '\n...[result truncated — full output available in prior context]'
+        : rawToolResult;
+
       turns.push({ role: 'assistant', content: rawText });
       turns.push({
         role: 'user',
         content:
-          `TOOL_RESULT for ${parsed.toolName}:\n${JSON.stringify(toolResult, null, 2)}\n\n` +
+          `TOOL_RESULT for ${parsed.toolName}:\n${toolResultStr}\n\n` +
           'Based on this result, continue your plan. Call another tool or emit FINAL_OUTPUT: with your complete document.',
       });
       continue;
@@ -416,7 +427,13 @@ export async function runL3Agent(
 /**
  * Build a single user prompt string that includes the conversation history
  * so far, for LLMs that don't support multi-turn natively via the API wrapper.
+ *
+ * Each historical turn is capped at MAX_TURN_CHARS to prevent the prompt from
+ * growing unboundedly across iterations (3 iterations × large tool results
+ * can easily exceed 50k chars without this guard).
  */
+const MAX_TURN_CHARS = 3_000;
+
 function buildConversationPrompt(
   history: Array<{ role: string; content: string }>,
   currentUserContent: string,
@@ -427,9 +444,16 @@ function buildConversationPrompt(
     return currentUserContent;
   }
 
-  // For subsequent turns: embed the conversation history so the LLM has full context
+  // For subsequent turns: embed the conversation history so the LLM has full context.
+  // Truncate each historical turn independently so no single large tool result
+  // crowds out the rest of the context.
   const historyBlock = history
-    .map((t) => `[${t.role.toUpperCase()}]:\n${t.content}`)
+    .map((t) => {
+      const body = t.content.length > MAX_TURN_CHARS
+        ? t.content.slice(0, MAX_TURN_CHARS) + '\n[...turn truncated for context length]'
+        : t.content;
+      return `[${t.role.toUpperCase()}]:\n${body}`;
+    })
     .join('\n\n---\n\n');
 
   return `${historyBlock}\n\n---\n\n[USER]:\n${currentUserContent}`;

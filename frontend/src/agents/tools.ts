@@ -295,10 +295,93 @@ export const countRequirementCoverageTool: AgentTool = {
   },
 };
 
+// ─── Tool: get_style_guide ────────────────────────────────────────────────────
+/**
+ * Fetches the combined style guide context for the current project.
+ *
+ * Returns TWO sources of design truth in one call:
+ *   1. The complete UX Mockups output (colors, typography, design tokens, CSS
+ *      custom properties, component patterns) — if it has already been generated.
+ *   2. Any style guide / brand documents uploaded by the user as context files
+ *      (brand books, design specs, color swatches, etc.).
+ *
+ * Design agents (UX Mockups, Working Prototype) MUST call this as their FIRST
+ * step so that uploaded brand guidelines and approved mockup design systems are
+ * reflected in every piece of generated UI or code.
+ */
+export const getStyleGuideTool: AgentTool = {
+  name: 'get_style_guide',
+  description:
+    'Retrieve the complete style guide context for this project. ' +
+    'Returns (1) the UX Mockups output — full design system tokens, color palette, typography, ' +
+    'component patterns, and HTML mockup source — if it has already been generated, AND ' +
+    '(2) any style guide or brand documents uploaded by the user (brand books, design specs, ' +
+    'color guides, etc.). ' +
+    'ALWAYS call this as your FIRST step before generating any UI, mockup, or prototype output. ' +
+    'If either source is found, extract the exact colors, fonts, spacing, and brand identity and ' +
+    'apply them verbatim — do not invent a new design system when one has been provided.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  execute: async (_args, ctx) => {
+    const uxMockupsText = ctx.priorOutputs['uxMockups' as keyof typeof ctx.priorOutputs];
+    const contextDocs = ctx.contextDocuments;
+
+    let anyFound = false;
+
+    const uxMockups = uxMockupsText
+      ? (() => {
+          anyFound = true;
+          return {
+            found: true,
+            note:
+              'Extract --color-primary, --color-secondary, --color-accent, --color-surface, ' +
+              '--color-text, --font-family, --radius, --shadow-sm/md/lg from the CSS :root ' +
+              'block and apply them exactly.',
+            output: uxMockupsText,
+          };
+        })()
+      : { found: false, message: 'UX Mockups agent has not run yet for this project.' };
+
+    const uploadedDocs =
+      contextDocs && contextDocs.length > 0
+        ? (() => {
+            anyFound = true;
+            return {
+              found: true,
+              count: contextDocs.length,
+              note:
+                'These documents were uploaded by the project owner and take FULL PRECEDENCE ' +
+                'over default design choices. Extract colors, fonts, spacing, and brand identity ' +
+                'and apply them exactly.',
+              documents: contextDocs.map((doc) => ({
+                name: doc.name,
+                kind: doc.kind,
+                sizeKb: doc.sizeKb,
+                content: doc.content,
+              })),
+            };
+          })()
+        : { found: false, message: 'No style guide documents were uploaded by the user.' };
+
+    return {
+      found: anyFound,
+      uxMockups,
+      uploadedStyleGuide: uploadedDocs,
+      instruction: anyFound
+        ? 'Use the design tokens, colors, typography, and brand identity from the sources above. ' +
+          'Uploaded documents (uploadedStyleGuide) take precedence over uxMockups when both exist.'
+        : 'No style guide context is available. Proceed with professional domain-appropriate design defaults.',
+    };
+  },
+};
+
 // ─── Convenience bundles ──────────────────────────────────────────────────────
 
 /** Full tool set for document-producing agents (all tools) */
 export const ALL_TOOLS: AgentTool[] = [
+  getStyleGuideTool,
   searchPriorOutputsTool,
   getRequirementIdsTool,
   getTeamRosterTool,
@@ -310,6 +393,7 @@ export const ALL_TOOLS: AgentTool[] = [
 
 /** Minimal tool set — for agents that only need context lookup */
 export const CONTEXT_TOOLS: AgentTool[] = [
+  getStyleGuideTool,
   getAgentOutputTool,
   getDomainContextTool,
   getTeamRosterTool,
@@ -317,6 +401,7 @@ export const CONTEXT_TOOLS: AgentTool[] = [
 
 /** Research tool set — for agents that synthesise prior work */
 export const RESEARCH_TOOLS: AgentTool[] = [
+  getStyleGuideTool,
   searchPriorOutputsTool,
   getRequirementIdsTool,
   getAgentOutputTool,

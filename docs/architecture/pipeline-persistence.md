@@ -23,7 +23,7 @@ on. It is responsible for:
 
 - Storing all project data (agent runs, review gates, team, settings) locally
   in the browser via IndexedDB, with no backend database.
-- Running the 26-agent, 9-phase SDLC pipeline in the correct order, with
+- Running the 30-agent, 11-phase SDLC pipeline in the correct order, with
   parallel execution where the phase allows it.
 - Pausing the pipeline at review gates until a human approves.
 - Supporting resume after a pause or browser refresh (agent runs marked
@@ -247,9 +247,9 @@ events).
 
 **Phase/gate model**, derived from `agents/constants.ts`:
 
-- `PHASE_ORDER`: `phase1, phase1b, phase2, phase3, phase4, phase5, phase6, phase7, phase8` (9 phases, 26 agents total via `PHASE_AGENTS`).
+- `PHASE_ORDER`: `phase0, phase1, phase1b, phase2, phase3, phase3b, phase4, phase5, phase6, phase7, phase8` (11 phases, 30 agents total via `PHASE_AGENTS`).
 - `PARALLEL_PHASES`: `phase2, phase3, phase4, phase7, phase8` run their agents concurrently (via a shared `PQueue` with `concurrency: 3`); all other phases run agents sequentially.
-- `REVIEW_GATES`: `gate1` (after phase1b), `gate2_3` (after phase3), `gate5` (after phase5), `gate6` (after phase6).
+- `REVIEW_GATES`: `gate1` (after phase1 + phase1b), `gate2` (after phase2), `gate3` (after phase3 + phase3b), `gate5` (after phase5), `gate6` (exploratory — no phases required, no approval gate).
 - Two derived lookup tables are built at module load:
   - `GATE_BEFORE_PHASE`: maps the *last phase before a gate* → gate id (used to detect "did we just finish a phase that a gate sits after").
   - `GATE_AFTER_PHASE_INDEX`: maps gate id → index of the *first phase after* the gate (used to detect "is there an unapproved gate blocking the phase we're about to start").

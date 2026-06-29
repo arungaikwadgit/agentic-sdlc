@@ -8,6 +8,35 @@ import type { Project } from '@/types/project.types';
 import type { IntegrationCredential } from '@/types/integration.types';
 import type { ProjectDocument } from '@/types/extraction.types';
 
+// ── Backlog item (admin enhancement backlog) ───────────────────────────────────
+export interface BacklogItem {
+  id: string;
+  title: string;
+  description: string;
+  category: 'security' | 'performance' | 'ux' | 'devops' | 'feature' | 'testing' | 'tech-debt';
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  status: 'open' | 'in-progress' | 'done' | 'archived';
+  source: 'ai-suggested' | 'admin-added' | 'assessment';
+  createdAt: number;
+  updatedAt: number;
+  notes?: string;
+}
+
+// ── Test run result (admin test runner) ────────────────────────────────────────
+export interface TestRunResult {
+  id: string;
+  suite: 'unit' | 'e2e' | 'performance' | 'security';
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'error';
+  startedAt: number;
+  finishedAt?: number;
+  durationMs?: number;
+  passed?: number;
+  failed?: number;
+  skipped?: number;
+  output?: string;
+  triggeredBy: string;
+}
+
 export interface AppSettings {
   key: string;
   value: unknown;
@@ -18,6 +47,8 @@ export class AppDatabase extends Dexie {
   integrations!: Table<IntegrationCredential, string>;
   settings!: Table<AppSettings, string>;
   projectDocuments!: Table<ProjectDocument, string>;
+  backlogItems!: Table<BacklogItem, string>;
+  testRuns!: Table<TestRunResult, string>;
 
   constructor() {
     super('AgenticSDLC');
@@ -107,18 +138,26 @@ export class AppDatabase extends Dexie {
         if (!p.sourceDocumentIds) p.sourceDocumentIds = [];
       });
     });
+
+    // v7: add backlogItems (admin enhancement backlog) and testRuns (admin test runner)
+    this.version(7).stores({
+      projects:         'id, domain, status, createdAt, updatedAt',
+      integrations:     'id, provider',
+      settings:         'key',
+      projectDocuments: 'id, projectId, uploadedAt',
+      backlogItems:     'id, status, priority, category, createdAt',
+      testRuns:         'id, suite, status, startedAt',
+    });
   }
 }
 
 export const db = new AppDatabase();
 
 // M-07 fix: catch IndexedDB quota exceeded and private-browsing errors.
-// Without this, Dexie failures surface as silent promise rejections or
-// cryptic "UnknownError" messages. We surface a user-visible toast instead.
 db.open().catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);
-  const isQuota  = /quota/i.test(msg) || (err as { name?: string })?.name === 'QuotaExceededError';
-  const isBlock  = /blocked/i.test(msg);
+  const isQuota   = /quota/i.test(msg) || (err as { name?: string })?.name === 'QuotaExceededError';
+  const isBlock   = /blocked/i.test(msg);
   const isPrivate = /private/i.test(msg) || /access/i.test(msg);
 
   let userMsg = 'Storage error: could not open the local database.';
@@ -126,8 +165,6 @@ db.open().catch((err: unknown) => {
   if (isBlock)   userMsg = 'Database upgrade blocked — please close other tabs of this app and reload.';
   if (isPrivate) userMsg = 'Local storage unavailable — Private Browsing mode may block IndexedDB. Some features will not work.';
 
-  // Show a non-dismissible banner rather than a transient toast so the user
-  // actually sees it before attempting to do anything.
   const banner = document.createElement('div');
   banner.setAttribute('role', 'alert');
   banner.style.cssText = [

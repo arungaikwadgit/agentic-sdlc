@@ -92,8 +92,9 @@ function rowToProject(row: ApiProjectRow): Project {
     archivedReason:   blob.archivedReason,
     archivedAt:       blob.archivedAt,
     archivedBy:       blob.archivedBy,
-    activeAdminId:    blob.activeAdminId,
-    mode:             (blob.mode as Project['mode']) ?? 'simple',
+    activeAdminId:      blob.activeAdminId,
+    mode:               (blob.mode as Project['mode']) ?? 'simple',
+    mockupVersionCount: typeof blob.mockupVersionCount === 'number' ? blob.mockupVersionCount : undefined,
   };
 }
 
@@ -120,6 +121,7 @@ function projectToPayload(p: Project): ApiCreatePayload {
       archivedBy:         p.archivedBy,
       activeAdminId:      p.activeAdminId,
       mode:               p.mode,
+      mockupVersionCount: p.mockupVersionCount,
     },
   };
 }
@@ -292,12 +294,33 @@ export async function exportAllProjects(): Promise<string> {
   return JSON.stringify({ version: 1, exportedAt: Date.now(), projects }, null, 2);
 }
 
+/**
+ * Validates that an imported object has the minimum fields required for a
+ * Project to be safely inserted.  Rejects nulls, non-objects, and anything
+ * missing the three fields every downstream consumer depends on.
+ */
+function isValidProjectShape(p: unknown): p is Project {
+  if (!p || typeof p !== 'object') return false;
+  const obj = p as Record<string, unknown>;
+  return (
+    typeof obj.id          === 'string' && obj.id.trim() !== '' &&
+    typeof obj.name        === 'string' && obj.name.trim() !== '' &&
+    typeof obj.description === 'string' &&
+    typeof obj.domain      === 'string' &&
+    (obj.agentRuns === undefined || (typeof obj.agentRuns === 'object' && obj.agentRuns !== null))
+  );
+}
+
 export async function importProjects(json: string): Promise<number> {
   const data = JSON.parse(json);
   if (!data.projects || !Array.isArray(data.projects)) throw new Error('Invalid backup format');
 
   let count = 0;
-  for (const p of data.projects as Project[]) {
+  for (const p of data.projects as unknown[]) {
+    if (!isValidProjectShape(p)) {
+      console.warn('[importProjects] Skipping invalid project entry:', p);
+      continue;
+    }
     if (isAdminMode()) {
       await db.projects.put({ ...p, ownerId: p.ownerId || ADMIN_USER_ID });
     } else {

@@ -159,11 +159,68 @@ async function downloadZip(proto: ParsedPrototype, projectName: string): Promise
   URL.revokeObjectURL(url);
 }
 
+// ── External Theme Studio — types, constants ──────────────────────────────
+
+interface ThemeState {
+  preset: string;
+  dark: boolean;
+  font: string;
+  primary: string;
+  radius: number;
+  spacing: number;
+}
+
+const DEFAULT_THEME: ThemeState = {
+  preset: 'Default',
+  dark: false,
+  font: 'Inter, system-ui, sans-serif',
+  primary: '#6366f1',
+  radius: 8,
+  spacing: 8,
+};
+
+const PRESETS: Record<string, Record<string, string>> = {
+  Default:  { '--color-primary': '#6366f1', '--color-secondary': '#a5b4fc' },
+  Ocean:    { '--color-primary': '#0ea5e9', '--color-secondary': '#7dd3fc' },
+  Forest:   { '--color-primary': '#22c55e', '--color-secondary': '#86efac' },
+  Sunset:   { '--color-primary': '#f97316', '--color-secondary': '#fdba74' },
+  Violet:   { '--color-primary': '#a855f7', '--color-secondary': '#d8b4fe' },
+  Midnight: { '--color-primary': '#818cf8', '--color-secondary': '#a5b4fc' },
+};
+
+const DARK_VARS: Record<string, string> = {
+  '--color-bg':         '#0f172a',
+  '--color-surface':    '#1e293b',
+  '--color-text':       '#e2e8f0',
+  '--color-text-muted': '#94a3b8',
+  '--color-border':     '#334155',
+};
+
+const LIGHT_VARS: Record<string, string> = {
+  '--color-bg':         '#f8fafc',
+  '--color-surface':    '#ffffff',
+  '--color-text':       '#1e293b',
+  '--color-text-muted': '#64748b',
+  '--color-border':     '#e2e8f0',
+};
+
+const FONTS = [
+  { label: 'Inter',   value: 'Inter, system-ui, sans-serif' },
+  { label: 'Roboto',  value: 'Roboto, sans-serif' },
+  { label: 'Georgia', value: 'Georgia, serif' },
+  { label: 'Mono',    value: "'JetBrains Mono', 'Fira Code', monospace" },
+  { label: 'Poppins', value: 'Poppins, sans-serif' },
+];
+
 // ── Preview iframe ────────────────────────────────────────────────────────
 
 function PreviewFrame({ html }: { html: string }) {
   const [height, setHeight] = useState(720);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeState>(DEFAULT_THEME);
+  // Mutable ref so handleLoad can read the latest theme without stale closures
+  const themeRef = useRef<ThemeState>(DEFAULT_THEME);
 
   const blobUrl = useMemo(() => {
     const blob = new Blob([html], { type: 'text/html' });
@@ -174,26 +231,205 @@ function PreviewFrame({ html }: { html: string }) {
     return () => { URL.revokeObjectURL(blobUrl); };
   }, [blobUrl]);
 
+  // Stable: injects a <style> tag with !important overrides so changes apply
+  // immediately regardless of whether the prototype uses CSS variables or
+  // hardcoded values.
+  const applyTheme = useCallback((t: ThemeState) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+
+    const preset   = PRESETS[t.preset] ?? PRESETS.Default;
+    const primary  = t.primary || preset['--color-primary'];
+    const mode     = t.dark ? DARK_VARS : LIGHT_VARS;
+    const bg       = mode['--color-bg'];
+    const surface  = mode['--color-surface'];
+    const text     = mode['--color-text'];
+    const muted    = mode['--color-text-muted'];
+    const border   = mode['--color-border'];
+
+    // Remove previous injection before re-adding
+    doc.getElementById('__theme_studio__')?.remove();
+
+    const style = doc.createElement('style');
+    style.id = '__theme_studio__';
+    style.textContent = `
+      :root {
+        --color-primary:    ${primary} !important;
+        --color-secondary:  ${preset['--color-secondary'] ?? primary} !important;
+        --color-bg:         ${bg} !important;
+        --color-surface:    ${surface} !important;
+        --color-text:       ${text} !important;
+        --color-text-muted: ${muted} !important;
+        --color-border:     ${border} !important;
+        --font-family:      ${t.font} !important;
+        --radius:           ${t.radius}px !important;
+        --spacing-base:     ${t.spacing}px !important;
+      }
+      html, body {
+        background-color: ${bg} !important;
+        color: ${text} !important;
+        font-family: ${t.font} !important;
+      }
+      * { font-family: ${t.font} !important; }
+      nav, header, .navbar, .nav, .header, .topbar,
+      [class*="navbar"], [class*="topbar"], [class*="header"]:not(h1):not(h2):not(h3):not(h4) {
+        background-color: ${primary} !important;
+        color: #fff !important;
+      }
+      nav *, header *, .navbar *, [class*="navbar"] *, [class*="topbar"] * { color: #fff !important; }
+      a { color: ${primary} !important; }
+      button[class*="primary"], .btn-primary, [class*="btn-primary"],
+      button[class*="cta"], [class*="cta-btn"], .primary-action {
+        background-color: ${primary} !important;
+        border-color: ${primary} !important;
+        color: #fff !important;
+      }
+      button, .btn, input, select, textarea,
+      .card, [class*="card"], .panel, [class*="panel"],
+      .modal, [class*="modal"], .dialog, [class*="dialog"] {
+        border-radius: ${t.radius}px !important;
+      }
+      .card, [class*="card"], .panel, [class*="panel"], section, article,
+      .surface, [class*="surface"], .container > div {
+        background-color: ${surface} !important;
+        border-color: ${border} !important;
+        color: ${text} !important;
+      }
+      p, span, li, td, th, label, h1, h2, h3, h4, h5, h6 { color: ${text} !important; }
+      .text-muted, [class*="muted"], [class*="subtitle"], small { color: ${muted} !important; }
+      hr, [class*="divider"], [class*="separator"] { border-color: ${border} !important; }
+    `;
+    (doc.head ?? doc.documentElement).appendChild(style);
+  }, []);
+
   const handleLoad = useCallback(() => {
     try {
       const doc = iframeRef.current?.contentDocument;
       if (doc) {
         const h = Math.max(720, doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0);
         setHeight(h);
+        // Re-apply current theme into the freshly-loaded iframe
+        applyTheme(themeRef.current);
       }
-    } catch { /* cross-origin */ }
-  }, []);
+    } catch { /* cross-origin — shouldn't happen with blob URL + allow-same-origin */ }
+  }, [applyTheme]);
+
+  const updateTheme = useCallback((patch: Partial<ThemeState>) => {
+    setTheme(prev => {
+      const next = { ...prev, ...patch };
+      themeRef.current = next;
+      applyTheme(next);
+      return next;
+    });
+  }, [applyTheme]);
 
   return (
-    <iframe
-      ref={iframeRef}
-      src={blobUrl}
-      className={styles.previewIframe}
-      style={{ height }}
-      sandbox="allow-scripts allow-same-origin"
-      title="Working Prototype Preview"
-      onLoad={handleLoad}
-    />
+    <div className={styles.previewWrapper}>
+      <iframe
+        ref={iframeRef}
+        src={blobUrl}
+        className={styles.previewIframe}
+        style={{ height }}
+        sandbox="allow-scripts allow-same-origin"
+        title="Working Prototype Preview"
+        onLoad={handleLoad}
+      />
+
+      {/* ── External Theme Studio ─────────────────────────────────────── */}
+      <button
+        className={styles.themeFab}
+        onClick={() => setStudioOpen(v => !v)}
+        title="Theme Studio"
+        aria-label="Open Theme Studio"
+      >
+        🎨
+      </button>
+
+      {studioOpen && (
+        <div className={styles.themePanel}>
+          <div className={styles.themePanelHeader}>
+            <span>🎨 Theme Studio</span>
+            <button
+              className={styles.themePanelClose}
+              onClick={() => setStudioOpen(false)}
+              aria-label="Close Theme Studio"
+            >✕</button>
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeSectionLabel}>Presets</div>
+            <div className={styles.presetSwatches}>
+              {(Object.keys(PRESETS) as string[]).map(name => (
+                <button
+                  key={name}
+                  className={`${styles.swatchBtn} ${theme.preset === name ? styles.swatchActive : ''}`}
+                  style={{ background: PRESETS[name]['--color-primary'] }}
+                  onClick={() => updateTheme({ preset: name, primary: PRESETS[name]['--color-primary'] })}
+                  title={name}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeToggleRow}>
+              <span className={styles.themeSectionLabel}>Dark Mode</span>
+              <div
+                className={`${styles.toggleSwitch} ${theme.dark ? styles.toggleOn : ''}`}
+                onClick={() => updateTheme({ dark: !theme.dark })}
+                role="switch"
+                aria-checked={theme.dark}
+                tabIndex={0}
+                onKeyDown={e => e.key === 'Enter' && updateTheme({ dark: !theme.dark })}
+              >
+                <div className={styles.toggleKnob} />
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeSectionLabel}>Primary Color</div>
+            <input
+              type="color"
+              value={theme.primary}
+              onChange={e => updateTheme({ preset: 'Custom', primary: e.target.value })}
+              className={styles.colorInput}
+            />
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeSectionLabel}>Font Family</div>
+            <select
+              value={theme.font}
+              onChange={e => updateTheme({ font: e.target.value })}
+              className={styles.themeSelect}
+            >
+              {FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeSectionLabel}>Border Radius — {theme.radius}px</div>
+            <input
+              type="range" min={0} max={24}
+              value={theme.radius}
+              onChange={e => updateTheme({ radius: Number(e.target.value) })}
+              className={styles.themeSlider}
+            />
+          </div>
+
+          <div className={styles.themeSection}>
+            <div className={styles.themeSectionLabel}>Spacing — {theme.spacing}px</div>
+            <input
+              type="range" min={4} max={16} step={2}
+              value={theme.spacing}
+              onChange={e => updateTheme({ spacing: Number(e.target.value) })}
+              className={styles.themeSlider}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -230,7 +466,7 @@ function FileViewer({ file }: { file: ParsedFile }) {
   );
 }
 
-// ── File tree sidebar ─────────────────────────────────────────────────────
+// ── File tree sidebar ─────────────────────────────────────────
 
 function FileTree({
   files, selected, onSelect,
@@ -276,7 +512,7 @@ function FileTree({
   );
 }
 
-// ── Raw markdown viewer (for Spec tab) ───────────────────────────────────
+// ── Raw markdown viewer (for Spec tab) ───────────────────────
 
 function SpecView({ markdown }: { markdown: string }) {
   return (
@@ -284,7 +520,7 @@ function SpecView({ markdown }: { markdown: string }) {
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────
+// ── Main component ────────────────────────────────────────────
 
 export default function PrototypeViewer({
   markdown,
@@ -322,7 +558,6 @@ export default function PrototypeViewer({
   }, [proto.previewHtml, projectName]);
 
   if (proto.files.length === 0 && !proto.previewHtml) {
-    // Fallback: no file blocks found — show the raw output as spec
     return (
       <div className={styles.root}>
         <div className={styles.emptyNote}>
@@ -338,7 +573,7 @@ export default function PrototypeViewer({
 
   return (
     <div className={styles.root}>
-      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
+      {/* ── Toolbar ─────────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
         <div className={styles.tabs}>
           {proto.previewHtml && (
@@ -384,12 +619,11 @@ export default function PrototypeViewer({
         </div>
       </div>
 
-      {/* ── Content area ────────────────────────────────────────────────── */}
+      {/* ── Content area ──────────────────────────────────────────────── */}
       {tab === 'preview' && proto.previewHtml && (
         <div className={styles.previewArea}>
           <div className={styles.previewNote}>
-            💡 The prototype includes a built-in <strong>🎨 Theme Studio</strong> (bottom-right button) —
-            change colors, fonts, dark/light mode and more in real time.
+            💡 Click the <strong>🎨</strong> button (bottom-right of screen) to customize colors, fonts, dark mode, and more in real time.
           </div>
           <PreviewFrame html={proto.previewHtml} />
         </div>

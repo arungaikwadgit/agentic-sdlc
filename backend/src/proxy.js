@@ -404,6 +404,52 @@ app.post('/api/agent', checkToken, async (req, res) => {
   }
 });
 
+// Alias — newer frontend builds call /api/agents/call; route to the same handler
+app.post('/api/agents/call', checkToken, async (req, res) => {
+  // Delegate to /api/agent handler by reusing the same logic inline
+  const { systemPrompt, userPrompt, testMode, agentId, provider: requestedProvider } = req.body ?? {};
+
+  if (!systemPrompt || !userPrompt)
+    return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
+
+  const INJECTION_PATTERNS = [
+    /ignore previous/i, /ignore rules/i, /ignore (all )?instructions/i,
+    /forget your instructions/i, /disregard (all )?previous/i,
+    /you are now/i, /override (your )?system/i, /bypass (the )?filter/i,
+  ];
+  const combinedPrompt = `${systemPrompt} ${userPrompt}`;
+  for (const pattern of INJECTION_PATTERNS) {
+    if (pattern.test(combinedPrompt)) {
+      return res.status(400).json({ error: 'Request rejected: potential prompt injection detected.' });
+    }
+  }
+
+  const provider = resolveProvider(requestedProvider, agentId);
+  const model = provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL;
+
+  if (testMode) {
+    return res.json({
+      choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      provider,
+      model,
+    });
+  }
+
+  try {
+    const result = await withRetry(() =>
+      provider === 'claude'
+        ? callClaude(systemPrompt, userPrompt)
+        : callOpenAi(systemPrompt, userPrompt)
+    );
+    return res.json({ ...result, provider, model });
+  } catch (err) {
+    console.error('Proxy error:', err.message);
+    const status = err.status ?? 502;
+    return res.status(status).json({ error: err.message, raw: err.raw });
+  }
+});
+
 // ── Fetch site (for Branding Guidelines "replicate this site") ───────────────
 // Fetches a URL's HTML and extracts a compact summary of branding signals:
 // title, meta description, theme-color, og:* tags, inline <style> blocks,

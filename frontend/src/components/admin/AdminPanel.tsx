@@ -19,9 +19,11 @@ import { isSupabaseConfigured } from '@/lib/supabase';
 import { getAuthHeader } from '@/services/api';
 import { db } from '@/db/database';
 import type { Project } from '@/types/project.types';
+import BacklogTab from './BacklogTab';
+import TestsTab from './TestsTab';
 import styles from './AdminPanel.module.css';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001';
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ interface BackendSettings {
   appUrl: string;
 }
 
-type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend';
+type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend' | 'tests' | 'backlog';
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
@@ -60,7 +62,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             <span className={styles.headerIcon}>🛡</span>
             <div>
               <div className={styles.headerTitle}>Admin Super Panel</div>
-              <div className={styles.headerSub}>© 2025 Arun Gaikwad · Proprietary · Confidential</div>
+              <div className={styles.headerSub}>© 2026 Arun Gaikwad · Proprietary · Confidential</div>
             </div>
           </div>
           <button className={styles.closeBtn} onClick={onClose}>✕</button>
@@ -68,16 +70,18 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
         {/* Tabs */}
         <div className={styles.tabs}>
-          {(['health', 'projects', 'agents', 'backend', 'settings'] as Tab[]).map((t) => (
+          {(['health', 'projects', 'agents', 'backend', 'tests', 'backlog', 'settings'] as Tab[]).map((t) => (
             <button
               key={t}
-              className={`${styles.tab} ${tab === t ? styles.tabActive : ''}`}
+              className={styles.tab + (tab === t ? ' ' + styles.tabActive : '')}
               onClick={() => setTab(t)}
             >
               {t === 'health'   ? '🩺 Health'    :
                t === 'projects' ? '📁 Projects'  :
                t === 'agents'   ? '🤖 Agents'    :
-               t === 'backend'  ? '⚡ Backend'   : '⚙️ Settings'}
+               t === 'backend'  ? '⚡ Backend'   :
+               t === 'tests'    ? '🧪 Tests'     :
+               t === 'backlog'  ? '📋 Backlog'   : '⚙️ Settings'}
             </button>
           ))}
         </div>
@@ -88,6 +92,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
           {tab === 'projects' && <ProjectsTab />}
           {tab === 'agents'   && <AgentsTab />}
           {tab === 'backend'  && <BackendTab />}
+          {tab === 'tests'    && <TestsTab />}
+          {tab === 'backlog'  && <BacklogTab />}
           {tab === 'settings' && <SettingsTab />}
         </div>
       </div>
@@ -124,16 +130,24 @@ function HealthTab() {
       results.push({ label: 'API Server (proxy)', status: 'error', detail: `Cannot reach ${API_URL}/health` });
     }
 
-    // Agent Runtime (port 4000)
-    const runtimeUrl = API_URL.replace(/:3001$/, ':4000').replace(/:3000$/, ':4000');
-    try {
-      const r = await fetch(`${runtimeUrl}/health`, { signal: AbortSignal.timeout(4000) });
-      const j = await r.json();
-      results.push({ label: 'Agent Runtime (port 4000)', status: 'ok',
-        detail: `${runtimeUrl} · status:${j.status ?? 'ok'}` });
-    } catch {
-      results.push({ label: 'Agent Runtime (port 4000)', status: 'warn',
-        detail: `Not reachable at ${runtimeUrl} (normal if single-process mode)` });
+    // Agent Runtime — optional observability service.
+    // Only probe it when VITE_RUNTIME_URL is explicitly configured;
+    // otherwise skip to avoid ERR_CONNECTION_REFUSED noise.
+    const runtimeUrl = import.meta.env.VITE_RUNTIME_URL as string | undefined;
+    if (runtimeUrl) {
+      try {
+        // Route through the Vite /runtime proxy (injects x-api-token server-side)
+        const r = await fetch('/runtime/health', { signal: AbortSignal.timeout(4000) });
+        const j = await r.json();
+        results.push({ label: 'Agent Runtime', status: 'ok',
+          detail: `${runtimeUrl} · status:${(j as { status?: string }).status ?? 'ok'}` });
+      } catch {
+        results.push({ label: 'Agent Runtime', status: 'warn',
+          detail: `Configured (${runtimeUrl}) but not reachable` });
+      }
+    } else {
+      results.push({ label: 'Agent Runtime', status: 'ok',
+        detail: 'Not configured — VITE_RUNTIME_URL unset (optional observability service)' });
     }
 
     // Supabase config
@@ -163,7 +177,7 @@ function HealthTab() {
     // LLM connectivity (lightweight ping via /api/settings to verify backend has keys)
     try {
       const headers = await getAuthHeader();
-      const r = await fetch(`${API_URL}/api/settings`, { headers, signal: AbortSignal.timeout(5000) });
+      const r = await fetch(`${API_URL}/settings`, { headers, signal: AbortSignal.timeout(5000) });
       if (r.ok) {
         const j = await r.json() as BackendSettings;
         const provider = j.defaultLlmProvider || 'openai';
@@ -205,7 +219,7 @@ function HealthTab() {
       </div>
       {checks.map((c) => (
         <div key={c.label} className={styles.checkRow}>
-          <span className={`${styles.badge} ${styles[`badge_${c.status}`]}`}>
+          <span className={styles.badge + ' ' + (styles as Record<string, string>)['badge_' + c.status]}>
             {c.status === 'checking' ? '…' : c.status === 'ok' ? '✓' : c.status === 'warn' ? '!' : '✗'}
           </span>
           <div>
@@ -290,7 +304,7 @@ function ProjectsTab() {
         {projects.map(p => (
           <div
             key={p.id}
-            className={`${styles.listItem} ${selected === p.id ? styles.listItemActive : ''}`}
+            className={styles.listItem + (selected === p.id ? ' ' + styles.listItemActive : '')}
             onClick={() => setSelected(p.id)}
           >
             <div className={styles.listItemName}>{p.name}</div>
@@ -327,7 +341,7 @@ function ProjectsTab() {
                 </div>
                 {gates.map(([key, passed]) => (
                   <div key={key} className={styles.gateRow}>
-                    <span className={`${styles.badge} ${passed ? styles.badge_ok : styles.badge_warn}`}>
+                    <span className={styles.badge + ' ' + (passed ? styles.badge_ok : styles.badge_warn)}>
                       {passed ? '✓' : '!'}
                     </span>
                     <span className={styles.gateLabel}>{key}</span>
@@ -395,7 +409,7 @@ function AgentsTab() {
         {projects.map(p => (
           <div
             key={p.id}
-            className={`${styles.listItem} ${selected === p.id ? styles.listItemActive : ''}`}
+            className={styles.listItem + (selected === p.id ? ' ' + styles.listItemActive : '')}
             onClick={() => setSelected(p.id)}
           >
             <div className={styles.listItemName}>{p.name}</div>
@@ -461,7 +475,7 @@ function BackendTab() {
     setMessage('');
     try {
       const headers = await getAuthHeader();
-      const r = await fetch(`${API_URL}/api/settings`, { headers, signal: AbortSignal.timeout(6000) });
+      const r = await fetch(`${API_URL}/settings`, { headers, signal: AbortSignal.timeout(6000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json() as BackendSettings;
       setSettings(j);
@@ -508,7 +522,7 @@ function BackendTab() {
       if (newAnthKey.trim())     body.anthropicApiKey = newAnthKey.trim();
       if (newProxyToken.trim())  body.proxyToken      = newProxyToken.trim();
 
-      const r = await fetch(`${API_URL}/api/settings`, {
+      const r = await fetch(`${API_URL}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
@@ -614,12 +628,139 @@ function BackendTab() {
           {saving ? 'Saving…' : '💾 Save to Backend .env'}
         </button>
       </div>
+
+      {/* ── SDLC Enhancement Roadmap ─────────────────────────────────────── */}
+      <div className={styles.sectionHeader} style={{ marginTop: '2rem' }}>
+        🚀 SDLC Enhancement Roadmap
+        <span className={styles.checkDetail} style={{ marginLeft: 8, fontWeight: 400 }}>
+          Prioritised by business value &amp; 2026 market demand
+        </span>
+      </div>
+      <div className={styles.checkDetail} style={{ marginBottom: '10px' }}>
+        Research-backed enhancements for the Agentic SDLC platform, ranked by ROI and adoption velocity.
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: 'var(--surface-alt, #f1f5f9)', textAlign: 'left' }}>
+              <th style={{ padding: '6px 10px', borderBottom: '2px solid var(--border)', width: 32 }}>#</th>
+              <th style={{ padding: '6px 10px', borderBottom: '2px solid var(--border)' }}>Enhancement</th>
+              <th style={{ padding: '6px 10px', borderBottom: '2px solid var(--border)', width: 100 }}>Business Value</th>
+              <th style={{ padding: '6px 10px', borderBottom: '2px solid var(--border)', width: 90 }}>Demand</th>
+              <th style={{ padding: '6px 10px', borderBottom: '2px solid var(--border)' }}>Key Metric / Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SDLC_ENHANCEMENTS.map((e, i) => (
+              <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--surface-alt, #f8fafc)' }}>
+                <td style={{ padding: '6px 10px', fontWeight: 700, color: 'var(--accent)' }}>{i + 1}</td>
+                <td style={{ padding: '6px 10px' }}>
+                  <div style={{ fontWeight: 600 }}>{e.name}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 2 }}>{e.description}</div>
+                </td>
+                <td style={{ padding: '6px 10px' }}>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                    background: e.value === 'Very High' ? '#dcfce7' : e.value === 'High' ? '#dbeafe' : '#fef9c3',
+                    color:      e.value === 'Very High' ? '#15803d' : e.value === 'High' ? '#1d4ed8' : '#854d0e',
+                  }}>{e.value}</span>
+                </td>
+                <td style={{ padding: '6px 10px' }}>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                    background: e.demand === 'Explosive' ? '#fce7f3' : e.demand === 'Very High' ? '#ede9fe' : '#f1f5f9',
+                    color:      e.demand === 'Explosive' ? '#9d174d'  : e.demand === 'Very High' ? '#6d28d9' : '#475569',
+                  }}>{e.demand}</span>
+                </td>
+                <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>{e.metric}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className={styles.checkDetail} style={{ marginTop: 8 }}>
+        Sources: Gartner 2026, Stack Overflow Developer Survey, Google Developer Survey, Qodo AI Code Quality Report, PwC Agentic SDLC Report, LTM SDLC AI Radar 2026.
+      </div>
     </div>
   );
 }
 
-// ── Settings Tab ──────────────────────────────────────────────────────────────
+// ── SDLC Enhancement Data ─────────────────────────────────────────────────────
 
+const SDLC_ENHANCEMENTS = [
+  {
+    name: 'Agentic SDLC Automation',
+    description: 'Autonomous agents handle planning, coding, testing, review, and deployment end-to-end.',
+    value: 'Very High',
+    demand: 'Explosive',
+    metric: 'Planning: weeks → hours. Teams ship multiple times/week. PwC 2026 flagship trend.',
+  },
+  {
+    name: 'AI Code Generation & Copilots',
+    description: 'Inline AI assistants (Copilot, Cursor, CodeWhisperer) embedded in IDE/terminal.',
+    value: 'Very High',
+    demand: 'Very High',
+    metric: '84% of devs using or planning to use AI. 51% use daily. 30-55% dev time reduction.',
+  },
+  {
+    name: 'AI Code Review & Quality Gates',
+    description: 'Automated PR review, defect detection, and code quality scoring before merge.',
+    value: 'High',
+    demand: 'Very High',
+    metric: 'Qodo 2026: AI code review raised quality improvement rate from 55% → 81%.',
+  },
+  {
+    name: 'DevSecOps Integration',
+    description: 'Security scanning, SAST/DAST, and compliance checks embedded into every SDLC stage.',
+    value: 'High',
+    demand: 'Very High',
+    metric: 'Market CAGR 28.1%, reaching $24.43B by 2029. Now a compliance baseline.',
+  },
+  {
+    name: 'Observability & AIOps',
+    description: 'Distributed tracing, AI-driven anomaly detection, and predictive incident response.',
+    value: 'High',
+    demand: 'Very High',
+    metric: '2.6× average ROI on observability spend. 30-50% downtime reduction via AI triage.',
+  },
+  {
+    name: 'Platform Engineering & Internal Dev Portals',
+    description: 'Self-service developer platforms with golden paths, templates, and guardrails.',
+    value: 'High',
+    demand: 'High',
+    metric: '10-20% code velocity increase, 20% fewer critical incidents. Gartner Top 10 trend.',
+  },
+  {
+    name: 'AI-Powered Test Generation',
+    description: 'Automated unit, integration, and E2E test authoring from code and requirements.',
+    value: 'High',
+    demand: 'High',
+    metric: 'Eliminates QA bottleneck. 40-60% test coverage increase with no manual effort.',
+  },
+  {
+    name: 'CI/CD Pipeline Intelligence',
+    description: 'AI-optimised build routing, flaky test detection, and smart deployment gates.',
+    value: 'High',
+    demand: 'High',
+    metric: 'Multiple daily releases without quality regression. Reduces pipeline wait 35%.',
+  },
+  {
+    name: 'AI Requirements & Documentation',
+    description: 'Auto-generate PRDs, specs, and API docs from briefs, code, and user stories.',
+    value: 'Medium-High',
+    demand: 'High',
+    metric: 'Spec generation: days → hours. 50%+ reduction in documentation debt.',
+  },
+  {
+    name: 'Low-Code / No-Code Integration',
+    description: 'Citizen developer tools for non-technical teams — workflows, dashboards, automations.',
+    value: 'Medium-High',
+    demand: 'High',
+    metric: 'Market $44.5B by 2026. 80% of users outside IT by 2026 (Gartner).',
+  },
+] as const;
+
+// ── Settings Tab ───────────�
 function SettingsTab() {
   const [message, setMessage] = useState('');
 
@@ -666,7 +807,7 @@ function SettingsTab() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `agentic-sdlc-backup-${Date.now()}.json`;
+    a.download = 'agentic-sdlc-backup-' + Date.now() + '.json';
     a.click();
     URL.revokeObjectURL(url);
     setMessage('Export downloaded');
@@ -750,17 +891,17 @@ function SettingsTab() {
           className={styles.smallBtn}
           onClick={() => { sessionStorage.removeItem('__admin_mode'); location.reload(); }}
         >
-          Exit Admin Mode & Reload
+          Exit Admin Mode &amp; Reload
         </button>
         <button className={styles.dangerBtn} onClick={() => { localStorage.clear(); sessionStorage.clear(); location.reload(); }}>
-          ☢ Full Reset (clear all storage)
+          Full Reset (clear all storage)
         </button>
       </div>
 
       <div className={styles.copyright}>
-        Agentic SDLC Framework · © 2025 Arun Gaikwad<br/>
+        Agentic SDLC Framework - 2026 Arun Gaikwad<br/>
         All rights reserved. Proprietary &amp; Confidential.<br/>
-        <span style={{ opacity: 0.5 }}>Admin Panel v2.0 · {new Date().toLocaleDateString()}</span>
+        <span style={{ opacity: 0.5 }}>Admin Panel v2.0 - {new Date().toLocaleDateString()}</span>
       </div>
     </div>
   );

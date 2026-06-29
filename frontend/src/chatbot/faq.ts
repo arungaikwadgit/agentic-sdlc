@@ -44,7 +44,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['sdlc stage', 'sdlc stages', 'standard sdlc', 'which sdlc stage'],
     question: 'What are the SDLC stages and how do phases map to them?',
     answer:
-      'Each phase maps to a standard SDLC stage: Phase 1 and 1B → Initiation; Phase 2 → Requirements; Phase 3 → Design; Phase 3B → Design (Security Gate); Phase 4 → Development Planning; Phase 5 → Testing; Phase 7 → Deployment; Phase 8 → Operations & Maintenance.',
+      'Each phase maps to a standard SDLC stage: Phase 0 → Orchestration; Phase 1 and 1B → Initiation; Phase 2 → Requirements; Phase 3 → Design; Phase 3B → Design (Security Gate); Phase 4 → Development Planning; Phase 5 → Testing; Phase 6 → Prototype; Phase 7 → Deployment; Phase 8 → Operations & Maintenance.',
   },
   {
     id: 'agents-overview',
@@ -58,7 +58,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['execute', 'execution', 'run agent', 'run pipeline', 'order', 'sequential', 'parallel', 'how are agents run', 'pipeline'],
     question: 'How are agents executed?',
     answer:
-      'Agents run phase by phase. Within phases 2, 3, 4, 7, and 8, agents run in parallel since they don\'t depend on each other. Other phases run sequentially. Some phase groups are followed by a review gate — a checkpoint that must be approved before the next phase unlocks.',
+      'Agents run phase by phase. Within phases 2, 3, 4, 7, and 8, agents run in parallel (max 3 at a time, staggered 1.5s apart) since they don\'t depend on each other. Other phases run sequentially. Some phase groups are followed by a review gate — a checkpoint that must be approved before the next phase unlocks.',
   },
   {
     id: 'review-gates',
@@ -151,6 +151,37 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     question: 'Can I resend or revoke an invite?',
     answer:
       'Yes. Open the project and click the "Team" button in the toolbar. Find the pending invite in the list — you can click "Resend" to generate a fresh magic link, or "Revoke" to cancel it immediately. You can also change a member\'s role at any time from the same panel. Only a Project Owner can resend, revoke, or change roles.',
+  },
+  // ── CONTEXT FILES ──────────────────────────────────────────────────────────
+  {
+    id: 'context-upload',
+    keywords: ['attach file', 'upload file', 'context file', 'context document', 'upload document', 'attach document', 'pdf upload', 'attach context', 'upload context'],
+    question: 'Can I attach documents as context for an agent?',
+    answer:
+      'Yes. Open any agent\'s Re-run panel and use the "Attach context file" area to upload up to 3 files — supported formats are PDF, Word (.docx), Excel (.xlsx/.xls), CSV, plain text, and images. The app extracts the text and passes it to the agent alongside the prompt. Attached files are saved to your project and persist across re-runs and page reloads so you don\'t need to re-upload them each time.',
+  },
+  // ── WORKING PROTOTYPE & THEME STUDIO ───────────────────────────────────────
+  {
+    id: 'working-prototype',
+    keywords: ['working prototype', 'prototype', 'phase 6', 'interactive prototype', 'live prototype'],
+    question: 'What does the Working Prototype agent produce?',
+    answer:
+      'Phase 6 generates a self-contained interactive HTML prototype built from the UX Mockups, Data Model, and API Design outputs. It renders as a live preview you can click through in the browser. Use the Theme Studio (🎨 button, bottom-right) to customize colors, fonts, border radius, and dark mode in real time without re-running the agent.',
+  },
+  {
+    id: 'theme-studio',
+    keywords: ['theme studio', 'theme', 'customize colors', 'change colors', 'palette', 'dark mode prototype', 'font prototype'],
+    question: 'What is Theme Studio?',
+    answer:
+      'Theme Studio is a floating editor (🎨 button, bottom-right of the Prototype preview) that lets you live-edit the prototype\'s visual design — primary color, surface color, border radius, font family, and dark mode — without re-running the agent. Changes apply instantly to the rendered prototype. It\'s only available when viewing a Working Prototype output.',
+  },
+  // ── ADMIN PANEL ────────────────────────────────────────────────────────────
+  {
+    id: 'admin-panel',
+    keywords: ['admin panel', 'admin page', 'admin', 'secret page', 'test runner', 'backlog', 'enhancement backlog'],
+    question: 'Is there an admin panel?',
+    answer:
+      'Yes. Admins can access a hidden admin panel with three tabs: Backend (live read/write of app_settings in the database), Test Runner (run test suites against the live backend directly from the UI), and Enhancement Backlog (view and manage the product improvement backlog). The admin panel is only accessible to users with the admin role.',
   },
 ];
 

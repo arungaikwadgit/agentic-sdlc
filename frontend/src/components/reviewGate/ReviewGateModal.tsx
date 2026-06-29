@@ -88,6 +88,8 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   const [dryRunResult, setDryRunResult] = useState<string | null>(null);
   const [dryRunning, setDryRunning] = useState(false);
   const [injectionWarning, setInjectionWarning] = useState<string | null>(null);
+  // When true, the user has acknowledged the injection warning and wants to proceed
+  const [injectionOverride, setInjectionOverride] = useState(false);
   const [promptSaved, setPromptSaved] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
@@ -188,14 +190,19 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   function handlePromptChange(value: string) {
     setEditedPrompt(value);
     setPromptSaved(false);
+    setInjectionOverride(false);
     const check = checkPromptInjection(value);
     setInjectionWarning(check.safe ? null : `⚠ Possible prompt injection detected: ${check.matchedPattern}`);
   }
 
-  async function runDryRun() {
+  async function runDryRun(forceRun = false) {
     if (!def) return;
-    if (injectionWarning) {
-      if (!confirm('Injection pattern detected. Run anyway?')) return;
+    // If there's an injection warning and the user hasn't explicitly overridden it,
+    // surface an inline confirmation instead of using the native confirm() dialog.
+    if (injectionWarning && !injectionOverride && !forceRun) {
+      // The JSX below shows a "Run anyway" button when injectionWarning is set
+      // and injectionOverride is false — clicking it calls runDryRun(true).
+      return;
     }
     setDryRunning(true);
     setDryRunResult(null);
@@ -292,7 +299,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                     key={member.id}
                     className={styles.assigneeBadge}
                     style={{ background: member.avatarColor }}
-                    title={`${member.name} (${member.role})`}
+                    title={member.name + ' (' + member.role + ')'}
                   >
                     {initials(member.name)}
                   </span>
@@ -329,7 +336,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
               return (
                 <button
                   key={agentId}
-                  className={`${styles.agentTab} ${selectedAgent === agentId ? styles.activeTab : ''}`}
+                  className={styles.agentTab + (selectedAgent === agentId ? ' ' + styles.activeTab : '')}
                   onClick={() => handleSelectAgent(agentId)}
                 >
                   <span style={{ color: r?.status === 'complete' ? 'var(--success)' : 'var(--text-muted)', fontSize: 12 }}>
@@ -406,7 +413,18 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                   </p>
                 )}
                 {injectionWarning && (
-                  <div className={styles.injectionWarning}>{injectionWarning}</div>
+                  <div className={styles.injectionWarning}>
+                    {injectionWarning}
+                    {!injectionOverride && (
+                      <button
+                        style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px' }}
+                        className="btn-secondary"
+                        onClick={() => { setInjectionOverride(true); runDryRun(true); }}
+                      >
+                        Run anyway
+                      </button>
+                    )}
+                  </div>
                 )}
                 <textarea
                   value={editedPrompt}
@@ -432,7 +450,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                   </p>
                 )}
                 <div className={styles.editActions}>
-                  <button className="btn-secondary" onClick={runDryRun} disabled={dryRunning}>
+                  <button className="btn-secondary" onClick={() => runDryRun()} disabled={dryRunning}>
                     {dryRunning ? '⟳ Running...' : '▷ Run & Update Output'}
                   </button>
                   <button

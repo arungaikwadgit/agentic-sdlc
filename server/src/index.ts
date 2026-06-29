@@ -20,9 +20,10 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 
-import projectsRouter from './routes/projects';
-import agentsRouter  from './routes/agents';
-import invitesRouter from './routes/invites';
+import projectsRouter   from './routes/projects';
+import agentsRouter     from './routes/agents';
+import invitesRouter    from './routes/invites';
+import adminTestsRouter from './routes/adminTests';
 import { supabaseAdmin } from './lib/supabase';
 
 /**
@@ -143,7 +144,7 @@ app.use('/api/', rateLimit({
 
 app.use('/api/agents/', rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 60, // raised from 20: 5 concurrent L3 agents × 3 iterations + retry headroom
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Agent call rate limit exceeded' },
@@ -151,8 +152,9 @@ app.use('/api/agents/', rateLimit({
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/projects', projectsRouter);
-app.use('/api/agents',  agentsRouter);
-app.use('/api/invites', invitesRouter);
+app.use('/api/agents',   agentsRouter);
+app.use('/api/invites',  invitesRouter);
+app.use('/api/admin',    adminTestsRouter);
 
 // ── Health check (enhanced) ───────────────────────────────────────────────────
 app.get('/health', async (_req: Request, res: Response) => {
@@ -214,6 +216,8 @@ function shutdown(signal: string) {
     process.exit(1);
   }, 10_000).unref();
 }
+
+
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));

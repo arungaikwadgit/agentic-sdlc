@@ -249,34 +249,22 @@ export class PipelineEngine {
       } else {
         // ── L2 path (original single-shot call) ─────────────────────────────
         // H-07 fix: 120s per-agent timeout
-        let resp = await api.callAgent({ systemPrompt, userPrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
+        const resp = await api.callAgent({ systemPrompt, userPrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
         output = api.extractText(resp);
         tokensUsed = resp.usage?.total_tokens ?? 0;
         respProvider = resp.provider;
         respModel = resp.model;
+      }
 
-        // The UX Mockups agent must return exactly 2 ```html fenced documents
-        // so the Preview tab can render them.
-        if (agentId === 'uxMockups') {
-          const htmlBlockCount = (output.match(/```html/g) ?? []).length;
-          if (htmlBlockCount < 2) {
-            const correctivePrompt = [
-              userPrompt,
-              `\n---\nYour previous response did not contain 2 valid \`\`\`html fenced code blocks (found ${htmlBlockCount}). Do not describe the screens in prose, and do not use image placeholder links (e.g. via.placeholder.com) or diagrams. Respond again with EXACTLY 2 \`\`\`html fenced code blocks, each a complete standalone HTML document starting with <!DOCTYPE html> and containing the actual mockup markup and inline <style>.`,
-            ].join('\n');
-
-            const retryResp = await api.callAgent({ systemPrompt, userPrompt: correctivePrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
-            const retryOutput = api.extractText(retryResp);
-            const retryHtmlBlockCount = (retryOutput.match(/```html/g) ?? []).length;
-
-            if (retryHtmlBlockCount > htmlBlockCount) {
-              resp = retryResp;
-              output = retryOutput;
-              tokensUsed += retryResp.usage?.total_tokens ?? 0;
-              respProvider = retryResp.provider;
-              respModel = retryResp.model;
-            }
-          }
+      // ── Corrective check for uxMockups — fires for BOTH L3 and L2 paths ──
+      if (agentId === 'uxMockups') {
+        const desiredHtmlCount = Math.min(Math.max(ctx.mockupVersionCount ?? 2, 1), 4);
+        const corrected = await applyUxMockupsCorrectiveCheck(systemPrompt, userPrompt, output, desiredHtmlCount, provider);
+        if (corrected.output !== output) {
+          output = corrected.output;
+          tokensUsed += corrected.extraTokens;
+          if (corrected.provider) respProvider = corrected.provider;
+          if (corrected.model) respModel = corrected.model;
         }
       }
 
@@ -331,6 +319,8 @@ export class PipelineEngine {
       teamRoster,
       brandingGuidelines: project.brandingGuidelines,
       techStack: project.techStack,
+      contextDocuments: project.contextDocuments,
+      mockupVersionCount: project.mockupVersionCount,
     };
   }
 }
@@ -350,12 +340,61 @@ export interface SingleAgentCallbacks {
   onError?: (error: string) => void;
 }
 
+export interface SingleAgentOptions {
+  /** Override the provider resolved from app-level hints. 'auto' behaves the same as omitting. */
+  providerOverride?: 'openai' | 'claude' | 'auto';
+}
+
+// ─── Shared corrective check for uxMockups ────────────────────────────────────
+// Fires after both L2 and L3 paths. If the LLM produced fewer HTML blocks than
+// `desiredHtmlCount`, retries once with a targeted corrective prompt.
+// Used by both PipelineEngine.runAgent and runSingleAgent so the logic never drifts.
+async function applyUxMockupsCorrectiveCheck(
+  systemPrompt: string,
+  userPrompt: string,
+  existingOutput: string,
+  desiredHtmlCount: number,
+  provider?: 'openai' | 'claude',
+): Promise<{ output: string; extraTokens: number; provider?: 'openai' | 'claude'; model?: string }> {
+  const htmlBlockCount = (existingOutput.match(/```html/g) ?? []).length;
+  if (htmlBlockCount >= desiredHtmlCount) {
+    return { output: existingOutput, extraTokens: 0 };
+  }
+  try {
+    const correctivePrompt =
+      userPrompt +
+      `\n---\nYour response contained ${htmlBlockCount} \`\`\`html fenced code block${
+        htmlBlockCount !== 1 ? 's' : ''
+      } but you must produce EXACTLY ${desiredHtmlCount}. Do not describe screens in prose, do not use placeholder image links (e.g. via.placeholder.com). Respond again with EXACTLY ${desiredHtmlCount} complete \`\`\`html fenced code blocks, each a full standalone HTML document starting with <!DOCTYPE html> and containing all mockup markup and inline <style>. Each version must use its assigned distinct color theme — no color overlap between versions.`;
+    const retryResp = await api.callAgent({
+      systemPrompt,
+      userPrompt: correctivePrompt,
+      agentId: 'uxMockups',
+      provider,
+      signal: AbortSignal.timeout(180_000),
+    });
+    const retryOutput = api.extractText(retryResp);
+    if ((retryOutput.match(/```html/g) ?? []).length > htmlBlockCount) {
+      return {
+        output: retryOutput,
+        extraTokens: retryResp.usage?.total_tokens ?? 0,
+        provider: retryResp.provider,
+        model: retryResp.model,
+      };
+    }
+  } catch {
+    /* corrective retry failed — keep original output */
+  }
+  return { output: existingOutput, extraTokens: 0 };
+}
+
 export async function runSingleAgent(
   projectId: string,
   agentId: AgentId,
   systemPromptOverride: string,
   callbacks: SingleAgentCallbacks = {},
   userPromptExtra = '',
+  options: SingleAgentOptions = {},
 ): Promise<void> {
   const def = AGENT_DEFINITIONS[agentId];
   if (!def) throw new Error(`Agent definition not found: ${agentId}`);
@@ -365,10 +404,15 @@ export async function runSingleAgent(
 
   callbacks.onStart?.();
 
-  // Resolve provider hint
+  // Resolve provider: explicit override → app-level hint → undefined (backend default)
   const providerHints = await getAgentProviderHints();
-  const providerHint = providerHints[agentId];
-  const provider = providerHint && providerHint !== 'auto' ? providerHint : undefined;
+  const overrideVal = options.providerOverride && options.providerOverride !== 'auto'
+    ? options.providerOverride
+    : undefined;
+  const hintVal = providerHints[agentId] && providerHints[agentId] !== 'auto'
+    ? (providerHints[agentId] as 'openai' | 'claude')
+    : undefined;
+  const provider = overrideVal ?? hintVal;
 
   await updateAgentRun(projectId, agentId, {
     agentId,
@@ -405,6 +449,8 @@ export async function runSingleAgent(
       teamRoster,
       brandingGuidelines: project.brandingGuidelines,
       techStack: project.techStack,
+      contextDocuments: project.contextDocuments,
+      mockupVersionCount: project.mockupVersionCount,
     };
 
     const userPrompt = def.buildUserPrompt(ctx) +
@@ -450,6 +496,18 @@ ${userPromptExtra.trim()}` : '');
       tokensUsed = resp.usage?.total_tokens ?? 0;
       respProvider = resp.provider;
       respModel = resp.model;
+    }
+
+    // ── Corrective check for uxMockups — fires for BOTH L3 and L2 paths ──
+    if (agentId === 'uxMockups') {
+      const desiredHtmlCount = Math.min(Math.max(ctx.mockupVersionCount ?? 2, 1), 4);
+      const corrected = await applyUxMockupsCorrectiveCheck(systemPromptOverride, userPrompt, output, desiredHtmlCount, provider);
+      if (corrected.output !== output) {
+        output = corrected.output;
+        tokensUsed += corrected.extraTokens;
+        if (corrected.provider) respProvider = corrected.provider;
+        if (corrected.model) respModel = corrected.model;
+      }
     }
 
     await updateAgentRun(projectId, agentId, {

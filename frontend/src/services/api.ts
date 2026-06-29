@@ -95,7 +95,7 @@ function parseErrorDetail(status: number, raw: string): string {
 }
 
 async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse> {
-  const res = await fetch(`${API_URL}/agent`, {
+  const res = await fetch(`${API_URL}/agents/call`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -201,9 +201,13 @@ function friendlyConnectionError(raw: string): string {
   const lower = stripped.toLowerCase();
 
   if (lower.includes('cors') || lower.includes('not allowed'))
-    return "Cannot reach the proxy server. Check that the backend is running and ALLOWED_ORIGINS includes this app\'s URL.";
+    return "Cannot reach the proxy server. Check that the backend is running and ALLOWED_ORIGINS includes this app's URL.";
   if (lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('econnrefused'))
     return 'Network error — the proxy server is not reachable. Make sure it is running on the expected port.';
+  if (lower.includes('503') || lower.includes('not reachable') || lower.includes('not running'))
+    return 'Backend server is not running. Start it with: cd server && npm run dev';
+  if (lower.includes('404') || lower.includes('not found'))
+    return 'Backend server is not running or the API route is missing. Start it with: cd server && npm run dev';
   if (lower.includes('401') || lower.includes('unauthorized'))
     return 'Authentication failed — check that your API key is correct and has not expired.';
   if (lower.includes('403') || lower.includes('forbidden'))
@@ -212,7 +216,7 @@ function friendlyConnectionError(raw: string): string {
     return 'Rate limit reached — too many requests. Wait a moment then try again.';
   if (lower.includes('500') || lower.includes('internal server'))
     return 'The proxy server returned an internal error. Check backend logs for details.';
-  if (lower.includes('502') || lower.includes('503') || lower.includes('504'))
+  if (lower.includes('502') || lower.includes('504'))
     return 'The server is temporarily unavailable. Try again in a moment.';
   if (lower.includes('timeout') || lower.includes('aborted') || lower.includes('abort'))
     return 'The request timed out. The server may be overloaded — try again.';

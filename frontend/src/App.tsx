@@ -90,7 +90,7 @@ export default function App() {
             projectId={view.projectId}
             onBack={() => setView({ page: 'dashboard' })}
           />
-          <ChatWidget />
+          <ChatWidget isAdmin={isAdminMode()} />
         </ErrorBoundary>
       )}
 

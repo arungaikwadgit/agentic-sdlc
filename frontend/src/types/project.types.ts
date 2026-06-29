@@ -187,11 +187,29 @@ export interface Project {
    */
   skippedAgentIds?: AgentId[];
   /**
+   * Context documents attached by the user for agent re-runs.
+   * Persisted so the extracted text survives panel close / page reload.
+   * Each entry mirrors ExtractedFile (minus the ephemeral File object).
+   */
+  contextDocuments?: {
+    id: string;
+    name: string;
+    sizeKb: number;
+    kind: 'text' | 'image' | 'spreadsheet' | 'document' | 'pdf' | 'unknown';
+    content: string;
+  }[];
+  /**
    * Active (unacknowledged or recently acknowledged) replan trigger flags
    * raised by agents during pipeline execution. Most recent last. See
    * ReplanFlag for the pause-and-flag-for-review semantics.
    */
   replanFlags?: ReplanFlag[];
+  /**
+   * Number of distinct mockup versions the UX Mockups agent should generate.
+   * Range 1–4. Persisted so the setting survives panel close / page reload.
+   * Defaults to 2 in the pipeline engine when absent.
+   */
+  mockupVersionCount?: number;
 }
 
 export interface ProjectSummary {

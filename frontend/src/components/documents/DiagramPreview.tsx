@@ -86,13 +86,26 @@ function sanitize(raw: string): string {
   const out: string[] = [];
 
   if (isC4) {
+    // Collect Boundary IDs first — Boundaries are containers, not relatable nodes.
+    // Mermaid's C4 layout engine crashes with "Cannot read properties of undefined
+    // (reading 'x')" when a Rel() target is a Boundary ID instead of a Person/System.
+    const boundaryIds = new Set<string>();
+    const C4_BOUNDARY_RE = /^\s*Boundary\s*\(\s*(\w+)\s*,/i;
+    for (const line of lines) {
+      const bm = line.match(C4_BOUNDARY_RE);
+      if (bm) boundaryIds.add(bm[1]);
+    }
+
     // Arrow relationships (entity --> target  or  entity --> target : label)
     // are not valid in Mermaid 11 C4 — convert to Rel() automatically.
+    // Skip arrows where either endpoint is a Boundary (they are containers, not nodes).
     const C4_ARROW_RE = /^(\s*)(\w+)\s*-->\s*(\w+)(?:\s*:\s*"?([^"\n]*)"?)?\s*$/;
     for (const line of lines) {
       const arrowMatch = line.match(C4_ARROW_RE);
       if (arrowMatch) {
         const [, indent, from, to, label] = arrowMatch;
+        // Skip if either endpoint is a Boundary — Mermaid can't layout relationships to containers
+        if (boundaryIds.has(from) || boundaryIds.has(to)) continue;
         const lbl = label ? label.trim() : '';
         out.push(`${indent}Rel(${from}, ${to}, "${lbl}")`);
         continue;

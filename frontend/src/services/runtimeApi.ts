@@ -15,6 +15,13 @@
 
 const RUNTIME_BASE = '/runtime/api/v1';
 
+/**
+ * The Agent Runtime is optional observability infrastructure.
+ * If VITE_RUNTIME_URL is not configured, all runtime calls are silently
+ * skipped so the pipeline never throws or logs noisy 503s.
+ */
+const RUNTIME_ENABLED = !!import.meta.env.VITE_RUNTIME_URL;
+
 // ── Shared fetch helper ──────────────────────────────────────────────────────
 
 async function runtimeFetch<T>(
@@ -178,6 +185,7 @@ export const agentJobsApi = {
 // critical execution path.
 
 export function syncRunStart(params: CreateRunParams): Promise<string | null> {
+  if (!RUNTIME_ENABLED) return Promise.resolve(null);
   return agentRunsApi.create(params)
     .then((r) => r.id)
     .catch((err) => {
@@ -187,14 +195,14 @@ export function syncRunStart(params: CreateRunParams): Promise<string | null> {
 }
 
 export function syncRunSucceed(id: string | null, result: string): void {
-  if (!id) return;
+  if (!id || !RUNTIME_ENABLED) return;
   agentRunsApi.succeed(id, result).catch((err) => {
     console.warn('[runtimeApi] syncRunSucceed failed:', err);
   });
 }
 
 export function syncRunFail(id: string | null, error: string): void {
-  if (!id) return;
+  if (!id || !RUNTIME_ENABLED) return;
   agentRunsApi.fail(id, error).catch((err) => {
     console.warn('[runtimeApi] syncRunFail failed:', err);
   });

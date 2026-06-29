@@ -40,6 +40,18 @@ const makeMockSession = (): Session => ({
 const ADMIN_BYPASS_EMAIL    = (import.meta.env.VITE_ADMIN_EMAIL    as string | undefined) ?? 'admin@local';
 const ADMIN_BYPASS_PASSWORD = (import.meta.env.VITE_ADMIN_PASSWORD as string | undefined) ?? 'admin';
 
+// Guard: if running in production with the default password, the fallback value
+// will be inlined in the public JS bundle. Log a warning so CI/CD catches it.
+// We use console.warn rather than throwing so a misconfigured prod deploy
+// still loads (Supabase auth still works); it just lacks the admin bypass.
+if (import.meta.env.PROD && ADMIN_BYPASS_PASSWORD === 'admin') {
+  console.warn(
+    '[AuthContext] VITE_ADMIN_PASSWORD is using the insecure default value "admin".' +
+    ' Set VITE_ADMIN_PASSWORD to a strong secret in your production environment variables.' +
+    ' The admin bypass will remain active but the default credential is baked into the bundle.'
+  );
+}
+
 // ── Context types ─────────────────────────────────────────────────────────────
 
 interface AuthContextValue {

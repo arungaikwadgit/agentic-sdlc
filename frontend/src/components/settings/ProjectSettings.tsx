@@ -39,18 +39,15 @@ interface Props {
   onRestartPipeline?: () => void;
 }
 
-const TECH_STACK_OPTIONS = [
-  'React + Node/Express + PostgreSQL',
-  'React + Node/Express + MongoDB',
-  'Next.js + PostgreSQL',
-  'Next.js + MongoDB',
-  'Vue 3 + Node/Express + PostgreSQL',
-  'Vue 3 + FastAPI + PostgreSQL',
-  'React + FastAPI + PostgreSQL',
-  'Angular + Node/Express + PostgreSQL',
-  'React Native + Node/Express + PostgreSQL',
-  'Flutter + FastAPI + PostgreSQL',
-] as const;
+/** Parse a legacy "A + B + C" or "A, B, C" tech stack string into individual tags. */
+function parseTechTags(value: string | undefined): string[] {
+  if (!value?.trim()) return [];
+  // Split on comma or " + " (the old preset format)
+  return value
+    .split(/,|\s\+\s/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 // ─── Invite Modal ─────────────────────────────────────────────────────────────
 interface InviteModalProps {
@@ -190,7 +187,8 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
   const [projectName, setProjectName] = useState(project.name);
   const [projectDesc, setProjectDesc] = useState(project.description);
   const [projectDomain, setProjectDomain] = useState<DomainId>(project.domain);
-  const [projectTechStack, setProjectTechStack] = useState(project.techStack ?? '');
+  const [techTags, setTechTags]     = useState<string[]>(() => parseTechTags(project.techStack));
+  const [techInput, setTechInput]   = useState('');
   const [generalSaved, setGeneralSaved] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
@@ -354,9 +352,10 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
     await updateProject(project.id, (p) => { p.activeAdminId = memberId || undefined; });
   }
 
+  const techTagsStr = techTags.join(', ');
   const coreContextChanged =
     projectDomain !== project.domain ||
-    (projectTechStack.trim() || undefined) !== (project.techStack || undefined);
+    (techTagsStr || undefined) !== (project.techStack || undefined);
 
   async function saveGeneral() {
     if (!projectName.trim()) return;
@@ -374,7 +373,7 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
       p.name = projectName.trim();
       p.description = projectDesc.trim();
       p.domain = projectDomain;
-      p.techStack = projectTechStack.trim() || undefined;
+      p.techStack = techTagsStr || undefined;
       if (restart) {
         // Clear all agent outputs and reset pipeline to Phase 0
         p.agentRuns = {} as Project['agentRuns'];
@@ -575,6 +574,17 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
+  function addTechTag() {
+    const val = techInput.trim();
+    if (!val || techTags.includes(val)) { setTechInput(''); return; }
+    setTechTags((prev) => [...prev, val]);
+    setTechInput('');
+  }
+
+  function removeTechTag(tag: string) {
+    setTechTags((prev) => prev.filter((t) => t !== tag));
+  }
+
   async function pullFigmaStylesFromSettings() {
     setFigmaLoading(true);
     setFigmaError(null);
@@ -715,18 +725,49 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
                 </div>
                 <div className={styles.formGroup}>
                   <label>Tech Stack</label>
-                  <select
-                    value={projectTechStack}
-                    onChange={(e) => setProjectTechStack(e.target.value)}
-                    disabled={!isAdmin}
-                    className={styles.select}
-                  >
-                    <option value="">Select a tech stack…</option>
-                    {TECH_STACK_OPTIONS.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                  {(projectTechStack.trim() || undefined) !== (project.techStack || undefined) && (
+                  <p className={styles.fieldHint} style={{ marginTop: 0, marginBottom: 6 }}>
+                    Type a technology and press Enter or click Add. Add as many as you need.
+                  </p>
+                  {/* Tag chips */}
+                  {techTags.length > 0 && (
+                    <div className={styles.techTagList}>
+                      {techTags.map((tag) => (
+                        <span key={tag} className={styles.techTag}>
+                          {tag}
+                          {isAdmin && (
+                            <button
+                              className={styles.techTagRemove}
+                              onClick={() => removeTechTag(tag)}
+                              aria-label={`Remove ${tag}`}
+                              type="button"
+                            >✕</button>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Input row */}
+                  {isAdmin && (
+                    <div className={styles.techInputRow}>
+                      <input
+                        value={techInput}
+                        onChange={(e) => setTechInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTechTag(); } }}
+                        placeholder="e.g. React, Node.js, PostgreSQL, Docker…"
+                        className={styles.techInput}
+                      />
+                      <button
+                        type="button"
+                        className={styles.techAddBtn}
+                        onClick={addTechTag}
+                        disabled={!techInput.trim()}
+                      >Add</button>
+                    </div>
+                  )}
+                  {!isAdmin && techTags.length === 0 && (
+                    <p className={styles.fieldHint}>No tech stack set.</p>
+                  )}
+                  {(techTagsStr || undefined) !== (project.techStack || undefined) && (
                     <p className={styles.fieldHint} style={{ color: 'var(--warning, #d97706)' }}>
                       ⚠ Changing the tech stack will restart the pipeline and clear all agent outputs.
                     </p>

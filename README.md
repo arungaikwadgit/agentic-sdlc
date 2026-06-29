@@ -50,8 +50,7 @@ Edit `backend/.env` and set at minimum:
 - `POSTGRES_URL` — already points to Docker Postgres; change only for remote DBs
 - `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` — at least one LLM provider key
 
-Edit `frontend/.env` and set:
-- `VITE_PROXY_TOKEN` — same value as `PROXY_TOKEN` in `backend/.env`
+Edit `frontend/.env` — no secret tokens should be added here. `VITE_*` variables are bundled into the browser build and exposed publicly. API tokens stay in `backend/.env` (server-side only).
 
 ### 4. Run migrations
 

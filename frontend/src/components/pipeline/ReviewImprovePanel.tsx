@@ -45,12 +45,58 @@ function buildPriorContext(agentId: AgentId, project: Project): string {
 
 export default function ReviewImprovePanel({ agentId, project, onRegenerate, onClose }: Props) {
   const [questions, setQuestions] = useState<GapQuestion[]>([]);
+  // Track all questions ever shown in this session so Refresh never repeats them
+  const [allShownQuestions, setAllShownQuestions] = useState<GapQuestion[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [generatingMore, setGeneratingMore] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const def = AGENT_DEFINITIONS[agentId];
   const currentOutput = project.agentRuns[agentId]?.output ?? '';
+
+  async function callLLMForQuestions(existingQuestions: GapQuestion[] = []): Promise<GapQuestion[]> {
+    // M-10 fix: cap prior context to avoid exceeding ~50K token proxy limit
+    const MAX_PRIOR_CHARS = 6_000;
+    const rawPriorContext = buildPriorContext(agentId, project);
+    const priorContext = rawPriorContext.length > MAX_PRIOR_CHARS
+      ? rawPriorContext.slice(0, MAX_PRIOR_CHARS) + '\n\n[...prior context truncated to stay within token limit]'
+      : rawPriorContext;
+
+    const alreadyAsked = existingQuestions.length > 0
+      ? `\n\n## Already asked questions (do NOT repeat these):\n${existingQuestions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`
+      : '';
+
+    const systemPrompt = `You are a senior document quality reviewer specialising in software development artifacts.
+Your job is to read an agent-generated document and identify the most important gaps, ambiguities, or missing details that would make the document more complete and accurate.
+Generate exactly 4 concise, specific questions that the project owner can answer to fill those gaps.
+Each question must be directly tied to a concrete weakness you found in the document.
+Format your response as a numbered list — one question per line, nothing else. No preamble, no explanations.`;
+
+    const userPrompt = [
+      `## Agent: ${def?.name ?? agentId}`,
+      `## Project: ${project.name}`,
+      '',
+      '## Document to review:',
+      currentOutput.slice(0, 3000),
+      currentOutput.length > 3000 ? '[...document truncated for brevity]' : '',
+      '',
+      priorContext ? `## Context from earlier agents:\n${priorContext}` : '',
+      alreadyAsked,
+    ].filter(Boolean).join('\n');
+
+    // H-07 fix: 120s timeout to prevent hung LLM calls
+    const resp = await api.callAgent({ systemPrompt, userPrompt, signal: AbortSignal.timeout(120_000) });
+    const text = api.extractText(resp).trim();
+    const offset = existingQuestions.length;
+
+    return text
+      .split('\n')
+      .map((l) => l.replace(/^\d+[\.\)]\s*/, '').trim())
+      .filter((l) => l.length > 10)
+      .slice(0, 5)
+      .map((q, i) => ({ id: `q${offset + i}`, question: q, answer: '' }));
+  }
 
   async function suggestQuestions() {
     setGenerating(true);
@@ -58,47 +104,32 @@ export default function ReviewImprovePanel({ agentId, project, onRegenerate, onC
     setQuestions([]);
 
     try {
-      // M-10 fix: cap prior context to avoid exceeding ~50K token proxy limit
-      const MAX_PRIOR_CHARS = 6_000;
-      const rawPriorContext = buildPriorContext(agentId, project);
-      const priorContext = rawPriorContext.length > MAX_PRIOR_CHARS
-        ? rawPriorContext.slice(0, MAX_PRIOR_CHARS) + '\n\n[...prior context truncated to stay within token limit]'
-        : rawPriorContext;
-      const systemPrompt = `You are a senior document quality reviewer specialising in software development artifacts.
-Your job is to read an agent-generated document and identify the most important gaps, ambiguities, or missing details that would make the document more complete and accurate.
-Generate exactly 4 concise, specific questions that the project owner can answer to fill those gaps.
-Each question must be directly tied to a concrete weakness you found in the document.
-Format your response as a numbered list — one question per line, nothing else. No preamble, no explanations.`;
-
-      const userPrompt = [
-        `## Agent: ${def?.name ?? agentId}`,
-        `## Project: ${project.name}`,
-        '',
-        '## Document to review:',
-        currentOutput.slice(0, 3000),
-        currentOutput.length > 3000 ? '[...document truncated for brevity]' : '',
-        '',
-        priorContext
-          ? `## Context from earlier agents:\n${priorContext}`
-          : '',
-      ].filter(Boolean).join('\n');
-
-      // H-07 fix: 120s timeout to prevent hung LLM calls
-      const resp = await api.callAgent({ systemPrompt, userPrompt, signal: AbortSignal.timeout(120_000) });
-      const text = api.extractText(resp).trim();
-
-      const parsed: GapQuestion[] = text
-        .split('\n')
-        .map((l) => l.replace(/^\d+[\.\)]\s*/, '').trim())
-        .filter((l) => l.length > 10)
-        .slice(0, 5)
-        .map((q, i) => ({ id: `q${i}`, question: q, answer: '' }));
-
+      // Pass ALL previously shown questions so the LLM generates a fresh set
+      const parsed = await callLLMForQuestions(allShownQuestions);
       setQuestions(parsed);
+      setAllShownQuestions((prev) => [...prev, ...parsed]);
     } catch (e) {
       setError(String(e));
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function generateMoreQuestions() {
+    setGeneratingMore(true);
+    setError(null);
+    try {
+      // Pass currently visible + all previously shown to avoid any repeats
+      const seen = [...allShownQuestions, ...questions].filter(
+        (q, idx, arr) => arr.findIndex((x) => x.id === q.id) === idx,
+      );
+      const more = await callLLMForQuestions(seen);
+      setQuestions((prev) => [...prev, ...more]);
+      setAllShownQuestions((prev) => [...prev, ...more]);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setGeneratingMore(false);
     }
   }
 
@@ -195,10 +226,22 @@ Use the above answers to fill the specific gaps identified in the previous draft
               <button
                 className={styles.suggestBtn}
                 onClick={suggestQuestions}
-                disabled={generating}
+                disabled={generating || generatingMore}
                 style={{ flex: '0 0 auto' }}
               >
-                <span className={styles.sparkle}>✦</span> Refresh Questions
+                <span className={styles.sparkle}>✶</span> Refresh Questions
+              </button>
+              <button
+                className={styles.moreBtn}
+                onClick={generateMoreQuestions}
+                disabled={generating || generatingMore}
+                title="Generate additional questions and append them to the list"
+              >
+                {generatingMore ? (
+                  <><span className={styles.spinner} /> Generating…</>
+                ) : (
+                  <><span className={styles.sparkle}>✶</span> Generate More Questions</>
+                )}
               </button>
               <button
                 className={styles.regenBtn}

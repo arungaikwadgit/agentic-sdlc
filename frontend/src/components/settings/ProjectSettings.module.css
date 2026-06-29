@@ -562,6 +562,74 @@
   white-space: nowrap;
 }
 
+/* ── Tech Stack tag input ── */
+.techTagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.techTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--accent, #4f46e5)1a;
+  color: var(--accent, #818cf8);
+  border: 1px solid var(--accent, #4f46e5)44;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 10px 3px 10px;
+  white-space: nowrap;
+}
+
+.techTagRemove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+.techTagRemove:hover { opacity: 1; }
+
+.techInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.techInput {
+  flex: 1;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+.techInput:focus { outline: none; border-color: var(--accent, #4f46e5); }
+
+.techAddBtn {
+  height: 36px;
+  padding: 0 16px;
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.techAddBtn:hover:not(:disabled) { border-color: var(--accent, #4f46e5); color: var(--accent, #818cf8); }
+.techAddBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .memberAgentWarning {
   font-size: 11px;
   color: var(--error);

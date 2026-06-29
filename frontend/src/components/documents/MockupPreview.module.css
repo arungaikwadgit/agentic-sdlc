@@ -220,6 +220,202 @@
 .mdSection strong { font-weight: 700; }
 .mdSection em { font-style: italic; }
 
+/* ── Update button ───────────────────────────────────────────────────────── */
+.updateBtn {
+  padding: 4px 12px;
+  border: 1px solid var(--primary, #4f46e5);
+  border-radius: 5px;
+  background: var(--primary, #4f46e5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 4px;
+  transition: background 0.12s, opacity 0.12s, box-shadow 0.12s;
+  flex-shrink: 0;
+}
+.updateBtn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary, #4f46e5) 80%, #000);
+}
+.updateBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.updateBtnHighlight {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary, #4f46e5) 40%, transparent);
+  animation: updatePulse 2s ease-in-out infinite;
+}
+@keyframes updatePulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
+/* ── Pending (not-yet-generated) version tab ─────────────────────────────── */
+.versionTabPending {
+  opacity: 0.4;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+/* ── Re-run banner ───────────────────────────────────────────────────────── */
+.rerunBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  background: color-mix(in srgb, var(--primary, #4f46e5) 8%, var(--surface2));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary, #4f46e5) 25%, var(--border));
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.rerunBanner strong {
+  color: var(--primary, #4f46e5);
+  font-weight: 600;
+}
+
+/* ── Version tab bar ─────────────────────────────────────────────────────── */
+.versionTabBar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-height: 38px;
+}
+.versionTabBar::-webkit-scrollbar { display: none; }
+
+.versionTab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+  position: relative;
+}
+.versionTab:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.versionTabActive {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+.versionTabActive::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary, #4f46e5);
+  border-radius: 2px 2px 0 0;
+}
+
+.versionTabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.versionTabActive .versionTabBadge {
+  background: var(--primary, #4f46e5);
+  color: #fff;
+}
+
+.versionTabLabel {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.versionTabSpacer { flex: 1; }
+
+.versionTabCount {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Density buttons ─────────────────────────────────────────────────────── */
+.densityBtn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.densityBtn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+.densityBtnActive {
+  background: var(--primary, #4f46e5);
+  border-color: var(--primary, #4f46e5);
+  color: #fff;
+}
+
+/* ── Dark mode toggle ────────────────────────────────────────────────────── */
+.darkModeBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.darkModeBtn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+.darkModeBtnActive {
+  background: #1e1b4b;
+  border-color: #4f46e5;
+  color: #f0f0ff;
+}
+
 /* ── HTML frame block ────────────────────────────────────────────────────── */
 .htmlFrame {
   margin: 24px 0;
@@ -237,6 +433,13 @@
   padding: 9px 16px;
   background: var(--surface2);
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.htmlFrameActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 

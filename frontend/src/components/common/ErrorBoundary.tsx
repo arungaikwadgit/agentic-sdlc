@@ -86,7 +86,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           </button>
         </div>
         <p style={{ fontSize: 11, color: 'var(--text-muted, #94a3b8)', margin: 0 }}>
-          © 2025 Arun Gaikwad. All rights reserved.
+          © 2026 Arun Gaikwad. All rights reserved.
         </p>
       </div>
     );

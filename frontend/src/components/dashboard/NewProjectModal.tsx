@@ -145,7 +145,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     }
   }
   const [targetEndDate, setTargetEndDate] = useState('');
-  const [techStack, setTechStack] = useState('');
+  const [techTags, setTechTags]   = useState<string[]>([]);
+  const [techInput, setTechInput] = useState('');
   const [targetUsers, setTargetUsers] = useState('');
   const [initialRisks, setInitialRisks] = useState('');
   const [dateError, setDateError] = useState('');
@@ -207,7 +208,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
         priority,
         startDate: startDate || undefined,
         targetEndDate: targetEndDate || undefined,
-        techStack: techStack.trim() || undefined,
+        techStack: techTags.join(', ') || undefined,
         targetUsers: targetUsers.trim() || undefined,
         initialRisks: initialRisks.trim() || undefined,
       });
@@ -342,23 +343,47 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               </p>
 
               <label className={styles.label}>Tech Stack</label>
-              <select
-                value={techStack}
-                onChange={(e) => setTechStack(e.target.value)}
-                className={styles.select}
-              >
-                <option value="">Select a tech stack…</option>
-                <option value="React + Node/Express + PostgreSQL">React + Node/Express + PostgreSQL</option>
-                <option value="React + Node/Express + MongoDB">React + Node/Express + MongoDB</option>
-                <option value="Next.js + PostgreSQL">Next.js + PostgreSQL</option>
-                <option value="Next.js + MongoDB">Next.js + MongoDB</option>
-                <option value="Vue 3 + Node/Express + PostgreSQL">Vue 3 + Node/Express + PostgreSQL</option>
-                <option value="Vue 3 + FastAPI + PostgreSQL">Vue 3 + FastAPI + PostgreSQL</option>
-                <option value="React + FastAPI + PostgreSQL">React + FastAPI + PostgreSQL</option>
-                <option value="Angular + Node/Express + PostgreSQL">Angular + Node/Express + PostgreSQL</option>
-                <option value="React Native + Node/Express + PostgreSQL">React Native + Node/Express + PostgreSQL</option>
-                <option value="Flutter + FastAPI + PostgreSQL">Flutter + FastAPI + PostgreSQL</option>
-              </select>
+              {techTags.length > 0 && (
+                <div className={styles.techTagList}>
+                  {techTags.map((tag) => (
+                    <span key={tag} className={styles.techTag}>
+                      {tag}
+                      <button
+                        className={styles.techTagRemove}
+                        type="button"
+                        onClick={() => setTechTags((prev) => prev.filter((t) => t !== tag))}
+                        aria-label={`Remove ${tag}`}
+                      >✕</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className={styles.techInputRow}>
+                <input
+                  className={styles.techInput}
+                  value={techInput}
+                  onChange={(e) => setTechInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const val = techInput.trim();
+                      if (val && !techTags.includes(val)) setTechTags((prev) => [...prev, val]);
+                      setTechInput('');
+                    }
+                  }}
+                  placeholder="e.g. React, Node.js, PostgreSQL, Docker… (Enter to add)"
+                />
+                <button
+                  type="button"
+                  className={styles.techAddBtn}
+                  disabled={!techInput.trim()}
+                  onClick={() => {
+                    const val = techInput.trim();
+                    if (val && !techTags.includes(val)) setTechTags((prev) => [...prev, val]);
+                    setTechInput('');
+                  }}
+                >Add</button>
+              </div>
 
               <label className={styles.label}>Target Users</label>
               <textarea

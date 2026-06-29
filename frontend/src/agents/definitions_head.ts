@@ -35,29 +35,6 @@ function brandingLine(ctx: AgentPromptContext): string {
   return `\n\n## Branding Guidelines\nNo branding guidelines were supplied by the project owner. Default to visual conventions and design patterns standard for the ${ctx.domain} domain/industry.`;
 }
 
-/**
- * Injects any user-uploaded context documents (style guides, brand books, design specs, etc.)
- * as a dedicated section in the user prompt.
- *
- * The UX Mockups and Working Prototype agents MUST follow these documents when present —
- * they take precedence over the agent's default design choices.
- */
-function styleGuideLine(ctx: AgentPromptContext): string {
-  if (!ctx.contextDocuments?.length) return '';
-  const MAX_CHARS_PER_DOC = 4000;
-  const parts = ctx.contextDocuments.map(
-    (doc) =>
-      `### ${doc.name} (${doc.kind}, ${doc.sizeKb} KB)\n${doc.content.slice(0, MAX_CHARS_PER_DOC)}${doc.content.length > MAX_CHARS_PER_DOC ? '\n[...truncated]' : ''}`
-  );
-  return (
-    `\n\n## Style Guide / Reference Documents (MANDATORY — uploaded by the user)\n` +
-    `The following documents were attached by the project owner. ` +
-    `You MUST follow the colors, typography, spacing, brand identity, and visual patterns described in these documents. ` +
-    `These override any default design choices you would otherwise make.\n\n` +
-    parts.join('\n\n---\n\n')
-  );
-}
-
 // ─── Phase 0 ─────────────────────────────────────────────────────────────────
 const sdlcOrchestrator: AgentDefinition = {
   id: 'sdlcOrchestrator',
@@ -128,13 +105,9 @@ const sdlcOrchestrator: AgentDefinition = {
   ].filter(Boolean).join('\n'),
 
   goal: (ctx: AgentPromptContext): string =>
-    'Produce a complete SDLC Orchestration Plan for ' + ctx.projectName + ' (' + ctx.domain + ' domain).\n\n' +
-    'MANDATORY STEP SEQUENCE:\n' +
-    'STEP 1 — call get_domain_context: Get domain-specific regulatory requirements, common integration patterns, and standard risks for the ' + ctx.domain + ' domain.\n' +
-    'STEP 2 — call get_team_roster: Get named team members for phase approval and risk owner assignments.\n' +
-    'STEP 3 — call get_style_guide: Check if branding/style constraints exist — note as Phase 3 input for UX agents.\n' +
-    'STEP 4 — Produce all 9 sections. Phase-by-phase guidance must reference actual team member names. Risk register must be project-specific. Go/No-Go criteria must be explicit thresholds.\n' +
-    'STEP 5 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, and risk mitigations are actionable. Fix gaps before finishing.',
+    'Produce a complete SDLC Orchestration Plan for ' + ctx.projectName + ' — a ' + ctx.domain + ' domain project. ' +
+    'Plan the full agent execution sequence (Phases 1-8), identify critical path agents, flag project-specific risks, ' +
+    'and provide go/no-go criteria for each phase gate. The output will guide a team through the entire SDLC pipeline.',
 
   tools: CONTEXT_TOOLS,
   maxIterations: 3,
@@ -178,13 +151,10 @@ const manager: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a complete PRD for "${ctx.projectName}" in the ${ctx.domain} domain.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_domain_context: Get domain context — regulatory landscape, typical personas, common integrations, and risk areas for the ${ctx.domain} domain.\n` +
-    `STEP 2 — call get_team_roster: Get named team members for risk owner and dependency ownership assignments.\n` +
-    `STEP 3 — call get_style_guide: Check if branding/style constraints exist (affects scope and out-of-scope decisions).\n` +
-    `STEP 4 — Produce all 12 PRD sections. Functional requirements must be numbered FR-001, FR-002, etc. with MoSCoW priority and acceptance signal. Success metrics must have baseline, target, and measurement method.\n` +
-    `STEP 5 — Self-check: verify every FR-xxx has an acceptance signal, all success metrics are quantifiable, scope exclusions have rationale, and risk owners are real team member names. Fix gaps before finishing.`,
+    `Produce a complete, traceable Product Requirements Document (PRD) for "${ctx.projectName}" ` +
+    `in the ${ctx.domain} domain. The PRD must define numbered functional requirements (FR-xxx), ` +
+    `quantifiable success metrics, explicit scope boundaries, domain-grounded personas, and a risks/mitigations table ` +
+    `that downstream agents (charter, BRD, architecture, user stories) can reference directly.`,
   tools: CONTEXT_TOOLS,
   maxIterations: 3,
 };
@@ -227,12 +197,10 @@ const projectCharter: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a formal Project Charter for "${ctx.projectName}".\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Read the PRD — extract scope boundaries, success metrics, timeline milestones, and risks. These become the charter's project scope, objectives, and constraints sections.\n` +
-    `STEP 2 — call get_team_roster: Get named team members to assign as project sponsor, steering committee, PM, and phase-gate approvers.\n` +
-    `STEP 3 — Produce all charter sections. Budget estimate must show calculation basis (headcount x duration x rate). Scope statement must reference specific FR-xxx items. Every approval role must have a real team member name.\n` +
-    `STEP 4 — Self-check: verify budget has stated assumptions, scope matches PRD boundaries, all approval signatures have named team members. Fix gaps before finishing.`,
+    `Produce a formal, sponsor-ready Project Charter for "${ctx.projectName}" that authorizes the ` +
+    `project team to proceed. Read the completed PRD output first, then use real team member names ` +
+    `from the roster for all sponsor/approver/PM roles. Budget estimate must show calculation basis; ` +
+    `SMART objectives must explicitly state each SMART attribute.`,
   tools: CONTEXT_TOOLS,
   maxIterations: 3,
 };
@@ -273,14 +241,10 @@ const brd: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Business Requirements Document (BRD) for "${ctx.projectName}".\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Read the PRD — extract FR-xxx functional requirements. Every BRD requirement (BR-xxx) must trace to at least one FR-xxx.\n` +
-    `STEP 2 — call get_team_roster: Get named team members for the RACI matrix.\n` +
-    `STEP 3 — call get_domain_context: Get domain-specific business process context (typical workflows, regulatory requirements) to ground current-state process descriptions.\n` +
-    `STEP 4 — call search_prior_outputs("requirements"): Check for any prior requirements analysis.\n` +
-    `STEP 5 — Produce all BRD sections. BR-xxx must be numbered, testable, and cite FR-xxx. RACI must use real team member names. Process flows must show current-state vs future-state. Compliance rules must cite specific regulations.\n` +
-    `STEP 6 — Self-check: verify every BR-xxx cites a FR-xxx, RACI has real names, and compliance regulations are named. Fix gaps before finishing.`,
+    `Produce a Business Requirements Document (BRD) for "${ctx.projectName}" that translates the PRD's ` +
+    `product vision into numbered, testable business requirements (BR-xxx) with current-state vs future-state ` +
+    `workflow descriptions, a RACI matrix using real team member names, and domain-specific compliance rules ` +
+    `citing actual ${ctx.domain} regulations. Read the PRD output before writing.`,
   tools: ALL_TOOLS,
   maxIterations: 4,
 };
@@ -303,32 +267,24 @@ const stakeholder: AgentDefinition = {
 - Traceability must reference actual requirement IDs (BR-xxx, FR-xxx) from the BRD/PRD where the excerpt content allows it, or describe the requirement area clearly enough to be mapped later.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Description: ${ctx.projectDescription}`,
     domainLine(ctx),
     teamLine(ctx),
-    `\nProject Charter (use for project scope, objectives, sponsors, and named stakeholders):\n${ctx.priorOutputs.projectCharter?.slice(0, 1500) ?? ''}`,
-    `\nBRD (use for business process owners, compliance requirements, and BR-xxx requirement IDs):\n${ctx.priorOutputs.brd?.slice(0, 2000) ?? ''}`,
-    `\nProduce a Stakeholder Analysis document with all 6 sections:`,
-    `1. Stakeholder Register — table: Name/Role, Interest (specific to this project), Influence (High/Med/Low + one-line justification), Impact (High/Med/Low + justification), Engagement Strategy. Include all actual team members listed above, plus any implied external stakeholders (e.g. regulators, end customers) relevant to the ${ctx.domain} domain. Pull named stakeholders from the Project Charter above.`,
+    `\nProduce a Stakeholder Analysis document with:`,
+    `1. Stakeholder Register — table: Name/Role, Interest (specific to this project), Influence (High/Med/Low + one-line justification), Impact (High/Med/Low + justification), Engagement Strategy. Include all actual team members listed above, plus any implied external stakeholders (e.g. regulators, end customers) relevant to the ${ctx.domain} domain`,
     `2. Power/Interest Grid — place each stakeholder from the register into one of the 4 quadrants (Manage Closely, Keep Satisfied, Keep Informed, Monitor) by name, with a one-line rationale per quadrant placement`,
-    `3. Communication Plan — table: Stakeholder/Group, Frequency (specific cadence), Channel, Message Type/Content, Owner (assign team member names to communication owners). Ground message types in BRD business processes above.`,
+    `3. Communication Plan — table: Stakeholder/Group, Frequency (specific cadence), Channel, Message Type/Content, Owner (assign team member names to communication owners)`,
     `4. Resistance & Change Management — for each group likely to resist the change, identify the source of resistance and a specific mitigation tactic (not generic "communicate early and often")`,
-    `5. Stakeholder-to-Requirement Traceability — table mapping each major stakeholder/group to the requirement areas (BR-xxx/FR-xxx from the BRD above, or named capability areas) they care most about, and why`,
-    `6. Escalation Path — who escalates to whom when a stakeholder concern can't be resolved at the working level, using actual team member names/roles from the charter and roster above`,
+    `5. Stakeholder-to-Requirement Traceability — table mapping each major stakeholder/group to the requirement areas (BR-xxx/FR-xxx or named capability areas) they care most about, and why`,
+    `6. Escalation Path — who escalates to whom when a stakeholder concern can't be resolved at the working level, using actual team member names/roles`,
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Identify and profile all stakeholders for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("projectCharter"): Read the project charter — extract the named project sponsor, steering committee members, budget authority, and stated scope boundaries. These are your primary stakeholders.\n` +
-    `STEP 2 — call get_agent_output("brd"): Read the BRD — extract business process owners, compliance/regulatory parties, and BR-xxx requirement areas. These ground the Stakeholder-to-Requirement traceability section.\n` +
-    `STEP 3 — call get_team_roster: Get the actual named team members for the RACI and communication plan ownership column.\n` +
-    `STEP 4 — call get_domain_context: Get domain-specific context to identify implied external stakeholders (regulators, industry bodies, customer segments) typical for the ${ctx.domain} domain.\n` +
-    `STEP 5 — Produce all 6 sections. Every stakeholder in the register must appear in the Power/Interest grid. Communication plan must name a specific cadence and owner — "as needed" is rejected. Traceability must reference actual BR-xxx IDs from the BRD.\n` +
-    `STEP 6 — Self-check: verify the Power/Interest grid accounts for every stakeholder in the register, every communication plan row has an owner from the team roster, and the escalation path uses real names/roles. Fix any gaps before finishing.`,
+    `Identify and profile all stakeholders for ${ctx.projectName} — their interests, influence levels, ` +
+    `communication needs, and potential conflicts. Read user story and BRD outputs to ground personas ` +
+    `in real requirements. Produce a stakeholder register with engagement strategy and RACI overview.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+
 };
 
 const userStory: AgentDefinition = {
@@ -337,7 +293,7 @@ const userStory: AgentDefinition = {
   phase: 'phase2',
   description: 'Epic and user story backlog with acceptance criteria',
   outputLabel: 'User Stories & Backlog',
-  dependsOn: ['manager', 'brd'],
+  dependsOn: ['manager'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the User Story Agent. Produce detailed epics and user stories in standard agile format. Downstream agents (sprint planner, task breakdown, test cases) will reference these stories directly by ID, so consistency and granularity matter as much as content quality.
 
 ## User Story Standards
@@ -349,9 +305,7 @@ const userStory: AgentDefinition = {
 - Non-functional stories must be written in the same "As a... I want... so that..." format as functional stories, with measurable acceptance criteria (e.g. "p95 response time under 500ms for 95% of requests under 200 concurrent users").`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
-    `PRD Excerpt (FR-xxx functional requirements and NFRs):\n${ctx.priorOutputs.manager?.slice(0, 1500) ?? ctx.projectDescription}`,
-    `BRD Excerpt (BR-xxx business rules — epics must trace to these):\n${ctx.priorOutputs.brd?.slice(0, 1500) ?? ''}`,
+    `PRD Excerpt:\n${ctx.priorOutputs.manager?.slice(0, 1500) ?? ctx.projectDescription}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a User Story Backlog with:`,
@@ -364,13 +318,11 @@ const userStory: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a complete, sprint-ready User Story Backlog for "${ctx.projectName}".\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Extract FR-xxx functional requirement IDs and NFR targets. Every epic must map to at least one FR-xxx.\n` +
-    `STEP 2 — call get_agent_output("brd"): Extract BR-xxx business rules. Business-rule enforcement stories must cite the BR-xxx they implement.\n` +
-    `STEP 3 — call get_team_roster: Get named team members to assign story owners.\n` +
-    `STEP 4 — Produce all 6 sections: 5+ epics with 3-5 stories each, Fibonacci story points, Given/When/Then ACs, dependency map, DoD checklist, and non-functional stories with measurable ACs.\n` +
-    `STEP 5 — Self-check: every epic maps to a FR-xxx, every story has an owner, all ACs are Given/When/Then, story IDs are unique (US-1xx). Fix gaps before finishing.`,
+    `Produce a complete, sprint-ready User Story Backlog for "${ctx.projectName}" with at least 5 epics ` +
+    `and 3-5 user stories per epic. Stories must use personas grounded in the ${ctx.domain} domain and ` +
+    `Given/When/Then acceptance criteria specific enough to become test cases verbatim. Read the PRD ` +
+    `output first to extract functional requirement areas (FR-xxx IDs) so every epic traces to a requirement. ` +
+    `Each story gets a story-point estimate on the Fibonacci scale and a named owner from the team roster.`,
   tools: ALL_TOOLS,
   maxIterations: 4,
 };
@@ -407,14 +359,12 @@ const businessRules: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Extract and formalise all business rules for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("brd"): Read the BRD — extract BR-xxx requirements. Every business rule must trace to a BR-xxx using the same ID.\n` +
-    `STEP 2 — call get_domain_context: Get domain-specific rules context (regulatory constraints, industry-standard validation rules, common state machines for the ${ctx.domain} domain).\n` +
-    `STEP 3 — Produce all sections. State machine must list ALL states including error/rejected states. Decision tables must show all condition combinations. Compliance rules must cite specific regulations (e.g. GDPR Article 17).\n` +
-    `STEP 4 — Self-check: verify every rule has an ID, IF/THEN form, BR-xxx traceability link, and priority. State machine covers all entity states. Fix gaps before finishing.`,
+    `Extract and formalise all business rules for ${ctx.projectName} — validation rules, ` +
+    `state machines, decision tables, and workflow constraints. Read the BRD and user story outputs ` +
+    `to ensure every stated rule is traceable to a requirement. Include a decision table for ` +
+    `the most complex rule set.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+
 };
 
 const feasibility: AgentDefinition = {
@@ -436,35 +386,29 @@ const feasibility: AgentDefinition = {
 - The Market & Competitive Landscape section must name realistic comparable products/vendors for the project's domain (even if illustrative) and identify what would differentiate this project from them — not a generic "the market is competitive" statement.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Description: ${ctx.projectDescription}`,
     domainLine(ctx),
     teamLine(ctx),
-    `\nPRD (use for scope, success metrics, NFRs, and functional requirements):\n${ctx.priorOutputs.manager?.slice(0, 2000) ?? ''}`,
-    `\nBRD (use for business objectives, process flows, and compliance requirements):\n${ctx.priorOutputs.brd?.slice(0, 2000) ?? ''}`,
-    `\nProduce a Feasibility Study with all 9 sections:`,
+    `\nProduce a Feasibility Study with:`,
     `1. Executive Summary — overall feasibility verdict and the single biggest risk/dependency`,
     `2. Technical Feasibility — technology stack assessment (name specific candidate technologies), integration complexity with existing/external systems, and team skills gap analysis against the roster above`,
     `3. Operational Feasibility — process changes required, training needs by role, and the ongoing support model post-launch`,
-    `4. Financial Feasibility — cost-benefit analysis with stated assumptions (show the calculation basis), ROI estimate, TCO over a defined horizon (e.g. 3 years), and NPV. Ground estimates in the PRD scope and BRD objectives above.`,
-    `5. Schedule Feasibility — timeline risk factors and the critical path (which work streams, if delayed, delay the whole project). Reference the PRD's timeline/milestones section.`,
-    `6. Risk Assessment — top 10 risks scored as Likelihood (1-5) x Impact (1-5) = Risk Score, sorted descending, each with a mitigation. Every risk must trace to a specific scope item from the PRD or BRD.`,
+    `4. Financial Feasibility — cost-benefit analysis with stated assumptions, ROI estimate, TCO over a defined horizon (e.g. 3 years), and NPV if a discount rate assumption is reasonable to state`,
+    `5. Schedule Feasibility — timeline risk factors and the critical path (which work streams, if delayed, delay the whole project)`,
+    `6. Risk Assessment — top 10 risks scored as Likelihood (1-5) x Impact (1-5) = Risk Score, sorted descending, each with a mitigation`,
     `7. Market & Competitive Landscape — 3-5 realistic comparable products/vendors for the ${ctx.domain} domain, their relative strengths/weaknesses, and the specific gap or differentiator this project should target`,
     `8. Alternative Solutions Considered — at least 2 genuinely different alternatives (e.g. build vs. buy, different architecture/vendor choices) with honest pros/cons vs. the recommended approach`,
     `9. Recommendation & Go/No-Go Decision Framework — explicit decision criteria/thresholds, with sign-off attributed to named team members above`,
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a defensible Feasibility Study for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Read the full PRD — extract the scope boundaries, success metrics, NFRs (performance/scalability targets), and timeline milestones. These constrain every feasibility estimate.\n` +
-    `STEP 2 — call get_agent_output("brd"): Read the BRD — extract business objectives, process flows, compliance/regulatory requirements, and the RACI matrix. These ground the operational and financial feasibility sections.\n` +
-    `STEP 3 — call get_team_roster: Get named team members for skills gap analysis (who covers which role) and Go/No-Go sign-off attribution.\n` +
-    `STEP 4 — call get_domain_context: Get domain-specific context for naming realistic competitor products and regulatory standards relevant to the market landscape section.\n` +
-    `STEP 5 — Produce all 9 sections. Financial estimates must show their calculation basis (team size x duration x rate, or comparable benchmark). Risk scores must use Likelihood (1-5) x Impact (1-5) = Risk Score, sorted descending. Every risk must cite a specific PRD/BRD item.\n` +
-    `STEP 6 — Self-check: verify all 9 sections are present, every financial figure has a stated assumption, the risk table is sorted by score, and Go/No-Go criteria are explicit thresholds (not "leadership will decide"). Fix any gaps before finishing.`,
+    `Produce a defensible Feasibility Study for ${ctx.projectName} — go/no-go decision backed ` +
+    `by scored risks, ROI calculation with stated assumptions, team skills gap analysis against the ` +
+    `actual roster, and at least 2 genuine alternative solutions. Read the BRD and project charter ` +
+    `outputs to ground financial and schedule estimates in real scope.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  maxIterations: 4,
+
 };
 
 const dataModel: AgentDefinition = {
@@ -473,7 +417,7 @@ const dataModel: AgentDefinition = {
   phase: 'phase2',
   description: 'Entity relationship model and data dictionary',
   outputLabel: 'Data Model & Dictionary',
-  dependsOn: ['businessRules', 'manager'],
+  dependsOn: ['businessRules'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Data Modeling Agent. Your task is to produce a Data Model & Dictionary precise enough that a database engineer could generate DDL (CREATE TABLE statements) directly from it without further clarification.
 
 ## Data Modeling Standards
@@ -485,10 +429,8 @@ const dataModel: AgentDefinition = {
 - The data dictionary must cover every entity introduced in the logical model — no entity should appear in the ER diagram without a corresponding dictionary section.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Description: ${ctx.projectDescription}`,
-    `PRD Excerpt (functional requirements drive entity identification):\n${ctx.priorOutputs.manager?.slice(0, 800) ?? ctx.projectDescription}`,
-    `Business Rules Excerpt (state machines, validation rules, lookup tables):\n${ctx.priorOutputs.businessRules?.slice(0, 1000) ?? ''}`,
+    `Business Rules Excerpt:\n${ctx.priorOutputs.businessRules?.slice(0, 1000) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a Data Model document with:`,
@@ -507,16 +449,13 @@ const dataModel: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Data Model & Dictionary for "${ctx.projectName}".\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Extract functional requirements (FR-xxx) — every functional capability implies at least one entity. List entities implied by FR-xxx items.\n` +
-    `STEP 2 — call get_agent_output("businessRules"): Extract BR-xxx business rules — identify state machines (status fields), enumerated types (lookup tables), and validation constraints to model as CHECK constraints or FK references.\n` +
-    `STEP 3 — call get_team_roster: Get named data owners for the Data Dictionary owner column.\n` +
-    `STEP 4 — call get_domain_context: Get domain-specific data standards (e.g. ISO codes, regulatory field requirements, common entities for this domain).\n` +
-    `STEP 5 — Produce all 8 sections + erDiagram. Every entity in the ER diagram must have a data dictionary entry. All attributes must use concrete SQL types (VARCHAR(255), not "text"). PII classification must be field-level.\n` +
-    `STEP 6 — Self-check: verify every FR-xxx entity is in the model, every BR state machine has a status field, all ER entities have dictionary entries, no generic types (text/number/string), and PII fields are enumerated. Fix gaps before finishing.`,
+    `Produce a Data Model & Dictionary for "${ctx.projectName}" precise enough that a database engineer ` +
+    `could write DDL directly from it. Read the business rules output to identify entities and state ` +
+    `machines; all entities in the ER diagram must have a corresponding data dictionary section with ` +
+    `concrete data types (VARCHAR(255), DECIMAL(10,2), TIMESTAMP WITH TIME ZONE, etc. — in the dictionary table; single-word types only in the erDiagram), constraints, ` +
+    `PK strategy, and PII/sensitivity classification at the field level. Include an erDiagram.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  maxIterations: 4,
 };
 
 // ─── Phase 3 ──────────────────────────────────────────────────────────────────
@@ -526,7 +465,7 @@ const architecture: AgentDefinition = {
   phase: 'phase3',
   description: 'System architecture, tech stack and infrastructure design',
   outputLabel: 'Architecture Design Document',
-  dependsOn: ['manager', 'dataModel', 'feasibility'],
+  dependsOn: ['dataModel', 'feasibility'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Software Architect Agent. Your task is to produce an Architecture Design Document (ADD) that downstream agents (API design, code structure, DevOps, infrastructure) will use as their blueprint — every technology choice and component boundary stated here becomes a constraint on those documents.
 
 ## Architecture Design Standards
@@ -538,38 +477,32 @@ const architecture: AgentDefinition = {
 - ADRs must follow the standard format: Context, Decision, Consequences (including negative trade-offs) — a decision with no downsides listed is suspicious.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Description: ${ctx.projectDescription}`,
-    `PRD — NFRs and performance/scale targets (critical for sizing decisions):\n${ctx.priorOutputs.manager?.slice(0, 1000) ?? ''}`,
-    `Data Model Summary (entities, relationships, PK strategy):\n${ctx.priorOutputs.dataModel?.slice(0, 2000) ?? ''}`,
+    `Data Model Summary:\n${ctx.priorOutputs.dataModel?.slice(0, 1000) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
-    `\nProduce an Architecture Design Document (ADD) with all 10 sections:`,
+    `\nProduce an Architecture Design Document (ADD) with:`,
     `1. Architecture Overview & Guiding Principles — the 3-5 principles that drive every decision below (e.g. "prefer managed services over self-hosted", "design for horizontal scale from day one")`,
     `2. System Context Diagram — described in text/ASCII, showing the system boundary, external actors, and external systems it integrates with`,
     `3. Component Diagram — services/modules, their single responsibility, and the interfaces (APIs/events) they expose or consume`,
-    `4. Technology Stack Decision — for frontend, backend, database, cache, messaging, and infra: the chosen technology, at least one alternative considered and rejected (with reason), and why the choice fits the ${ctx.domain} domain and project scale. Scale decisions must reference the NFR targets from the PRD above.`,
+    `4. Technology Stack Decision — for frontend, backend, database, cache, messaging, and infra: the chosen technology, at least one alternative considered and rejected (with reason), and why the choice fits the ${ctx.domain} domain and project scale`,
     `5. Integration Architecture — for each external integration, the communication pattern (sync REST / async messaging / webhook / batch) and justification`,
-    `6. Data Architecture — storage layers (OLTP, analytics, file/object storage), caching strategy (what's cached, invalidation approach), and CDN usage if applicable. Must be consistent with entities in the Data Model above.`,
+    `6. Data Architecture — storage layers (OLTP, analytics, file/object storage), caching strategy (what's cached, invalidation approach), and CDN usage if applicable`,
     `7. Security Architecture — concrete AuthN/AuthZ mechanism and provider, secrets management approach, network segmentation/zero-trust posture`,
-    `8. Scalability & Performance Design — reference specific NFR numbers from the PRD above (e.g. "1000 concurrent users, p95 < 300ms") and explain the specific mechanisms (horizontal scaling, read replicas, queue-based load leveling, etc.) that meet them`,
+    `8. Scalability & Performance Design — reference load expectations from the PRD's NFRs where available, and explain the specific mechanisms (horizontal scaling, read replicas, queue-based load leveling, etc.) that meet them`,
     `9. Disaster Recovery & High Availability Strategy — RTO/RPO targets and the architecture elements that achieve them (multi-AZ, backups, failover)`,
     `10. Architecture Decision Records (ADRs) — at least 3 key decisions, each in Context/Decision/Consequences format (including negative trade-offs), attributed to the responsible architect or tech lead by name from the team above`,
     diagramLine('Draw a high-level C4 Context or component diagram showing services and their interactions.'),
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce an Architecture Design Document (ADD) for "${ctx.projectName}" that gives downstream agents concrete technology choices and component boundaries.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("manager"): Read the PRD — extract Non-Functional Requirements (NFRs): performance targets (response time, throughput), scalability targets (concurrent users, data volume), availability/uptime SLAs, security compliance requirements. These are hard constraints on every architecture decision.\n` +
-    `STEP 2 — call get_agent_output("dataModel"): Read the full data model — extract entities, relationships, data volumes, and any stated PK/indexing strategy. The data architecture and storage layer choices must be consistent with these entities.\n` +
-    `STEP 3 — call get_agent_output("feasibility"): Read the feasibility study — extract the recommended technology approach, identified integration risks, and team skills gaps. Technology stack choices should align with feasibility conclusions unless you have a strong reason to diverge (document it as an ADR).\n` +
-    `STEP 4 — call get_team_roster: Get named architects and tech leads for ADR attribution.\n` +
-    `STEP 5 — call get_domain_context: Get domain-specific context (compliance standards, common integration patterns, typical stack for the ${ctx.domain} domain).\n` +
-    `STEP 6 — Produce all 10 ADD sections. NFR targets from STEP 1 must be cited by number in the Scalability section. Data architecture must be consistent with STEP 2 entities. Every tech choice must name a rejected alternative. All 3+ ADRs must include negative trade-offs.\n` +
-    `STEP 7 — Self-check: verify scalability section references specific NFR numbers, data architecture matches data model entities, every ADR has consequences (including negatives), and all 10 sections are present. Fix any gaps before finishing.`,
+    `Produce an Architecture Design Document (ADD) for "${ctx.projectName}" that gives downstream ` +
+    `agents (API design, code structure, DevOps, infra) concrete technology choices and component ` +
+    `boundaries to build on. Read the data model and feasibility study outputs first to ground ` +
+    `technology decisions in the actual entities and scale requirements. Every technology choice must ` +
+    `name at least one rejected alternative. Include 3+ ADRs with genuine trade-off statements.`,
   tools: ALL_TOOLS,
-  maxIterations: 5,
+  maxIterations: 4,
 };
 
 const apiDesign: AgentDefinition = {
@@ -578,7 +511,7 @@ const apiDesign: AgentDefinition = {
   phase: 'phase3',
   description: 'RESTful API specification and contract design',
   outputLabel: 'API Design Specification',
-  dependsOn: ['architecture', 'userStory'],
+  dependsOn: ['architecture'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the API Design Agent. Produce a comprehensive REST API specification detailed enough that frontend and backend engineers could work in parallel against it without a single clarifying question, and an OpenAPI/Swagger document could be derived from it directly.
 
 ## API Design Standards
@@ -590,10 +523,8 @@ const apiDesign: AgentDefinition = {
 - Pagination must specify the actual mechanism (cursor-based vs offset-based) and the response envelope shape for paginated lists.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Architecture Summary:\n${ctx.priorOutputs.architecture?.slice(0, 1200) ?? ctx.projectDescription}`,
-    `Data Model Summary (entity/field names for request/response bodies):\n${ctx.priorOutputs.dataModel?.slice(0, 1000) ?? ''}`,
-    `User Stories (top-priority stories drive which endpoints to specify first):\n${ctx.priorOutputs.userStory?.slice(0, 800) ?? ''}`,
+    `Data Model Summary (for entity/field consistency):\n${ctx.priorOutputs.dataModel?.slice(0, 1000) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce an API Design Specification with:`,
@@ -616,16 +547,13 @@ const apiDesign: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a REST API Design Specification for "${ctx.projectName}".\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract AuthN/AuthZ mechanism, chosen REST conventions, and integration patterns. API auth design must match the architecture's security design.\n` +
-    `STEP 2 — call get_agent_output("dataModel"): Extract entity names and field definitions (with types). Endpoint request/response body field names MUST match the data dictionary exactly — no invented field names.\n` +
-    `STEP 3 — call get_agent_output("userStory"): Extract the highest-priority user stories (P0/P1). The first 8-10 endpoints specified must be the ones those stories require.\n` +
-    `STEP 4 — call get_team_roster: Get named engineers for endpoint ownership.\n` +
-    `STEP 5 — Produce all 9 sections. Endpoint paths must use entity names from STEP 2. Auth design must match STEP 1 mechanism. The 8-10 core endpoints must map to the US-xxx stories from STEP 3.\n` +
-    `STEP 6 — Self-check: verify endpoint field names match data dictionary, auth mechanism matches architecture, each endpoint cites a US-xxx story, error envelope is consistent across all endpoints. Fix gaps before finishing.`,
+    `Produce a REST API Design Specification for "${ctx.projectName}" detailed enough for frontend and ` +
+    `backend teams to work in parallel without clarifying questions. Read the architecture document for ` +
+    `technology/auth decisions, and the data model for entity/field names — endpoint request/response ` +
+    `bodies must use field names consistent with the data dictionary. Cover 8-10 core endpoints with full ` +
+    `request/response schemas, a single error envelope, and a sequence diagram for the auth flow.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  maxIterations: 4,
 };
 
 const uxResearch: AgentDefinition = {
@@ -638,9 +566,7 @@ const uxResearch: AgentDefinition = {
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the UX Research Agent.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `User Stories Excerpt:\n${ctx.priorOutputs.userStory?.slice(0, 1200) ?? ctx.projectDescription}`,
-    `Stakeholder Analysis (persona groups and their interests):\n${ctx.priorOutputs.stakeholder?.slice(0, 1000) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a UX Research Report with:`,
@@ -655,16 +581,13 @@ const uxResearch: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a UX Research Report for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("userStory"): Extract the user personas (roles) and their goals/pain points from the user stories.\n` +
-    `STEP 2 — call get_agent_output("stakeholder"): Get the stakeholder register — use the stakeholder groups to validate personas and identify primary/secondary users.\n` +
-    `STEP 3 — call get_domain_context: Get domain context for competitive UX analysis (name 3 real comparable products) and accessibility requirements specific to the ${ctx.domain} domain.\n` +
-    `STEP 4 — call get_team_roster: Get the named research lead for section 1.\n` +
-    `STEP 5 — Produce all 8 sections. Each persona must reference a user story role. Journey maps must show current vs future state. Competitive analysis must name 3 real products with specific UX strengths/weaknesses.\n` +
-    `STEP 6 — Self-check: verify 3 distinct personas, 2 complete journey maps, 3 named competitors, WCAG checklist has domain-specific items. Fix gaps before finishing.`,
+    `Produce a UX Research Report for ${ctx.projectName} with 3 persona deep-dives, ` +
+    `2 user journey maps (current vs future state), a competitive UX analysis of 3 comparable ` +
+    `products, and domain-specific WCAG 2.1 AA accessibility requirements. Read user story and ` +
+    `stakeholder outputs to ground personas in real requirements.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 const interaction: AgentDefinition = {
@@ -692,195 +615,137 @@ const interaction: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce an Interaction Design Specification for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("uxResearch"): Extract the 3 personas, 2 journey maps, design principles, and information architecture to drive component and wireframe priorities.\n` +
-    `STEP 2 — call get_style_guide: Check for uploaded brand guidelines — if found, all design tokens must conform to it.\n` +
-    `STEP 3 — call get_domain_context: Get domain-specific interaction patterns for the ${ctx.domain} domain.\n` +
-    `STEP 4 — Produce all 8 sections. Design tokens must be specific values. Component library must describe each component's states/variants. Wireframes must cover the 5 screens most critical to the primary user journey from STEP 1.\n` +
-    `STEP 5 — Self-check: verify design tokens are concrete values (not vague), every wireframe is linked to a persona use case, WCAG criteria are cited by number, and animation guidelines specify duration/easing values. Fix gaps before finishing.`,
+    `Produce an Interaction Design Specification for ${ctx.projectName} — design system tokens, ` +
+    `component library (buttons, forms, cards, modals, tables, nav), wireframe descriptions for 5+ ` +
+    `key screens, interaction/animation patterns, and accessibility implementation notes. Read ` +
+    `uxResearch output to ensure designs address identified pain points and personas.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
-};
 
-const LAYOUT_ARCHETYPES = [
-  {
-    label: 'Top Nav + Card Grid',
-    nav: 'Sticky top navigation bar (horizontal, full-width, 56-64px, logo left + links center/right + user avatar chip + notification badge)',
-    layout: 'Centered max-width 1200px container; hero stat strip → 2-3 column card grid → full-width data table below fold',
-    mobile: 'Top nav collapses to hamburger; cards stack to single column; table scrolls horizontally',
-    archetype: 'Classic SaaS dashboard — horizontal nav, card-grid sections, stat cards, table below fold',
-  },
-  {
-    label: 'Left Sidebar + Master-Detail',
-    nav: 'Fixed left sidebar (240px, icon+label nav items grouped by section, collapse toggle) + minimal top utility bar for search/breadcrumb only',
-    layout: 'Fluid right area: left half = scrollable master list or data table; right half = contextual detail/info panel (sticky, updates on row click)',
-    mobile: 'Sidebar collapses to icon-only rail below 1024px, off-canvas drawer below 768px',
-    archetype: 'Admin portal / enterprise tool — sidebar navigation, master list, contextual detail pane',
-  },
-  {
-    label: 'Bottom Tab Bar + Stacked Scroll',
-    nav: 'Bottom tab bar (4-5 tabs, icon+label) + slim top utility bar (logo left, search icon + notification icon right — NO full nav links in top bar)',
-    layout: 'Single-column stacked scroll: hero banner → horizontal scroll card carousel → stat chips row → activity feed → CTA section',
-    mobile: 'Designed mobile-first at 375px base; desktop expands center column to 480-640px max with generous side margins',
-    archetype: 'Consumer mobile app / marketplace — bottom tabs, carousel cards, feed-style content, thumb-friendly CTAs',
-  },
-  {
-    label: 'Hamburger Drawer + Split Pane',
-    nav: 'Compact top bar (hamburger icon left + logo center + action icons right) with slide-out off-canvas drawer nav + breadcrumb trail below top bar',
-    layout: 'Horizontal split pane: ~35% left panel (filters/list/search) | ~65% right panel (charts, detail content, heavy tables); tabbed sections for multiple analytics views',
-    mobile: 'Drawer overlays content on open; split pane stacks vertically below 768px (filters collapse to accordion)',
-    archetype: 'Enterprise analytics / operations portal — drawer nav, data-dense split-pane, breadcrumbs, charts and tables',
-  },
-] as const;
+};
 
 const uxMockups: AgentDefinition = {
   id: 'uxMockups',
   name: 'UX Mockups',
   phase: 'phase3',
-  description: 'Unique-layout HTML mockup versions with live style guide — rendered directly in the Preview tab',
+  description: 'Two interactive HTML mockup versions with live style guide — rendered directly in the Preview tab',
   outputLabel: 'UX Mockups & Style Guide',
   dependsOn: ['uxResearch', 'interaction', 'architecture'],
   systemPrompt: `${BASE_SYSTEM}
 
-You are the UX Mockups Agent. You produce complete, standalone, COMMERCIAL-GRADE HTML mockup documents for the project. Each mockup must look like a finished, shippable product — not a wireframe or prototype sketch. Think Figma-quality, investor-demo-ready screens with real mock data, professional typography, status states, and working navigation simulation.
-
-LAYOUT UNIQUENESS RULE (NON-NEGOTIABLE): Every version MUST implement a structurally different layout archetype. You will be told which archetype to use for each version. You MUST follow it exactly — if told "Left Sidebar + Master-Detail", use a left sidebar, not a top nav.
-
-DOMAIN RESEARCH RULE — VERSIONS B, C, D: Before generating each non-style-guide version, you MUST independently research the project domain to determine:
-1. CONTENT: What are the 4-6 most important data entities and business workflows in this domain?
-2. LAYOUT: Which layout archetype best fits this domain's users (power users, mobile-first consumers, etc.)?
-3. NAVIGATION: What menu structure do successful apps in this domain use?
-4. COLORS: What color psychology and brand conventions apply to this domain?
-Do NOT reuse the same content research from Version A — research each version independently to find different angles.
+You are the UX Mockups Agent. You produce two complete, standalone, COMMERCIAL-GRADE HTML mockup documents for the project — one per design concept. Each mockup must look like a finished, shippable product — not a wireframe or prototype sketch. Think Figma-quality, investor-demo-ready screens with real mock data, professional typography, status states, and working navigation simulation.
 
 COMMERCIAL-GRADE QUALITY STANDARD (non-negotiable):
 Every mockup must include ALL of the following:
-1. NAVIGATION matching the assigned archetype exactly (see LAYOUT UNIQUENESS RULE).
-2. AT LEAST 4 DISTINCT BUSINESS FEATURES on the screen.
-3. REAL MOCK DATA — use domain-appropriate real-sounding names, real numbers, real dates. NEVER use "Lorem ipsum", "Product 1", "User A", "John Doe", or generic placeholders.
-4. STATUS BADGES — every data entity must show a status: coloured pills (green/amber/red/grey).
+1. STICKY NAVIGATION BAR — logo + full nav links with active state + user avatar/profile chip + notification badge. Height 56-64px, subtle shadow, z-index 100.
+2. AT LEAST 4 DISTINCT BUSINESS FEATURES on the screen — e.g. a dashboard might have: KPI stat cards, a data table with real rows, a chart/progress visual, and an activity feed. A marketplace might have: search+filter, product grid, deal strip, and seller spotlight. NEVER show only one feature per screen.
+3. REAL MOCK DATA — use domain-appropriate real-sounding names, real numbers, real dates (e.g. "Priya Sharma", "₹89,500", "Jun 20, 2024", "Order #AX-2024-78421"). NEVER use "Lorem ipsum", "Product 1", "User A", "John Doe", or generic placeholders.
+4. STATUS BADGES — every data entity must show a status: delivered/pending/active/cancelled/processing — coloured pills (green/amber/red/grey).
 5. HERO SECTION — a gradient banner or highlight panel at top with key metric, tagline, or primary CTA.
-6. INTERACTIVE COMPONENT STATES — hover-ready cards, active nav links, filled forms, progress bars, count badges.
-7. DATA DENSITY — cards with real counts, tables with 4-6 real rows, lists with 3-5 real items.
+6. INTERACTIVE COMPONENT STATES — show hover-ready cards, active nav links, filled forms, progress bars, count badges.
+7. DATA DENSITY — cards with real counts, tables with 4-6 real rows, lists with 3-5 real items. Never leave large empty areas.
 8. CSS DESIGN TOKENS — declare at :root: --color-primary, --color-secondary, --color-surface, --color-text, --color-accent, --color-success, --color-danger, --font-family, --radius, --shadow-sm, --shadow-md, --shadow-lg, --spacing-unit.
 9. PROFESSIONAL SHADOWS & DEPTH — cards: 0 1px 3px rgba(0,0,0,0.08); hover: 0 8px 32px rgba(0,0,0,0.12); navbar: 0 1px 4px rgba(0,0,0,0.08).
-10. TYPOGRAPHY HIERARCHY — 3+ distinct type sizes. Load Google Font via @import if appropriate.
+10. TYPOGRAPHY HIERARCHY — 3+ distinct type sizes (hero H1 32-40px 800w, section H2 18-20px 700w, body 14px 400w, caption 11-12px 500-600w). Load Google Font via @import if appropriate for the domain.
 
 CRITICAL OUTPUT RULES:
+- You MUST output EXACTLY 2 fenced code blocks using \`\`\`html ... \`\`\` syntax.
 - Each block must be a COMPLETE standalone HTML document starting with <!DOCTYPE html>.
-- RESPONSIVE DESIGN IS MANDATORY. Include <meta name="viewport"> as FIRST tag. Use mobile-first CSS.
-- Do NOT use placeholder images. Use CSS gradients, emoji icons, or inline SVG instead.
-- Do NOT use external CDN links except @import for Google Fonts.`,
-  buildUserPrompt: (ctx) => {
-    const versionCount = Math.min(4, Math.max(2, ctx.mockupVersionCount ?? 2));
-    const labels = ['A', 'B', 'C', 'D'].slice(0, versionCount);
-
-    const buildVersionBlock = (label: string, index: number): string => {
-      const arch = LAYOUT_ARCHETYPES[index % LAYOUT_ARCHETYPES.length];
-      const isStyleGuide = index === 0;
-
-      const researchPreamble = isStyleGuide ? '' : `
-## Pre-Generation Research for Version ${label} (REQUIRED BEFORE WRITING HTML)
-Before writing any HTML for Version ${label}, independently research the "${ctx.domain}" domain:
-1. CONTENT ANGLE: What specific workflow or user type should Version ${label} focus on? Choose a DIFFERENT angle than Version A.
-2. LAYOUT FIT: Why does the "${arch.label}" layout work for this angle?
-3. COLOR DIRECTION: What color palette (provide 5 specific hex codes) fits this angle and domain?
-4. DATA ENTITIES: What are the 4+ most important data entities to show for this angle?
-Document your research findings before generating the HTML.
-`;
-
-      const colorInstruction = isStyleGuide
-        ? `Follow the uploaded style guide for colors if available; otherwise choose a professional palette for the ${ctx.domain} domain.`
-        : `Choose colors based on your research above — do NOT copy Version A's palette.`;
-
-      return `${researchPreamble}
-## Version ${label} — Layout: "${arch.label}" ${isStyleGuide ? '(Style Guide Version)' : ''}
-
-**Assigned Layout Archetype:** ${arch.label}
-- Navigation: ${arch.nav}
-- Layout structure: ${arch.layout}
-- Mobile behavior: ${arch.mobile}
-- Design archetype: ${arch.archetype}
-
-**Color directive:** ${colorInstruction}
-
-Design direction rationale (2-3 sentences): What visual language, layout pattern, and UX philosophy this version follows and why it fits the chosen ${ctx.domain} user angle.
-
-Business features covered (list all 4+):
-- Feature 1: [name] — [what it does, what mock data it shows]
-- Feature 2: [name] — [what it does, what mock data it shows]
-- Feature 3: [name] — [what it does, what mock data it shows]
-- Feature 4: [name] — [what it does, what mock data it shows]
-
-\`\`\`html
-<!DOCTYPE html>
-<!-- Version ${label}: [Concept Name] — ${ctx.projectName} | Layout: ${arch.label} -->
-<!-- Nav: ${arch.nav.slice(0, 80)} -->
-...full HTML with ${arch.layout.slice(0, 60)} layout, 4+ features, real data...
-\`\`\``;
-    };
-
-    return [
-      `Project: ${ctx.projectName}`,
-      `Domain: ${ctx.domain}`,
-      `UX Research Excerpt:
-${ctx.priorOutputs.uxResearch?.slice(0, 1000) ?? ctx.projectDescription}`,
-      `Interaction Design Excerpt:
-${ctx.priorOutputs.interaction?.slice(0, 1000) ?? ''}`,
-      `Architecture Summary:
-${ctx.priorOutputs.architecture?.slice(0, 500) ?? ''}`,
-      domainLine(ctx),
-      teamLine(ctx),
-      brandingLine(ctx),
-      ``,
-      `## Design System`,
-      `Document the shared design tokens for ${ctx.projectName}:`,
-      `- Color palette with hex codes (primary, secondary, accent, success, danger, surface, background, text, text-secondary, border)`,
-      `- Typography: font family, scale (hero/h1/h2/body/caption/micro), weights`,
-      `- Spacing: base unit, card padding, section gap, page margin`,
-      `- Border radius convention, shadow scale (sm/md/lg)`,
-      `- 6-8 core components overview`,
-      ``,
-      ...labels.map((label, i) => buildVersionBlock(label, i)),
-      ``,
-      `## Comparison & Recommendation`,
-      `Table comparing all versions across: visual style, target user, information density, nav pattern, mobile suitability, implementation complexity. End with a clear recommendation.`,
-      ``,
-      `FINAL REMINDER: Output EXACTLY ${versionCount} \`\`\`html fenced code blocks. Each must be a complete <!DOCTYPE html> implementing its assigned layout archetype. NO two versions may use the same nav pattern.`,
-    ].join('\n');
-  },
+- RESPONSIVE DESIGN IS MANDATORY. Every HTML document must:
+  1. Include <meta name="viewport" content="width=device-width, initial-scale=1.0"> as the FIRST tag in <head>.
+  2. Use mobile-first CSS — base styles for 375px, min-width media queries for larger screens.
+  3. Never use fixed pixel widths on layout containers.
+  4. Navigation must collapse or adapt on mobile.
+  5. Sidebars must be hidden or collapsed below 768px.
+  6. Required breakpoints: @media (min-width: 480px), @media (min-width: 768px), @media (min-width: 1024px).
+- Do NOT use placeholder images (via.placeholder.com or similar). Use CSS gradients, emoji icons (🛍📱💳📊), or inline SVG instead.
+- Do NOT use external CDN links except @import for Google Fonts in <style> which is allowed.
+- The two versions must be visually and structurally distinct (different layout, nav pattern, color mood, or density).
+- Each version must cover the SAME 4+ business features so the user can compare approaches, not coverage.`,
+  buildUserPrompt: (ctx) => [
+    `Project: ${ctx.projectName}`,
+    `Domain: ${ctx.domain}`,
+    `UX Research Excerpt:\n${ctx.priorOutputs.uxResearch?.slice(0, 1000) ?? ctx.projectDescription}`,
+    `Interaction Design Excerpt:\n${ctx.priorOutputs.interaction?.slice(0, 1000) ?? ''}`,
+    `Architecture Summary:\n${ctx.priorOutputs.architecture?.slice(0, 500) ?? ''}`,
+    domainLine(ctx),
+    teamLine(ctx),
+    brandingLine(ctx),
+    ``,
+    `Produce a COMMERCIAL-GRADE UX Mockups & Style Guide with the following structure:`,
+    ``,
+    `## Design System`,
+    `Document the shared design tokens for ${ctx.projectName}:`,
+    `- Color palette with hex codes (primary, secondary, accent, success, danger, surface, background, text, text-secondary, border)`,
+    `- Typography: font family, scale (hero/h1/h2/body/caption/micro), weights`,
+    `- Spacing: base unit, card padding, section gap, page margin`,
+    `- Border radius convention, shadow scale (sm/md/lg)`,
+    `- 6-8 core components overview: nav bar, stat card, data card, status badge, button styles, form input, table row, notification chip`,
+    ``,
+    `## Version A — [Give it a domain-appropriate concept name]`,
+    `Design direction rationale (2-3 sentences): what visual language, layout pattern, and UX philosophy this version follows and why it fits ${ctx.domain} users.`,
+    ``,
+    `Business features covered (list all 4+):`,
+    `- Feature 1: [name] — [what it does, what mock data it shows]`,
+    `- Feature 2: [name] — [what it does, what mock data it shows]`,
+    `- Feature 3: [name] — [what it does, what mock data it shows]`,
+    `- Feature 4: [name] — [what it does, what mock data it shows]`,
+    ``,
+    `Then output the COMPLETE standalone HTML mockup:`,
+    ``,
+    `\`\`\`html`,
+    `<!DOCTYPE html>`,
+    `<!-- Version A: [Concept Name] — ${ctx.projectName} -->`,
+    `<!-- COMMERCIAL-GRADE: sticky nav, 4+ features, real mock data, status badges, hero section -->`,
+    `<!-- CSS tokens: --color-primary, --color-secondary, --color-accent, --color-success, --color-danger, --color-surface, --color-text, --font-family, --radius, --shadow-sm, --shadow-md, --shadow-lg -->`,
+    `...full HTML document with real content, real data, professional polish...`,
+    `\`\`\``,
+    ``,
+    `## Version B — [Give it a meaningfully different concept name]`,
+    `Design direction rationale (2-3 sentences): what makes this direction VISUALLY AND STRUCTURALLY different from Version A. Must differ in at least 2 of: nav pattern, layout density, color mood, card style, information hierarchy, or primary interaction model.`,
+    ``,
+    `Business features covered (same 4+ features as Version A, different presentation):`,
+    `- Feature 1: [how Version B presents this differently]`,
+    `- Feature 2: [how Version B presents this differently]`,
+    `- Feature 3: [how Version B presents this differently]`,
+    `- Feature 4: [how Version B presents this differently]`,
+    ``,
+    `Then output the COMPLETE standalone HTML mockup:`,
+    ``,
+    `\`\`\`html`,
+    `<!DOCTYPE html>`,
+    `<!-- Version B: [Concept Name] — ${ctx.projectName} -->`,
+    `<!-- COMMERCIAL-GRADE: sticky nav, 4+ features, real mock data, status badges, hero section -->`,
+    `<!-- CSS tokens: --color-primary, --color-secondary, --color-accent, --color-success, --color-danger, --color-surface, --color-text, --font-family, --radius, --shadow-sm, --shadow-md, --shadow-lg -->`,
+    `...full HTML document with real content, real data, professional polish...`,
+    `\`\`\``,
+    ``,
+    `## Comparison & Recommendation`,
+    `Table comparing Version A vs Version B across: visual style, target user, information density, nav pattern, mobile suitability, implementation complexity. End with a clear recommendation for which to prototype first and why.`,
+    ``,
+    `## Appendix — AI Image Generation Prompts`,
+    `**Version A Hero Image Prompt:** [2-4 sentences: image subject, visual style, color palette, mood, composition — suitable for Midjourney/DALL-E]`,
+    ``,
+    `**Version B Hero Image Prompt:** [2-4 sentences: image subject, visual style, color palette, mood, composition — suitable for Midjourney/DALL-E]`,
+    ``,
+    `FINAL REMINDER: Output EXACTLY 2 \`\`\`html fenced code blocks. Each must be a complete <!DOCTYPE html> with: sticky nav, hero, 4+ real business features, real mock data (real names/numbers/dates), status badges, professional shadows/typography, CSS custom properties, Google Font @import allowed, no external JS/CSS CDN, no placeholder images, mobile-responsive.`,
+  ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
-  goal: (ctx) => {
-    const versionCount = Math.min(4, Math.max(2, ctx.mockupVersionCount ?? 2));
-    const labels = ['A', 'B', 'C', 'D'].slice(0, versionCount);
-    let stepNum = 1;
-    const steps: string[] = [];
-
-    steps.push(`STEP ${stepNum++} — call get_agent_output("uxResearch"): Extract the 3 user personas, their primary goals/pain points, and the information architecture. These determine what features each version must show.`);
-    steps.push(`STEP ${stepNum++} — call get_agent_output("interaction"): Extract design system tokens (colors, typography, spacing) and component library. Version A must use these as its style guide baseline.`);
-    steps.push(`STEP ${stepNum++} — call get_style_guide: Check if a brand style guide was uploaded. If yes, Version A MUST follow it for colors and typography.`);
-    steps.push(`STEP ${stepNum++} — call get_domain_context: Get domain-specific UI patterns, competitor design conventions, and color psychology for the ${ctx.domain} domain. Versions B-D use this for independent research.`);
-
-    labels.forEach((label, i) => {
-      const arch = LAYOUT_ARCHETYPES[i % 4];
-      if (i > 0) {
-        steps.push(`STEP ${stepNum++} — Domain research for Version ${label} (layout: "${arch.label}"): Before writing any HTML, independently research the ${ctx.domain} domain from a DIFFERENT angle than Version A. Document: (1) content angle/user focus, (2) color palette (5 hex codes), (3) 4+ data entities to feature, (4) why "${arch.label}" fits this angle.`);
-      }
-      steps.push(`STEP ${stepNum++} — Generate Version ${label} HTML (layout: "${arch.label}"): Implement the assigned archetype — Nav: "${arch.nav.slice(0, 60)}..." — with 4+ business features, real domain-appropriate mock data, CSS custom properties, and the research-backed color palette. Full <!DOCTYPE html>.`);
-    });
-
-    steps.push(`STEP ${stepNum++} — Self-check: verify each version uses its assigned layout archetype, no two versions share the same nav pattern, every version has 4+ real business features with non-placeholder data, and there are exactly ${versionCount} \`\`\`html fenced blocks. Fix any gaps before finishing.`);
-
-    return (
-      `Produce ${versionCount} COMMERCIAL-GRADE UX Mockup HTML documents for ${ctx.projectName}.\n\n` +
-      `MANDATORY STEP SEQUENCE:\n` +
-      steps.map(s => s).join('\n')
-    );
-  },
+  goal: (ctx) =>
+    `Produce exactly 2 COMMERCIAL-GRADE standalone HTML mockup documents for ${ctx.projectName} — ` +
+    `Version A and Version B — each a full <!DOCTYPE html> with: sticky nav bar, hero section, ` +
+    `AT LEAST 4 distinct business features per screen with REAL mock data (real names/numbers/dates, ` +
+    `NO lorem ipsum or "Product 1" placeholders), status badges, professional shadows and typography, ` +
+    `mobile-first responsive CSS using CSS custom properties (--color-primary, --color-secondary, ` +
+    `--color-accent, --color-success, --color-danger, --color-surface, --color-text, --font-family, ` +
+    `--radius, --shadow-sm, --shadow-md, --shadow-lg), Google Font @import allowed, no external JS/CSS CDN. ` +
+    `The two versions must be visually AND structurally distinct. ` +
+    `Read uxResearch and interaction outputs for domain context and feature list. ` +
+    `Output MUST contain exactly 2 \`\`\`html fenced code blocks.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 6,
-}
+  maxIterations: 4,
+
+};
 
 // ─── Phase 3B ─────────────────────────────────────────────────────────────────
 const securityCompliance: AgentDefinition = {
@@ -889,14 +754,12 @@ const securityCompliance: AgentDefinition = {
   phase: 'phase3b',
   description: 'Security assessment, threat model and compliance checklist',
   outputLabel: 'Security & Compliance Report',
-  dependsOn: ['architecture', 'dataModel', 'businessRules'],
+  dependsOn: ['architecture', 'dataModel'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Security & Compliance Agent.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Architecture Summary:\n${ctx.priorOutputs.architecture?.slice(0, 1000) ?? ''}`,
     `Data Model Summary:\n${ctx.priorOutputs.dataModel?.slice(0, 800) ?? ctx.projectDescription}`,
-    `Business Rules (compliance rules and data validation constraints):\n${ctx.priorOutputs.businessRules?.slice(0, 800) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a Security & Compliance Report with:`,
@@ -913,17 +776,13 @@ const securityCompliance: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Security & Compliance Report for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract the tech stack, AuthN/AuthZ mechanism, network design, and external integrations — these define the attack surface.\n` +
-    `STEP 2 — call get_agent_output("dataModel"): Extract PII-classified fields and sensitive data stores — these ground the Data Protection Controls section.\n` +
-    `STEP 3 — call get_agent_output("businessRules"): Extract compliance rules (BR-xxx) — map each compliance BR to the specific regulation it satisfies in the Compliance Checklist.\n` +
-    `STEP 4 — call get_domain_context: Get domain-specific regulatory standards (e.g. HIPAA for healthcare, PCI-DSS for payments, SOC2 for SaaS).\n` +
-    `STEP 5 — call get_team_roster: Get named team members for incident response role assignments.\n` +
-    `STEP 6 — Produce all 10 sections. STRIDE must name threats per architecture component. OWASP must rate all 10 items (High/Med/Low). Compliance checklist must cite specific regulations by name. Incident response must have named role owners.\n` +
-    `STEP 7 — Self-check: verify STRIDE covers all architecture components, all 10 OWASP items are rated, compliance regulations are named (not generic), and incident response roles are assigned to real team members. Fix gaps before finishing.`,
+    `Produce a Security & Compliance Report for ${ctx.projectName} using STRIDE threat modelling, ` +
+    `OWASP Top 10 assessment with per-item risk ratings, domain-specific compliance checklist, and ` +
+    `an incident response plan with named role assignments from the team roster. Read architecture ` +
+    `and data model outputs to ground the attack surface analysis in the actual tech choices.`,
   tools: ALL_TOOLS,
-  maxIterations: 5,
+  maxIterations: 4,
+
 };
 
 // ─── Phase 4 ──────────────────────────────────────────────────────────────────
@@ -937,9 +796,7 @@ const sprintPlanner: AgentDefinition = {
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Sprint Planning Agent.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `User Stories Excerpt:\n${ctx.priorOutputs.userStory?.slice(0, 1500) ?? ctx.projectDescription}`,
-    `Architecture Summary (for tech setup tasks in Sprint 0):\n${ctx.priorOutputs.architecture?.slice(0, 800) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a Sprint Plan with:`,
@@ -953,15 +810,13 @@ const sprintPlanner: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Sprint Plan for ${ctx.projectName} covering Sprints 0-6.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("userStory"): Read all user stories and their story-point estimates. Sprint capacity is determined by total story points divided across 6 sprints.\n` +
-    `STEP 2 — call get_agent_output("architecture"): Extract tech stack and infrastructure setup tasks for Sprint 0 (repo setup, CI/CD pipeline, database provisioning, etc.).\n` +
-    `STEP 3 — call get_team_roster: Get team size and roles to calculate velocity (assume 6-8 story points per developer per 2-week sprint as baseline, adjust for seniority mix).\n` +
-    `STEP 4 — Produce all 7 sections. Sprint 0 must list specific setup tasks by name. Sprints 1-6 must list US-xxx IDs. Inter-sprint dependencies must be explicit. Release milestones must be dated.\n` +
-    `STEP 5 — Self-check: verify total story points across all sprints matches the user story backlog total, each sprint has a specific goal (not generic), and all task owners are real team member names. Fix gaps before finishing.`,
+    `Produce a Sprint Plan for ${ctx.projectName} covering Sprints 0-6 (2-week sprints) ` +
+    `with sprint goals, story point estimates, capacity assumptions, and named task owners from ` +
+    `the team roster. Read user story and architecture outputs to accurately sequence work and ` +
+    `identify inter-sprint dependencies.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 const taskBreakdown: AgentDefinition = {
@@ -989,15 +844,13 @@ const taskBreakdown: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Break the engineering work for ${ctx.projectName} into granular tasks.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract tech stack and component boundaries. Tasks must map to actual architecture components.\n` +
-    `STEP 2 — call get_agent_output("apiDesign"): Extract the endpoint list — each endpoint becomes at least one backend and one frontend task.\n` +
-    `STEP 3 — call get_team_roster: Get named engineers. Every task must have a named assignee.\n` +
-    `STEP 4 — Produce all task sections. Backend tasks must name specific endpoints from STEP 2. Every task has: ID, title, type, estimated hours, assignee, dependencies, and acceptance criteria.\n` +
-    `STEP 5 — Self-check: verify all API endpoints from STEP 2 have corresponding tasks, total hours are reasonable for team size, and no tasks are unassigned. Fix gaps before finishing.`,
+    `Break the engineering work for ${ctx.projectName} into granular tasks (backend, frontend, ` +
+    `infra, testing) with estimated hours, named assignees from the team roster, dependencies, ` +
+    `and acceptance criteria per task. Read architecture and API design outputs to ensure tasks ` +
+    `map to real services and endpoints. Include critical path analysis.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 const techDebt: AgentDefinition = {
@@ -1024,15 +877,12 @@ const techDebt: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Tech Debt Register for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Read the ADRs — each decision with a negative consequence is a pre-planned debt item.\n` +
-    `STEP 2 — call get_agent_output("sprintPlanner"): Read the sprint plan — post-MVP deferrals must appear in the register with target sprints.\n` +
-    `STEP 3 — call get_team_roster: Get named engineers for debt owner assignments.\n` +
-    `STEP 4 — Produce all sections. Debt register must score each item (Impact 1-5 x Effort 1-5), sorted descending. Every ADR trade-off from STEP 1 must appear as a debt item.\n` +
-    `STEP 5 — Self-check: verify register is sorted by priority score, all ADR negatives are captured, every item has a named owner, and refactoring roadmap items have realistic sprint targets. Fix gaps before finishing.`,
+    `Produce a Tech Debt Register for ${ctx.projectName} — planned MVP shortcuts, a scored ` +
+    `debt register (ID, category, impact, effort, priority, target sprint, owner), architectural ` +
+    `debt items, dependency upgrade schedule, and a post-MVP refactoring roadmap. Read architecture ` +
+    `output to identify concrete debt items from the chosen tech stack.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+
 };
 
 const codeStructure: AgentDefinition = {
@@ -1060,14 +910,12 @@ const codeStructure: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Code Folder Structure document for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract tech stack. The folder structure must match the chosen framework conventions.\n` +
-    `STEP 2 — call get_agent_output("apiDesign"): Extract the endpoint resource groups — each maps to a route module or controller file.\n` +
-    `STEP 3 — Produce all sections. Directory tree must be in a fenced text block and consistent with tech stack from STEP 1. Every API resource from STEP 2 maps to a named file/module.\n` +
-    `STEP 4 — Self-check: verify the tree structure matches tech stack conventions, API resources from STEP 2 are all represented, naming conventions are consistent throughout. Fix gaps before finishing.`,
+    `Produce a Code Folder Structure document for ${ctx.projectName} — repository strategy ` +
+    `(mono vs poly with rationale), full directory tree in a fenced text block, naming conventions, ` +
+    `module/service boundary mapping, and test co-location strategy. Read architecture output to ` +
+    `ensure the folder tree maps 1:1 to the architecture's service boundaries.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+
 };
 
 const codeSnippets: AgentDefinition = {
@@ -1096,15 +944,14 @@ const codeSnippets: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce representative starter code snippets for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract the actual tech stack (language, framework, ORM/database client). Code snippets must use the real chosen stack, not generic examples.\n` +
-    `STEP 2 — call get_agent_output("apiDesign"): Pick the most representative endpoint (ideally a CRUD resource). The backend handler snippet must implement this specific endpoint.\n` +
-    `STEP 3 — call get_agent_output("interaction"): Extract a core UI component from the design system. The frontend component snippet must implement this real component.\n` +
-    `STEP 4 — Produce 4 code snippets: (1) backend API handler for the endpoint from STEP 2, (2) data model/entity using the ORM from STEP 1, (3) frontend component from STEP 3, (4) service/business-logic function. Each 20-50 lines with contextual explanation.\n` +
-    `STEP 5 — Self-check: verify all snippets use the tech stack from STEP 1, backend handler matches the API endpoint from STEP 2, and no snippet is a generic placeholder. Fix gaps before finishing.`,
+    `Produce representative starter code snippets for ${ctx.projectName} in the languages ` +
+    `and frameworks chosen in the architecture: one backend API handler, one data model/entity, ` +
+    `one frontend component, and one service/business-logic function. Read architecture, API design, ` +
+    `and interaction outputs to ensure snippets use the real endpoints, entities, and UI patterns. ` +
+    `Each snippet 20-50 lines with a contextual explanation.`,
   tools: ALL_TOOLS,
   maxIterations: 4,
+
 };
 
 const uiComponentLibrary: AgentDefinition = {
@@ -1133,15 +980,14 @@ const uiComponentLibrary: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a UI Component Library Plan for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("interaction"): Extract the design system tokens and component library definition. The component inventory must cover every component named in the interaction design spec.\n` +
-    `STEP 2 — call get_agent_output("codeStructure"): Extract the library folder structure. Component file locations must match the established folder conventions.\n` +
-    `STEP 3 — call get_team_roster: Get named engineers for library governance/ownership.\n` +
-    `STEP 4 — Produce all sections. Component inventory must cover every component from STEP 1. Folder structure must match STEP 2 conventions. Governance model must name real owners from STEP 3.\n` +
-    `STEP 5 — Self-check: verify every interaction design component is in the inventory, props/variants are specified for each shared component, and ownership is assigned. Fix gaps before finishing.`,
+    `Produce a UI Component Library Plan for ${ctx.projectName} — component inventory table ` +
+    `(name, category, screens used, reusable?), shared library component definitions with props/variants, ` +
+    `library folder structure, governance model with named owners, and design token mapping. Read ` +
+    `interaction and codeStructure outputs to ensure components align with the design system and ` +
+    `folder conventions.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 const codeReviewStandards: AgentDefinition = {
@@ -1171,15 +1017,12 @@ const codeReviewStandards: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce Code Review Standards for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract the tech stack (language, framework, database). Language/framework-specific standards must match the actual chosen stack.\n` +
-    `STEP 2 — call get_agent_output("codeStructure"): Extract the folder structure and module boundaries. Code review standards must reference these actual modules/layers.\n` +
-    `STEP 3 — call get_team_roster: Get named senior engineers and tech leads to assign as required reviewers in the Review Process section.\n` +
-    `STEP 4 — Produce all 10 sections. Language/framework standards must name the actual tech stack from STEP 1. Automated checks must specify real tools (e.g. ESLint, Prettier, Jest coverage gate at 80%). Named reviewers must come from STEP 3.\n` +
-    `STEP 5 — Self-check: verify language standards match architecture tech stack, automated tools are named (not generic), and all Review Process role assignments use real team member names. Fix gaps before finishing.`,
+    `Produce Code Review Standards for ${ctx.projectName} — author + reviewer checklists, ` +
+    `language/framework-specific standards matching the architecture's tech stack, security and ` +
+    `performance review checklists, automated gate requirements (linting, coverage), and named ` +
+    `reviewers from the team roster. Read architecture and codeStructure outputs for technology context.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+
 };
 
 const roadmapPlanner: AgentDefinition = {
@@ -1208,17 +1051,14 @@ const roadmapPlanner: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Product Roadmap for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("brd"): Extract strategic business objectives. The Now/Next/Later horizon must map to BRD priority tiers.\n` +
-    `STEP 2 — call get_agent_output("userStory"): Extract epics — each epic becomes a roadmap item, mapped Now/Next/Later by P0/P1/P2 priority.\n` +
-    `STEP 3 — call get_agent_output("feasibility"): Extract the risk register — high-likelihood risks become gating roadmap dependencies.\n` +
-    `STEP 4 — call get_agent_output("sprintPlanner"): Extract sprint milestones — Year 1 Q1-Q2 roadmap must align with sprint plan.\n` +
-    `STEP 5 — call get_team_roster: Get the named DRI for roadmap governance.\n` +
-    `STEP 6 — Produce all 8 roadmap sections. Q1-Q4 Year 1 plan must match sprint milestones from STEP 4. Success metrics per quarter must be quantifiable.\n` +
-    `STEP 7 — Self-check: verify all P0 epics are in Now, sprint milestones match Q1-Q2, DRI is a real team member name, and quarterly metrics are measurable. Fix gaps before finishing.`,
+    `Produce a Product Roadmap for ${ctx.projectName} with a 3-year vision statement, ` +
+    `Now/Next/Later horizon categorisation, Q1-Q4 Year 1 quarterly plan with per-quarter success ` +
+    `metrics, Year 2-3 strategic bets, dependency map, and a named DRI for roadmap governance. ` +
+    `Read sprint plan and feasibility outputs to anchor the roadmap in committed velocity and ` +
+    `known financial constraints.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 // ─── Phase 5 ──────────────────────────────────────────────────────────────────
@@ -1250,15 +1090,14 @@ const testPlan: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce a Master Test Plan for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract tech stack and test framework choices. Automation tools must match the tech stack.\n` +
-    `STEP 2 — call get_agent_output("userStory"): Extract P0/P1 user stories — these determine risk-based test priority.\n` +
-    `STEP 3 — call get_team_roster: Get named QA engineers for test lead and type ownership.\n` +
-    `STEP 4 — Produce all test plan sections. Automation tools must match STEP 1 tech stack. Risk-based priorities must reference actual US-xxx story IDs from STEP 2. Every test type must have a named owner from STEP 3.\n` +
-    `STEP 5 — Self-check: verify automation tools are consistent with architecture, entry/exit criteria are measurable thresholds, and P0 stories have explicit coverage commitments. Fix gaps before finishing.`,
+    `Produce a Master Test Plan for ${ctx.projectName} covering all testing levels ` +
+    `(unit, integration, system, UAT, performance, security, accessibility) with named test lead, ` +
+    `entry/exit criteria per level, tool stack, risk-based test prioritisation, and automation ` +
+    `strategy. Read architecture and user story outputs to ensure coverage maps to real services ` +
+    `and acceptance criteria.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 const testCases: AgentDefinition = {
@@ -1267,15 +1106,12 @@ const testCases: AgentDefinition = {
   phase: 'phase5',
   description: 'Detailed test cases for critical user flows',
   outputLabel: 'Test Cases',
-  dependsOn: ['testPlan', 'userStory', 'apiDesign', 'dataModel'],
+  dependsOn: ['testPlan', 'userStory'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Test Case Author Agent. Write detailed, executable test cases.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Test Plan Summary:\n${ctx.priorOutputs.testPlan?.slice(0, 1000) ?? ''}`,
-    `User Stories (acceptance criteria become test steps):\n${ctx.priorOutputs.userStory?.slice(0, 1000) ?? ctx.projectDescription}`,
-    `API Design (contract test cases — endpoint method/path/response codes):\n${ctx.priorOutputs.apiDesign?.slice(0, 800) ?? ''}`,
-    `Data Model (field-level validation test cases):\n${ctx.priorOutputs.dataModel?.slice(0, 600) ?? ''}`,
+    `User Stories:\n${ctx.priorOutputs.userStory?.slice(0, 1000) ?? ctx.projectDescription}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce Test Cases including:`,
@@ -1290,16 +1126,14 @@ const testCases: AgentDefinition = {
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
-    `Produce executable Test Cases for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("userStory"): Read all user stories — each Given/When/Then acceptance criterion becomes a test step. Map every TC-xxx to a US-xxx story.\n` +
-    `STEP 2 — call get_agent_output("apiDesign"): Read the API contract — each endpoint's 200/400/401/403/404/500 responses become integration test cases (one TC per response code per endpoint).\n` +
-    `STEP 3 — call get_agent_output("dataModel"): Read field constraints and validation rules — each NOT NULL, UNIQUE, and CHECK constraint becomes a negative test case.\n` +
-    `STEP 4 — call get_team_roster: Get named QA engineers for TC author assignments.\n` +
-    `STEP 5 — Produce all 8 sections. Every TC must cite either a US-xxx (for functional cases) or an API endpoint+response code (for integration cases) or a field constraint (for data validation cases).\n` +
-    `STEP 6 — Self-check: verify every P0 user story has at least one TC, every API endpoint has at least one integration TC, and negative cases cover invalid inputs and auth failures. Fix gaps before finishing.`,
+    `Produce executable Test Cases for ${ctx.projectName} — happy path cases for 5 core ` +
+    `flows, negative/edge-case tests, integration tests for API contracts, performance test scenarios, ` +
+    `OWASP-aligned security test cases, and a regression suite outline. Each case has TC-ID, ` +
+    `preconditions, steps, expected result, and named author from the team roster. Read testPlan ` +
+    `and userStory outputs to ensure cases trace to acceptance criteria.`,
   tools: RESEARCH_TOOLS,
   maxIterations: 4,
+
 };
 
 
@@ -1469,10 +1303,10 @@ UX/UI PRINCIPLES (ui-ux-pro-max)
       ctx.priorOutputs.uxMockups?.slice(0, 1000) ?? 'No UX mockups — use clean professional SaaS design system.',
       ``,
       `=== Data Model (use entities/fields for schema.sql and mock data) ===`,
-      ctx.priorOutputs.dataModel?.slice(0, 2000) ?? '',
+      ctx.priorOutputs.dataModel?.slice(0, 1000) ?? '',
       ``,
       `=== API Design (use routes/operations for backend route handlers) ===`,
-      ctx.priorOutputs.apiDesign?.slice(0, 2500) ?? '',
+      ctx.priorOutputs.apiDesign?.slice(0, 600) ?? '',
       domainLine(ctx),
       teamLine(ctx),
       brandingLine(ctx),
@@ -1513,14 +1347,8 @@ UX/UI PRINCIPLES (ui-ux-pro-max)
         : 'React + TypeScript + Express + SQLite';
     }
     return (
-      `Generate a complete runnable codebase for ${ctx.projectName} (${ctx.domain} domain).\n\n` +
-      `MANDATORY STEP SEQUENCE:\n` +
-      `STEP 1 — call get_agent_output("architecture"): Confirm the full tech stack — frontend framework, backend language, database, ORM. The codebase MUST use this exact stack.\n` +
-      `STEP 2 — call get_agent_output("dataModel"): Extract entities and field definitions for schema.sql and seed.sql. Use real field names from the data dictionary.\n` +
-      `STEP 3 — call get_agent_output("apiDesign"): Extract endpoint paths and operations for backend route handlers. Route files must implement these specific endpoints.\n` +
-      `STEP 4 — call get_agent_output("uxMockups"): Extract the visual design direction, color tokens, and layout pattern for preview.html.\n` +
-      `STEP 5 — Generate all required files using tech stack: ${stackHint}. schema.sql must use entities from STEP 2. Routes must implement endpoints from STEP 3. preview.html must reflect design from STEP 4.\n` +
-      `STEP 6 — Self-check: verify schema.sql matches data model entities, route files implement API design endpoints, seed.sql has 25 realistic records (no placeholders), and preview.html has 5 working screens. Fix gaps before finishing.\n\n` +
+      `Generate a complete runnable codebase for ${ctx.projectName} (${ctx.domain} domain) ` +
+      `using the tech stack: ${stackHint}. ` +
       `Output each file as a fenced block with path as language tag (e.g. \`\`\`file:src/App.tsx). ` +
       `Include README.md, package.json, 5 frontend page components (Dashboard with SVG charts, ` +
       `List with search+sort+filter+pagination, Detail with Edit/Delete, Form with inline validation+toast, ` +
@@ -1544,13 +1372,11 @@ const devopsEngineer: AgentDefinition = {
   phase: 'phase7',
   description: 'CI/CD pipeline design and deployment strategy',
   outputLabel: 'DevOps & CI/CD Design',
-  dependsOn: ['architecture', 'securityCompliance'],
+  dependsOn: ['architecture'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the DevOps Engineer Agent.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Architecture Summary:\n${ctx.priorOutputs.architecture?.slice(0, 1200) ?? ctx.projectDescription}`,
-    `Security & Compliance Requirements (for pipeline security gates and secret management):\n${ctx.priorOutputs.securityCompliance?.slice(0, 600) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce a DevOps & CI/CD Design document with:`,
@@ -1566,16 +1392,6 @@ const devopsEngineer: AgentDefinition = {
     `10. DORA Metrics targets — assign metric owners from actual team member names above`,
     diagramLine('Draw a flowchart TD of the full CI/CD pipeline from code commit to production deployment.'),
   ].join('\n'),
-  goal: (ctx) =>
-    `Produce a DevOps & CI/CD Design for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract tech stack, container strategy, and cloud provider choice. CI/CD pipeline stages and tool choices must match these.\n` +
-    `STEP 2 — call get_agent_output("securityCompliance"): Extract security testing requirements and secret management approach. Pipeline must include a security scan stage matching these requirements.\n` +
-    `STEP 3 — call get_team_roster: Get named DevOps/platform engineers for DORA metric ownership and runbook assignments.\n` +
-    `STEP 4 — Produce all 10 sections. Pipeline YAML must be functional for the actual tech stack from STEP 1. Secret management must align with approach from STEP 2. Named owners must come from STEP 3.\n` +
-    `STEP 5 — Self-check: verify pipeline YAML uses tools consistent with the architecture tech stack, security scan stage is present, and DORA metric owners are real team member names. Fix gaps before finishing.`,
-  tools: CONTEXT_TOOLS,
-  maxIterations: 3,
 };
 
 const infraEngineer: AgentDefinition = {
@@ -1584,13 +1400,11 @@ const infraEngineer: AgentDefinition = {
   phase: 'phase7',
   description: 'Cloud infrastructure design and resource sizing',
   outputLabel: 'Infrastructure Design',
-  dependsOn: ['architecture', 'feasibility'],
+  dependsOn: ['architecture'],
   systemPrompt: `${BASE_SYSTEM}\n\nYou are the Infrastructure Engineer Agent.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
     `Architecture Summary:\n${ctx.priorOutputs.architecture?.slice(0, 1200) ?? ctx.projectDescription}`,
-    `Feasibility Study (cost estimates and scale projections to size infrastructure):\n${ctx.priorOutputs.feasibility?.slice(0, 600) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
     `\nProduce an Infrastructure Design document with:`,
@@ -1606,16 +1420,6 @@ const infraEngineer: AgentDefinition = {
     `10. Infrastructure Runbook — assign runbook owners from actual team member names above`,
     diagramLine('Draw a flowchart LR showing the cloud infrastructure topology (VPC, subnets, compute, load balancer, database, CDN).'),
   ].join('\n'),
-  goal: (ctx) =>
-    `Produce an Infrastructure Design for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("architecture"): Extract cloud provider choice, compute requirements, database type, caching layer, and CDN needs. All infra choices must match these.\n` +
-    `STEP 2 — call get_agent_output("feasibility"): Extract the cost estimate baseline and traffic/scale projections. Instance sizing and capacity planning must be grounded in these numbers.\n` +
-    `STEP 3 — call get_team_roster: Get named infrastructure/platform engineers for runbook ownership.\n` +
-    `STEP 4 — Produce all 10 sections. Cloud provider must match architecture choice from STEP 1. Cost estimates must reference feasibility baseline from STEP 2. Runbook owners must come from STEP 3.\n` +
-    `STEP 5 — Self-check: verify cloud provider matches architecture, monthly cost estimate is itemized by service, capacity planning covers 6 and 12 month projections, runbook owners are real names. Fix gaps before finishing.`,
-  tools: CONTEXT_TOOLS,
-  maxIterations: 3,
 };
 
 // ─── Phase 8 ──────────────────────────────────────────────────────────────────
@@ -1645,16 +1449,6 @@ const observabilityEngineer: AgentDefinition = {
     `9. Runbook Template`,
     diagramLine('Draw a sequenceDiagram showing the alerting pipeline: metric threshold → alert → on-call notification → escalation → resolution.'),
   ].join('\n'),
-  goal: (ctx) =>
-    `Produce an Observability Design for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("infraEngineer"): Extract cloud provider and database infrastructure. Observability tooling must integrate with these.\n` +
-    `STEP 2 — call get_agent_output("devopsEngineer"): Extract environment strategy. Alerting and dashboards must match staging/prod environment names.\n` +
-    `STEP 3 — call get_team_roster: Get named engineers for observability lead and alert owner assignments.\n` +
-    `STEP 4 — Produce all 9 sections. SLI definitions must reference specific infrastructure metrics from STEP 1. Tooling must name real products (Prometheus/Grafana/Datadog/etc). Alert owners must be real team members.\n` +
-    `STEP 5 — Self-check: verify at least 5 SLIs with measurement methods, alerting rules table has owners, tooling stack names real products. Fix gaps before finishing.`,
-  tools: CONTEXT_TOOLS,
-  maxIterations: 3,
 };
 
 const onCallEngineer: AgentDefinition = {
@@ -1681,16 +1475,6 @@ const onCallEngineer: AgentDefinition = {
     `7. Post-Incident Review Template — assign facilitator from team members`,
     `8. On-Call Health & Burnout Prevention`,
   ].join('\n'),
-  goal: (ctx) =>
-    `Produce an On-Call Playbook for ${ctx.projectName}.\n\n` +
-    `MANDATORY STEP SEQUENCE:\n` +
-    `STEP 1 — call get_agent_output("observabilityEngineer"): Read the alerting rules — each alert becomes a trigger for one or more runbooks.\n` +
-    `STEP 2 — call get_agent_output("securityCompliance"): Read the incident response outline — security incidents need dedicated runbooks with security-specific escalation.\n` +
-    `STEP 3 — call get_team_roster: Get named team members for on-call rotation, escalation contacts, and DRI assignments.\n` +
-    `STEP 4 — Produce all 8 sections. The 10 runbooks must cover top alerts from STEP 1 and top security scenarios from STEP 2. Escalation matrix must use real names from STEP 3.\n` +
-    `STEP 5 — Self-check: verify each runbook has all 5 fields, escalation tiers have real names, P0 incidents have SLA targets in minutes. Fix gaps before finishing.`,
-  tools: CONTEXT_TOOLS,
-  maxIterations: 3,
 };
 
 // ─── Registry ──────────────────────────────────────────────────────────────────────────────

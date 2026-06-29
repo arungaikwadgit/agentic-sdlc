@@ -121,7 +121,7 @@ Every HTML mockup you produce MUST meet ALL of the following:
 5. PROFESSIONAL DESIGN SYSTEM — consistent spacing (8px grid), colour palette with primary/secondary/neutral tokens, Inter or system font stack.
 6. RESPONSIVE LAYOUT — mobile-first CSS, minimum two breakpoints (mobile ≤ 768px, desktop ≥ 1024px).
 7. INTERACTIVE ELEMENTS — hover states on buttons/cards, at least one modal or dropdown component.
-8. FOOTER — with copyright, links, and contact info.
+8. FOOTER — with copyright year 2026, links, and contact info. Always use 2026 as the copyright year, never 2024 or 2025.
 All sections must be self-contained in a single HTML file with embedded CSS and vanilla JS. No external dependencies beyond Google Fonts.`;
 
   if (!current['uxMockups']) {

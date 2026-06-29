@@ -47,6 +47,6 @@ describe('api.callAgent', () => {
       text: async () => 'Unauthorized',
     });
 
-    await expect(api.callAgent({ systemPrompt: '', userPrompt: '' })).rejects.toThrow('API error 401');
+    await expect(api.callAgent({ systemPrompt: '', userPrompt: '' })).rejects.toThrow('401: Unauthorized');
   });
 });

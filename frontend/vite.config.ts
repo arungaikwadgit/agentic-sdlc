@@ -23,13 +23,13 @@ export default defineConfig({
       // set via vercel.json response headers without unsafe-eval.
       'Content-Security-Policy': [
         "default-src 'self'",
-        "script-src 'self' 'unsafe-eval' 'unsafe-inline' cdn.jsdelivr.net",
+        "script-src 'self' 'unsafe-eval' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com",
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
         "font-src 'self' fonts.gstatic.com data: frontend-cdn.perplexity.ai",
         "img-src 'self' data: blob:",
-        "connect-src 'self' ws: wss: http://localhost:* https://*.supabase.co",
+        "connect-src 'self' ws: wss: http://localhost:* https://*.supabase.co https://cdnjs.cloudflare.com",
         "frame-src 'self' blob:",
-        "worker-src 'self' blob:",
+        "worker-src 'self' blob: https://cdnjs.cloudflare.com",
       ].join('; '),
     },
     proxy: {
@@ -37,12 +37,18 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         configure(proxy) {
+          // Catch ALL proxy errors (ECONNREFUSED, ECONNRESET, ETIMEDOUT, etc.)
+          // and return a clear 503 so the frontend shows a useful message.
+          // The original ECONNREFUSED-only check silently failed on other error
+          // codes, causing the proxy to emit a bare 404 with no body.
           proxy.on('error', (err, _req, res) => {
-            if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
-              if ('writeHead' in res && typeof (res as any).writeHead === 'function') {
-                (res as any).writeHead(503, { 'Content-Type': 'application/json' });
-                (res as any).end(JSON.stringify({ error: 'Backend proxy not running (localhost:3001)' }));
-              }
+            const code = (err as NodeJS.ErrnoException).code ?? 'ERR_PROXY';
+            const srvRes = res as import('http').ServerResponse;
+            if (!srvRes.headersSent) {
+              srvRes.writeHead(503, { 'Content-Type': 'application/json' });
+              srvRes.end(JSON.stringify({
+                error: `Backend server not reachable at localhost:3001 (${code}). Run: cd server && npm run dev`,
+              }));
             }
           });
         },
