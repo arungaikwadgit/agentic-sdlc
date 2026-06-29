@@ -5,6 +5,10 @@
   "framework": null,
   "rewrites": [
     {
+      "source": "/runtime/(.*)",
+      "destination": "https://agentic-sdlc-production-d156.up.railway.app/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
