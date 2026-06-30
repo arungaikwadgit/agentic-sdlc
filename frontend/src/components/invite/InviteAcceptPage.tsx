@@ -15,10 +15,12 @@ import { useEffect, useState } from 'react';
 import styles from './InviteAcceptPage.module.css';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { recordAcceptedInvite } from '@/services/userIdentity';
 import LoginPage  from '@/components/auth/LoginPage';
 import SignUpPage from '@/components/auth/SignUpPage';
+import AppLogo from '@/components/common/AppLogo';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined ?? 'http://localhost:3001');
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined ?? 'http://localhost:3001').replace(/\/$/, '');
 
 type AuthView = 'login' | 'signup';
 
@@ -26,7 +28,7 @@ interface InviteInfo {
   id:           string;
   role:         string;
   invitedEmail: string | null;
-  expiresAt:    string;
+  expiresAt:    string | null;
   project: {
     id:          string;
     name:        string;
@@ -55,7 +57,7 @@ export default function InviteAcceptPage() {
       setState({ status: 'error', message: 'No invite token found in this link.' });
       return;
     }
-    fetch(`${API_URL}/api/invites/${token}`)
+    fetch(`${API_URL}/invite/validate?token=${encodeURIComponent(token)}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.error) {
@@ -91,17 +93,22 @@ export default function InviteAcceptPage() {
       return;
     }
 
-    const res = await fetch(`${API_URL}/api/invites/${token}/accept`, {
+    const res = await fetch(`${API_URL}/invite/accept`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token_jwt}`,
       },
+      body: JSON.stringify({
+        token,
+        email: user?.email ?? invite.invitedEmail ?? '',
+      }),
     });
     const result = await res.json();
     if (result.error) {
       setState({ status: 'error', message: result.error });
     } else {
+      await recordAcceptedInvite(result.email ?? user?.email ?? invite.invitedEmail ?? '', result.name, result.projectId);
       setState({ status: 'done', projectId: result.projectId, projectName: invite.project.name });
     }
   }
@@ -113,6 +120,14 @@ export default function InviteAcceptPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  useEffect(() => {
+    if (state.status !== 'done') return;
+    const timer = window.setTimeout(() => {
+      window.location.href = `/?project=${encodeURIComponent(state.projectId)}`;
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [state]);
 
   // ── Render auth gates ──────────────────────────────────────────────────────
   if (state.status === 'needsAuth') {
@@ -136,7 +151,9 @@ export default function InviteAcceptPage() {
   return (
     <div className={styles.page}>
       <div className={styles.card}>
-        <div className={styles.logo}>⚡ Agentic SDLC</div>
+        <div className={styles.logo}>
+          <AppLogo wordmarkClassName={styles.logoText} />
+        </div>
 
         {state.status === 'loading' && (
           <div className={styles.center}>
@@ -178,6 +195,7 @@ export default function InviteAcceptPage() {
             <p className={styles.sub}>
               You've joined <strong>{state.projectName}</strong>.
             </p>
+            <p className={styles.sub}>Taking you into the appâ€¦</p>
             <a href={`/?project=${state.projectId}`} className={styles.acceptBtn}>
               Open Project
             </a>

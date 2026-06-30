@@ -30,6 +30,7 @@ import { checkPromptInjection } from '@/utils/sanitize';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
+import { getProjectExportPermission } from '@/lib/projectAccess';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
 import styles from './ProjectWorkspace.module.css';
@@ -67,6 +68,8 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
 const DIAGRAM_AGENTS = new Set<AgentId>([
   'dataModel', 'architecture', 'apiDesign', 'devopsEngineer', 'infraEngineer', 'observabilityEngineer',
 ]);
+
+const MERMAID_START_RE = /(?:^|\n)(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|C4Context|C4Container|C4Component|C4Dynamic)\b/i;
 
 function providerLabel(p?: string): string {
   if (!p || p === 'auto') return '';
@@ -186,6 +189,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamPanel, setShowTeamPanel] = useState(false);
+  const [teamPanelKey, setTeamPanelKey] = useState(0);
   const [downloadingArtifacts, setDownloadingArtifacts] = useState(false);
   const [showGithubPush, setShowGithubPush] = useState(false);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
@@ -246,6 +250,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   useEffect(() => {
     if (project && (project.teamMembers ?? []).length === 0) setShowTeamPanel(true);
   }, [project?.id]);
+
+  function openTeamPanel() {
+    setTeamPanelKey((prev) => prev + 1);
+    setShowTeamPanel(true);
+  }
 
   // Restore persisted context documents when the project first loads
   useEffect(() => {
@@ -692,6 +701,13 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
   const members = project.teamMembers ?? [];
   const isAdmin = !!project.activeAdminId && members.find((m) => m.id === project.activeAdminId)?.isAdmin;
+  const exportPermission = getProjectExportPermission(project, {
+    adminMode,
+    userEmail: user?.email ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const canExportArtifacts = exportPermission.canExport;
+  const exportDisabledReason = exportPermission.reason;
   const assignments = project.agentAssignments ?? [];
   const allAgentIds = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
   const unmappedAgents = allAgentIds.filter(
@@ -756,7 +772,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
   // Helpers: avoid backtick string literals inside JSX (causes TSC JSX parse errors)
   const BACKTICK = String.fromCharCode(96);
-  const hasMermaid = (s?: string | null) => (s ?? '').includes(BACKTICK + BACKTICK + BACKTICK + 'mermaid');
+  const hasMermaid = (s?: string | null) => {
+    const text = s ?? '';
+    return text.includes(BACKTICK + BACKTICK + BACKTICK + 'mermaid') || MERMAID_START_RE.test(text);
+  };
   const hasHtml    = (s?: string | null) => (s ?? '').includes(BACKTICK + BACKTICK + BACKTICK + 'html');
 
   return (
@@ -794,7 +813,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             </button>
           )}
 
-          <button className="btn-secondary" onClick={() => setShowTeamPanel(true)}>Settings</button>
+          <button className="btn-secondary" onClick={openTeamPanel}>Settings</button>
           <button className="btn-secondary" onClick={() => updateProject(projectId, (p) => { p.mode = p.mode === 'simple' ? 'expert' : 'simple'; })}>
             {project.mode === 'simple' ? 'Expert Mode' : 'Simple Mode'}
           </button>
@@ -804,10 +823,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             <button
               className="btn-secondary"
               style={{ fontSize: 12 }}
+              disabled={!canExportArtifacts}
               aria-haspopup="menu"
               aria-expanded={showMoreMenu}
               aria-label="More export actions"
-              onClick={() => setShowMoreMenu((v) => !v)}
+              title={!canExportArtifacts ? (exportDisabledReason ?? 'Export is disabled for your current access level.') : undefined}
+              onClick={() => canExportArtifacts && setShowMoreMenu((v) => !v)}
               onKeyDown={(e) => { if (e.key === 'Escape') setShowMoreMenu(false); }}
             >
               ⋯ More
@@ -842,7 +863,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       {!teamReady && (
         <div className={styles.teamRequiredBanner}>
           <span>Add at least one team member before running the pipeline.</span>
-          <button className="btn-primary" style={{ fontSize: 12 }} onClick={() => setShowTeamPanel(true)}>Set Up Team</button>
+          <button className="btn-primary" style={{ fontSize: 12 }} onClick={openTeamPanel}>Set Up Team</button>
         </div>
       )}
 
@@ -1196,7 +1217,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   >
                     ✦ Review
                   </button>
-                  <ExportMenu agentId={selectedAgent!} project={project} />
+                  <ExportMenu
+                    agentId={selectedAgent!}
+                    project={project}
+                    canExport={canExportArtifacts}
+                    disabledReason={exportDisabledReason}
+                  />
                   {isAdmin && project.githubIntegrationId && (selectedAgent === 'sprintPlanner' || selectedAgent === 'taskBreakdown') && (
                     <button
                       className="btn-secondary"
@@ -1222,11 +1248,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   projectId={projectId}
                   onRunAll={() => startPipeline('phase1')}
                   isRunning={engineRunning}
+                  canExport={canExportArtifacts}
+                  exportDisabledReason={exportDisabledReason}
                 />
               ) : selectedAgent === 'workingPrototype' && docViewMode === 'preview' ? (
                 <PrototypeViewer
                   markdown={selectedRun.output ?? ''}
                   projectName={project.name}
+                  canDownload={canExportArtifacts}
+                  downloadDisabledReason={exportDisabledReason}
                 />
               ) : selectedAgent === 'uxMockups' && docViewMode === 'preview' && hasHtml(selectedRun.output) ? (
                 <MockupPreview
@@ -1240,7 +1270,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   isRerunning={rerunning}
                 />
               ) : selectedAgent && DIAGRAM_AGENTS.has(selectedAgent) && docViewMode === 'preview' && hasMermaid(selectedRun.output) ? (
-                <DiagramPreview markdown={selectedRun.output ?? ''} />
+                <DiagramPreview
+                  markdown={selectedRun.output ?? ''}
+                  canDownload={canExportArtifacts}
+                  downloadDisabledReason={exportDisabledReason}
+                />
               ) : (
                 <DocumentViewer markdown={selectedRun.output ?? ''} />
               )}
@@ -1345,6 +1379,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
       {showTeamPanel && (
         <ProjectSettings
+          key={teamPanelKey}
           project={project}
           onClose={() => setShowTeamPanel(false)}
           onRestartPipeline={() => setShouldAutoStart(true)}

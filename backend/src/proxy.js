@@ -136,6 +136,7 @@ async function checkToken(req, res, next) {
   // admin-local session model and avoids requiring a public VITE_PROXY_TOKEN
   // in production for that one flow.
   if (authHeader === `Bearer ${ADMIN_BYPASS_BEARER}`) {
+    req.authUser = { email: null, adminBypass: true };
     return next();
   }
 
@@ -145,7 +146,10 @@ async function checkToken(req, res, next) {
     const supabase = getSupabase();
     if (supabase) {
       const { data, error } = await supabase.auth.getUser(jwt);
-      if (!error && data?.user) return next();
+      if (!error && data?.user) {
+        req.authUser = { email: data.user.email?.toLowerCase?.() ?? null, user: data.user };
+        return next();
+      }
       // JWT present but invalid — reject immediately, don't fall through
       return res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
     }
@@ -1102,10 +1106,16 @@ async function dbAcceptInvite(token, email) {
   const { rows } = await dbPool.query(`
     UPDATE team_members
     SET invite_status = 'accepted', accepted_at = NOW(), invite_token = NULL
-    WHERE invite_token = $1 AND email = $2 AND invite_status = 'pending'
+    WHERE id IN (
+      SELECT tm.id
+      FROM team_members tm
+      WHERE tm.invite_token = $1 AND tm.email = $2 AND tm.invite_status = 'pending'
+    )
     RETURNING id, project_id, name, email, app_role
   `, [token, email]);
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  const projectRow = await dbPool.query(`SELECT name FROM projects WHERE id = $1`, [rows[0].project_id]).catch(() => ({ rows: [] }));
+  return { ...rows[0], project_name: projectRow.rows?.[0]?.name ?? null };
 }
 
 async function dbGetTeam(projectId) {
@@ -1166,7 +1176,11 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
     body: JSON.stringify({ from: RESEND_FROM, to, subject: `You're invited to ${projectName}`, html }),
   });
   const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, data };
+  return {
+    ok: res.ok,
+    data,
+    error: !res.ok ? (data?.message || data?.error || 'Resend rejected the invite email.') : null,
+  };
 }
 
 // ── POST /api/invite/send ─────────────────────────────────────────────────────
@@ -1196,6 +1210,14 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   // Send email
   const emailResult = await sendInviteEmail({ to: email, name, projectName, appRole, inviteLink, invitedBy });
 
+  if (!emailResult.ok && !emailResult.dev) {
+    return res.status(502).json({
+      error: emailResult.error ?? 'Invite email failed to send.',
+      inviteLink,
+      token,
+    });
+  }
+
   return res.json({
     ok: true,
     inviteLink,
@@ -1204,6 +1226,55 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     message: emailResult.dev
       ? 'Invite link generated (no email sent — RESEND_API_KEY not set). Copy the link to share manually.'
       : 'Invite email sent.',
+  });
+});
+
+// ── POST /api/invite/accept ───────────────────────────────────────────────────
+// Accept an invite after the user signs in. Uses the authenticated user's email
+// when available so the invite link can open directly inside the app flow.
+app.post('/api/invite/accept', checkToken, async (req, res) => {
+  const token = req.body?.token ?? req.query?.token;
+  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email : null;
+  const queryEmail = typeof req.query?.email === 'string' ? req.query.email : null;
+  const email = (req.authUser?.email ?? bodyEmail ?? queryEmail ?? '').toLowerCase();
+
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  if (!email) return res.status(400).json({ error: 'Authenticated user email is required to accept this invite.' });
+
+  const dbRow = await dbAcceptInvite(token, email).catch(() => null);
+  if (dbRow) {
+    inviteStore.delete(token);
+    return res.json({
+      ok: true,
+      projectId: dbRow.project_id,
+      projectName: dbRow.project_name,
+      appRole: dbRow.app_role,
+      name: dbRow.name,
+      email: dbRow.email,
+    });
+  }
+
+  const invite = inviteStore.get(token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
+  if (invite.email !== email) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
+
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  if (Date.now() - invite.invitedAt > SEVEN_DAYS) {
+    inviteStore.delete(token);
+    return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+  }
+
+  invite.acceptedAt = Date.now();
+  inviteStore.set(token, invite);
+
+  return res.json({
+    ok: true,
+    projectId: invite.projectId,
+    projectName: invite.projectName,
+    appRole: invite.appRole,
+    name: invite.name,
+    email: invite.email,
   });
 });
 
@@ -1247,14 +1318,25 @@ app.get('/api/invite/validate', async (req, res) => {
   // DB lookup
   if (dbPool) {
     const { rows } = await dbPool.query(
-      `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
+      `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, p.id AS project_id, p.name AS project_name, p.description AS project_description
        FROM team_members tm JOIN projects p ON p.id = tm.project_id
        WHERE tm.invite_token = $1`, [token]
     ).catch(() => ({ rows: [] }));
     if (rows[0]) {
       const r = rows[0];
       if (r.invite_status !== 'pending') return res.status(409).json({ error: 'This invite is no longer valid.' });
-      return res.json({ ok: true, name: r.name, email: r.email, appRole: r.app_role, projectName: r.project_name });
+      return res.json({
+        ok: true,
+        id: token,
+        role: r.app_role,
+        invitedEmail: r.email,
+        expiresAt: null,
+        project: {
+          id: r.project_id,
+          name: r.project_name,
+          description: r.project_description ?? '',
+        },
+      });
     }
   }
 
@@ -1262,7 +1344,18 @@ app.get('/api/invite/validate', async (req, res) => {
   const invite = inviteStore.get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'Already accepted.' });
-  return res.json({ ok: true, name: invite.name, email: invite.email, appRole: invite.appRole, projectName: invite.projectName });
+  return res.json({
+    ok: true,
+    id: token,
+    role: invite.appRole,
+    invitedEmail: invite.email,
+    expiresAt: null,
+    project: {
+      id: invite.projectId,
+      name: invite.projectName,
+      description: '',
+    },
+  });
 });
 
 // ── DELETE /api/invite/revoke ─────────────────────────────────────────────────

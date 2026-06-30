@@ -470,7 +470,7 @@ const feasibility: AgentDefinition = {
 const dataModel: AgentDefinition = {
   id: 'dataModel',
   name: 'Data Model',
-  phase: 'phase2',
+  phase: 'phase2a',
   description: 'Entity relationship model and data dictionary',
   outputLabel: 'Data Model & Dictionary',
   dependsOn: ['businessRules', 'manager'],
@@ -1110,7 +1110,7 @@ const codeSnippets: AgentDefinition = {
 const uiComponentLibrary: AgentDefinition = {
   id: 'uiComponentLibrary',
   name: 'UI Component Library',
-  phase: 'phase4',
+  phase: 'phase4a',
   description: 'Reusable UI component inventory and component library management strategy',
   outputLabel: 'UI Component Library Plan',
   dependsOn: ['interaction', 'codeStructure'],
@@ -1146,8 +1146,8 @@ const uiComponentLibrary: AgentDefinition = {
 
 const codeReviewStandards: AgentDefinition = {
   id: 'codeReviewStandards',
-  name: 'Code Review Standards',
-  phase: 'phase4',
+  name: 'Code Review Guide',
+  phase: 'phase4a',
   description: 'Code review checklist, standards and best practices',
   outputLabel: 'Code Review Standards',
   dependsOn: ['codeStructure', 'architecture'],
@@ -1184,8 +1184,8 @@ const codeReviewStandards: AgentDefinition = {
 
 const roadmapPlanner: AgentDefinition = {
   id: 'roadmapPlanner',
-  name: 'Roadmap Planner',
-  phase: 'phase4',
+  name: 'Product Roadmap',
+  phase: 'phase4a',
   description: 'Long-term product roadmap beyond the initial sprint plan',
   outputLabel: 'Product Roadmap',
   dependsOn: ['sprintPlanner', 'feasibility'],
@@ -1715,6 +1715,8 @@ export const AGENT_DEFINITIONS: Record<string, AgentDefinition> = {
   codeStructure,
   codeSnippets,
   uiComponentLibrary,
+  codeReviewStandards,
+  roadmapPlanner,
   testPlan,
   testCases,
   securityCompliance,

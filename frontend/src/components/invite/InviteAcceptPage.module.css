@@ -23,10 +23,16 @@
 }
 
 .logo {
-  font-size: 22px;
-  font-weight: 800;
-  color: var(--accent, #4f46e5);
+  display: flex;
+  justify-content: center;
   margin-bottom: 32px;
+}
+
+.logoText {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text, #f1f5f9);
+  letter-spacing: -0.02em;
 }
 
 .heading {

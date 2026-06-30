@@ -26,12 +26,7 @@
 .logo {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   margin-bottom: 2rem;
-}
-
-.logoIcon {
-  font-size: 1.4rem;
 }
 
 .logoText {

@@ -36,6 +36,8 @@ interface DiagramBlock {
   code: string;
 }
 
+const MERMAID_START_RE = /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|C4Context|C4Container|C4Component|C4Dynamic)\b/i;
+
 function extractMermaidBlocks(markdown: string): DiagramBlock[] {
   const blocks: DiagramBlock[] = [];
   const lines = markdown.split('\n');
@@ -68,6 +70,44 @@ function extractMermaidBlocks(markdown: string): DiagramBlock[] {
     }
     i++;
   }
+
+  if (blocks.length > 0) return blocks;
+
+  // Fallback: some agent outputs emit raw Mermaid syntax without a fenced
+  // ```mermaid block. Detect a Mermaid starter line and capture until the next
+  // markdown heading or fenced block so the Diagram tab still works.
+  i = 0;
+  blockIndex = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const headingMatch = line.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      lastHeading = headingMatch[1].trim();
+      i++;
+      continue;
+    }
+    if (MERMAID_START_RE.test(line.trim())) {
+      const codeLines: string[] = [line];
+      i++;
+      while (
+        i < lines.length &&
+        !/^#{1,6}\s+/.test(lines[i]) &&
+        !/^```/.test(lines[i].trim())
+      ) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      blockIndex++;
+      blocks.push({
+        id: `mermaid-diagram-${blockIndex}`,
+        label: (lastHeading.replace(/^\d+[.)\s]\s*/, '').trim()) || `Diagram ${blockIndex}`,
+        code: codeLines.join('\n').trim(),
+      });
+      continue;
+    }
+    i++;
+  }
+
   return blocks;
 }
 
@@ -186,7 +226,15 @@ function sanitize(raw: string): string {
 
 // ── Single diagram card ───────────────────────────────────────────────────────
 
-function DiagramFrame({ block }: { block: DiagramBlock }) {
+function DiagramFrame({
+  block,
+  canDownload,
+  downloadDisabledReason,
+}: {
+  block: DiagramBlock;
+  canDownload: boolean;
+  downloadDisabledReason?: string | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -257,7 +305,12 @@ function DiagramFrame({ block }: { block: DiagramBlock }) {
         <span className={styles.statusPill} data-status={status}>
           {status === 'loading' ? '⧗ rendering…' : status === 'error' ? '⚠ error' : '✓ rendered'}
         </span>
-        <button className={styles.downloadBtn} onClick={downloadSvg} disabled={!svgSrc}>
+        <button
+          className={styles.downloadBtn}
+          onClick={downloadSvg}
+          disabled={!svgSrc || !canDownload}
+          title={!canDownload ? (downloadDisabledReason ?? 'SVG download is disabled for your current access level.') : undefined}
+        >
           ↓ SVG
         </button>
       </div>
@@ -284,7 +337,15 @@ function DiagramFrame({ block }: { block: DiagramBlock }) {
 
 // ── Public component ──────────────────────────────────────────────────────────
 
-export default function DiagramPreview({ markdown }: { markdown: string }) {
+export default function DiagramPreview({
+  markdown,
+  canDownload = true,
+  downloadDisabledReason,
+}: {
+  markdown: string;
+  canDownload?: boolean;
+  downloadDisabledReason?: string | null;
+}) {
   const blocks = useMemo(() => extractMermaidBlocks(markdown), [markdown]);
 
   if (blocks.length === 0) {
@@ -299,7 +360,12 @@ export default function DiagramPreview({ markdown }: { markdown: string }) {
     <div className={styles.preview}>
       <div className={styles.grid}>
         {blocks.map((block) => (
-          <DiagramFrame key={block.id} block={block} />
+          <DiagramFrame
+            key={block.id}
+            block={block}
+            canDownload={canDownload}
+            downloadDisabledReason={downloadDisabledReason}
+          />
         ))}
       </div>
     </div>

@@ -11,6 +11,8 @@ import { updateAgentRun, updateProject } from '@/db/projectRepository';
 import { api } from '@/services/api';
 import { checkPromptInjection } from '@/utils/sanitize';
 import { buildTeamRoster } from '@/data/roleTemplates';
+import { useAuth } from '@/contexts/AuthContext';
+import { getProjectExportPermission } from '@/lib/projectAccess';
 import DocumentViewer from '../documents/DocumentViewer';
 import ExportMenu from '../documents/ExportMenu';
 import type { Project, ReviewGateId } from '@/types/project.types';
@@ -68,8 +70,14 @@ function getGateAssignees(project: Project, agents: AgentId[]) {
 }
 
 export default function ReviewGateModal({ gateId, project, onApprove, onReject, onClose }: Props) {
+  const { user, adminMode } = useAuth();
   const phases = REVIEW_GATES[gateId];
   const agents: AgentId[] = phases.flatMap((p) => PHASE_AGENTS[p as PhaseId] ?? []);
+  const exportPermission = getProjectExportPermission(project, {
+    adminMode,
+    userEmail: user?.email ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
 
   const [selectedAgent, setSelectedAgent] = useState<AgentId>(agents[0]);
   const [notes, setNotes] = useState('');
@@ -367,7 +375,13 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
               >Prompt Sandbox</button>
               {run?.status === 'complete' && run.output && (
                 <div style={{ marginLeft: 'auto' }}>
-                  <ExportMenu agentId={selectedAgent} project={project} />
+                  <ExportMenu
+                    agentId={selectedAgent}
+                    project={project}
+                    canExport={exportPermission.canExport}
+                    disabledReason={exportPermission.reason}
+                  />
+                  
                 </div>
               )}
             </div>

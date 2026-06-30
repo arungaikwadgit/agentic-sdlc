@@ -451,9 +451,19 @@ interface OrchestratorViewProps {
   onRunAll?: () => void;
   onRunPhase?: (phaseLabel: string) => void;
   isRunning?: boolean;
+  canExport?: boolean;
+  exportDisabledReason?: string | null;
 }
 
-export default function OrchestratorView({ markdown, projectId, onRunAll, onRunPhase, isRunning }: OrchestratorViewProps) {
+export default function OrchestratorView({
+  markdown,
+  projectId,
+  onRunAll,
+  onRunPhase,
+  isRunning,
+  canExport = true,
+  exportDisabledReason,
+}: OrchestratorViewProps) {
   const plan = useMemo(() => parsePlan(markdown), [markdown]);
   const [tab, setTab] = useState<'pipeline' | 'risks' | 'spec'>('pipeline');
 
@@ -696,8 +706,13 @@ Suggest 8-10 NEW risks covering domain, technical, integration, process, and tre
             </h3>
             <div style={{ display: 'flex', gap: 8 }}>
               {allRisks.length > 0 && (
-                <button className="btn-secondary" style={{ fontSize: 12, padding: '5px 12px' }}
-                  onClick={() => exportRiskRegisterToWord(allRisks, projectCtx.name)}>
+                <button
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: '5px 12px' }}
+                  onClick={() => exportRiskRegisterToWord(allRisks, projectCtx.name)}
+                  disabled={!canExport}
+                  title={!canExport ? (exportDisabledReason ?? 'Export is disabled for your current access level.') : undefined}
+                >
                   ⬇ Export .docx
                 </button>
               )}

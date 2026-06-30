@@ -85,6 +85,11 @@ export interface AgentAssignment {
   memberIds: string[];
 }
 
+export interface ProjectExportAccess {
+  enabledRoleIds?: AppRole[];
+  enabledMemberIds?: string[];
+}
+
 export type ProjectStatus = 'draft' | 'running' | 'paused' | 'complete' | 'error';
 
 export type ProjectPriority = 'low' | 'medium' | 'high' | 'critical';
@@ -210,6 +215,12 @@ export interface Project {
    * Defaults to 2 in the pipeline engine when absent.
    */
   mockupVersionCount?: number;
+  /**
+   * Per-project overrides for download/export access.
+   * Admins always retain access. Non-admin users can export only if their
+   * role or explicit member ID is allow-listed here.
+   */
+  exportAccess?: ProjectExportAccess;
 }
 
 export interface ProjectSummary {

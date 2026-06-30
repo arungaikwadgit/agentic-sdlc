@@ -95,6 +95,7 @@ function rowToProject(row: ApiProjectRow): Project {
     activeAdminId:      blob.activeAdminId,
     mode:               (blob.mode as Project['mode']) ?? 'simple',
     mockupVersionCount: typeof blob.mockupVersionCount === 'number' ? blob.mockupVersionCount : undefined,
+    exportAccess:       blob.exportAccess as Project['exportAccess'],
   };
 }
 
@@ -122,6 +123,7 @@ function projectToPayload(p: Project): ApiCreatePayload {
       activeAdminId:      p.activeAdminId,
       mode:               p.mode,
       mockupVersionCount: p.mockupVersionCount,
+      exportAccess:       p.exportAccess,
     },
   };
 }

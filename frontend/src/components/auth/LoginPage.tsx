@@ -9,6 +9,7 @@ import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { ADMIN_EMAIL } from '@/lib/adminMode';
+import AppLogo from '@/components/common/AppLogo';
 import styles from './AuthPage.module.css';
 
 interface Props {
@@ -40,8 +41,7 @@ export default function LoginPage({ onSuccess, onSignUp }: Props) {
     <div className={styles.page}>
       <div className={styles.card}>
         <div className={styles.logo}>
-          <span className={styles.logoIcon}>⚡</span>
-          <span className={styles.logoText}>Agentic SDLC</span>
+          <AppLogo wordmarkClassName={styles.logoText} />
         </div>
 
         <h1 className={styles.heading}>Sign in</h1>

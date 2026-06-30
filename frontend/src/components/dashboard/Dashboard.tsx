@@ -8,8 +8,6 @@ import {
   listVisibleProjects,
   deleteProject,
   restoreProject,
-  exportAllProjects,
-  importProjects,
 } from '@/db/projectRepository';
 import { getCurrentUser, clearCurrentUser } from '@/services/userIdentity';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,6 +19,7 @@ import AppSettingsModal from '../settings/AppSettingsModal';
 import ProjectDetailsModal from './ProjectDetailsModal';
 import EditProjectModal from './EditProjectModal';
 import ConfirmDialog from '../common/ConfirmDialog';
+import AppLogo from '../common/AppLogo';
 import styles from './Dashboard.module.css';
 
 interface Props {
@@ -59,40 +58,6 @@ export default function Dashboard({ onOpenProject }: Props) {
   const archivedCount = safeProjects.filter((p) => p.archived).length;
   const projects = safeProjects.filter((p) => (showArchived ? !!p.archived : !p.archived));
 
-  async function handleExport() {
-    try {
-      const json = await exportAllProjects();
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sdlc-backup-${Date.now()}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast('Projects exported successfully', 'success');
-    } catch (e) {
-      toast(`Export failed: ${String(e)}`, 'error');
-    }
-  }
-
-  async function handleImport() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const text = await file.text();
-      try {
-        const count = await importProjects(text);
-        toast(`Imported ${count} project(s)`, 'success');
-      } catch (e) {
-        toast(`Import failed: ${String(e)}`, 'error');
-      }
-    };
-    input.click();
-  }
-
   async function handleSwitchUserConfirmed() {
     setConfirmSwitchUser(false);
     await clearCurrentUser();
@@ -123,8 +88,7 @@ export default function Dashboard({ onOpenProject }: Props) {
     <div className={styles.layout}>
       <header className={styles.header}>
         <div className={styles.brand}>
-          <span className={styles.logo}>&#9881;</span>
-          <h1>Agentic SDLC</h1>
+          <AppLogo className={styles.brandMark} wordmarkClassName={styles.brandText} />
         </div>
         <div className={styles.actions}>
           {userEmail && (
@@ -144,8 +108,6 @@ export default function Dashboard({ onOpenProject }: Props) {
               {showArchived ? 'Active Projects' : `Archived (${archivedCount})`}
             </button>
           )}
-          <button className="btn-secondary" onClick={handleImport}>Import</button>
-          <button className="btn-secondary" onClick={handleExport}>Export</button>
           <button className="btn-secondary" onClick={() => setShowNew(true)}>+ Simple</button>
           <button className="btn-primary" onClick={() => setShowWizard(true)}>+ New Project</button>
           <button

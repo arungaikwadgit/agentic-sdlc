@@ -435,7 +435,15 @@ function PreviewFrame({ html }: { html: string }) {
 
 // ── File viewer (syntax-highlighted via <pre>) ────────────────────────────
 
-function FileViewer({ file }: { file: ParsedFile }) {
+function FileViewer({
+  file,
+  canDownload,
+  downloadDisabledReason,
+}: {
+  file: ParsedFile;
+  canDownload: boolean;
+  downloadDisabledReason?: string | null;
+}) {
   const copyFile = useCallback(() => {
     navigator.clipboard.writeText(file.content).catch(() => {});
   }, [file.content]);
@@ -459,7 +467,14 @@ function FileViewer({ file }: { file: ParsedFile }) {
           {langLabel(file.language)}
         </span>
         <button className={styles.fileViewerBtn} onClick={copyFile} title="Copy to clipboard">⎘ Copy</button>
-        <button className={styles.fileViewerBtn} onClick={downloadFile} title="Download file">⬇ Download</button>
+        <button
+          className={styles.fileViewerBtn}
+          onClick={downloadFile}
+          disabled={!canDownload}
+          title={!canDownload ? (downloadDisabledReason ?? 'File download is disabled for your current access level.') : 'Download file'}
+        >
+          ⬇ Download
+        </button>
       </div>
       <pre className={styles.fileViewerPre}><code>{file.content}</code></pre>
     </div>
@@ -525,7 +540,14 @@ function SpecView({ markdown }: { markdown: string }) {
 export default function PrototypeViewer({
   markdown,
   projectName,
-}: { markdown: string; projectName: string }) {
+  canDownload = true,
+  downloadDisabledReason,
+}: {
+  markdown: string;
+  projectName: string;
+  canDownload?: boolean;
+  downloadDisabledReason?: string | null;
+}) {
   const proto = useMemo(() => parsePrototypeOutput(markdown), [markdown]);
   const [tab, setTab] = useState<ViewTab>('files');
   const [selectedFile, setSelectedFile] = useState<string | null>(
@@ -605,14 +627,20 @@ export default function PrototypeViewer({
             </span>
           )}
           {proto.previewHtml && (
-            <button className={styles.actionBtn} onClick={handleDownloadHtml}>
+            <button
+              className={styles.actionBtn}
+              onClick={handleDownloadHtml}
+              disabled={!canDownload}
+              title={!canDownload ? (downloadDisabledReason ?? 'HTML download is disabled for your current access level.') : undefined}
+            >
               ⬇ Preview HTML
             </button>
           )}
           <button
             className={`${styles.actionBtn} ${styles.actionBtnPrimary}`}
             onClick={handleDownloadZip}
-            disabled={downloading || proto.files.length === 0}
+            disabled={downloading || proto.files.length === 0 || !canDownload}
+            title={!canDownload ? (downloadDisabledReason ?? 'ZIP download is disabled for your current access level.') : undefined}
           >
             {downloading ? '⟳ Packaging…' : '⬇ Download ZIP'}
           </button>
@@ -638,7 +666,11 @@ export default function PrototypeViewer({
           />
           <div className={styles.fileContent}>
             {selectedFileObj ? (
-              <FileViewer file={selectedFileObj} />
+              <FileViewer
+                file={selectedFileObj}
+                canDownload={canDownload}
+                downloadDisabledReason={downloadDisabledReason}
+              />
             ) : (
               <div className={styles.noFileSelected}>Select a file to view its contents</div>
             )}

@@ -249,12 +249,19 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
         }),
       });
       const data = await res.json();
-      if (data.ok) {
+      if (res.ok && data.ok) {
         setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !data.dev });
         await updateProject(project.id, (p) => {
           const m = p.teamMembers.find((x) => x.id === member.id);
           if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
         });
+      } else if (data.inviteLink && data.token) {
+        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: false });
+        await updateProject(project.id, (p) => {
+          const m = p.teamMembers.find((x) => x.id === member.id);
+          if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
+        });
+        alert('Invite link generated, but email sending failed: ' + (data.error ?? 'Unknown error'));
       } else {
         alert('Invite failed: ' + (data.error ?? 'Unknown error'));
       }
@@ -336,6 +343,9 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
 
   const disabledRoleIds = project.disabledRoleIds ?? [];
   const visibleRoleTemplates = ROLE_TEMPLATES.filter((r) => !disabledRoleIds.includes(r.id));
+  const exportAccess = project.exportAccess ?? {};
+  const enabledExportRoles = exportAccess.enabledRoleIds ?? [];
+  const enabledExportMembers = exportAccess.enabledMemberIds ?? [];
 
   async function toggleRoleEnabled(roleId: string) {
     if (!isAdmin) return;
@@ -344,6 +354,34 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
       p.disabledRoleIds = current.includes(roleId)
         ? current.filter((id) => id !== roleId)
         : [...current, roleId];
+    });
+  }
+
+  async function toggleExportRoleAccess(role: AppRole) {
+    if (!isAdmin) return;
+    await updateProject(project.id, (p) => {
+      const current = p.exportAccess?.enabledRoleIds ?? [];
+      const next = current.includes(role)
+        ? current.filter((id) => id !== role)
+        : [...current, role];
+      p.exportAccess = {
+        ...(p.exportAccess ?? {}),
+        enabledRoleIds: next,
+      };
+    });
+  }
+
+  async function toggleExportMemberAccess(memberId: string) {
+    if (!isAdmin) return;
+    await updateProject(project.id, (p) => {
+      const current = p.exportAccess?.enabledMemberIds ?? [];
+      const next = current.includes(memberId)
+        ? current.filter((id) => id !== memberId)
+        : [...current, memberId];
+      p.exportAccess = {
+        ...(p.exportAccess ?? {}),
+        enabledMemberIds: next,
+      };
     });
   }
 
@@ -1126,6 +1164,67 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
                           </div>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+
+                {isAdmin && members.length > 0 && (
+                  <div className={styles.exportAccessSection}>
+                    <p className={styles.sectionTitle}>Export &amp; Download Access</p>
+                    <p className={styles.fieldHint}>
+                      Admins always keep export access. Use the controls below to allow specific app roles or named team members to download and export artifacts for this project.
+                    </p>
+
+                    <div className={styles.exportAccessBlock}>
+                      <p className={styles.exportAccessLabel}>Allow by role</p>
+                      <div className={styles.exportAccessChips}>
+                        {(['project_owner', 'editor', 'reviewer', 'viewer'] as AppRole[]).map((role) => {
+                          const active = enabledExportRoles.includes(role);
+                          return (
+                            <button
+                              key={role}
+                              className={styles.exportAccessChip + (active ? ' ' + styles.exportAccessChipActive : '')}
+                              onClick={() => toggleExportRoleAccess(role)}
+                              title={active ? 'Remove export access for this role' : 'Grant export access for this role'}
+                            >
+                              <span>{ROLE_PERMISSIONS[role].label}</span>
+                              <span>{active ? '✓' : '＋'}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className={styles.exportAccessBlock}>
+                      <p className={styles.exportAccessLabel}>Allow specific team members</p>
+                      <div className={styles.exportAccessGrid}>
+                        {members.map((m) => {
+                          const active = enabledExportMembers.includes(m.id);
+                          const alwaysAllowed = m.isAdmin;
+                          return (
+                            <button
+                              key={m.id}
+                              className={styles.exportAccessMember + (active ? ' ' + styles.exportAccessMemberActive : '')}
+                              onClick={() => !alwaysAllowed && toggleExportMemberAccess(m.id)}
+                              disabled={alwaysAllowed}
+                              title={alwaysAllowed ? 'Admins already have export access' : (active ? 'Remove this member export access' : 'Grant this member export access')}
+                            >
+                              <span className={styles.exportAccessMemberMain}>
+                                <span className={styles.avatarSmall} style={{ background: m.avatarColor }}>{initials(m.name)}</span>
+                                <span>
+                                  <strong>{m.name}</strong>
+                                  <span className={styles.exportAccessMemberMeta}>
+                                    {m.role} · {ROLE_PERMISSIONS[m.appRole ?? 'viewer'].label}
+                                  </span>
+                                </span>
+                              </span>
+                              <span className={styles.exportAccessMemberState}>
+                                {alwaysAllowed ? 'Admin' : active ? 'Allowed' : 'Blocked'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 )}

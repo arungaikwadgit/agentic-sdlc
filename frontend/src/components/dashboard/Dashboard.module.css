@@ -26,14 +26,16 @@
   gap: 10px;
 }
 
-.logo {
-  font-size: 22px;
+.brandMark {
+  display: flex;
+  align-items: center;
 }
 
-.brand h1 {
+.brandText {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
+  letter-spacing: -0.02em;
 }
 
 .actions {

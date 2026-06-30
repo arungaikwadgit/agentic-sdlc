@@ -252,6 +252,107 @@
   opacity: 0.8;
 }
 
+.exportAccessSection {
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.exportAccessBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.exportAccessBlock + .exportAccessBlock {
+  margin-top: 14px;
+}
+
+.exportAccessLabel {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.exportAccessChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.exportAccessChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.exportAccessChipActive {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.exportAccessGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.exportAccessMember {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exportAccessMember:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.exportAccessMemberActive {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.exportAccessMemberMain {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.exportAccessMemberMeta {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.exportAccessMemberState {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* ── Add member form ── */
 .addSection {
   background: var(--surface-2, var(--surface));

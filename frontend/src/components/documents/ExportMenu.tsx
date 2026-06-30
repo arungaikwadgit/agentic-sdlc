@@ -162,6 +162,8 @@ function downloadSqlScript(markdown: string, label: string, projectName: string,
 interface Props {
   agentId: AgentId;
   project: Project;
+  canExport?: boolean;
+  disabledReason?: string | null;
 }
 
 const menuBtnStyle: React.CSSProperties = {
@@ -170,7 +172,7 @@ const menuBtnStyle: React.CSSProperties = {
   textAlign: 'left', fontSize: 13, cursor: 'pointer',
 };
 
-export default function ExportMenu({ agentId, project }: Props) {
+export default function ExportMenu({ agentId, project, canExport = true, disabledReason }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -228,9 +230,10 @@ export default function ExportMenu({ agentId, project }: Props) {
     <div style={{ position: 'relative' }}>
       <button
         className="btn-secondary"
-        onClick={() => setOpen((v) => !v)}
-        disabled={loading || !output}
+        onClick={() => canExport && setOpen((v) => !v)}
+        disabled={loading || !output || !canExport}
         style={{ fontSize: 12 }}
+        title={!canExport ? (disabledReason ?? 'Export is disabled for your current access level.') : undefined}
       >
         {loading ? 'Exporting…' : 'Export ▾'}
       </button>
