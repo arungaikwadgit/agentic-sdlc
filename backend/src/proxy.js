@@ -92,6 +92,38 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+const API_ALIAS_RULES = [
+  { from: '/health', to: '/api/health' },
+  { from: '/agent', to: '/api/agent' },
+  { from: '/agents/call', to: '/api/agents/call' },
+  { from: '/fetch-site', to: '/api/fetch-site' },
+  { from: '/figma/styles', to: '/api/figma/styles' },
+  { from: '/github/test', to: '/api/github/test' },
+  { from: '/github/issues', to: '/api/github/issues' },
+  { from: '/settings', to: '/api/settings' },
+  { from: '/invite/send', to: '/api/invite/send' },
+  { from: '/invite/accept', to: '/api/invite/accept' },
+  { from: '/invite/validate', to: '/api/invite/validate' },
+  { from: '/invite/revoke', to: '/api/invite/revoke' },
+  { from: '/invite/team/', to: '/api/invite/team/' },
+];
+
+app.use((req, _res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+
+  const match = API_ALIAS_RULES.find((rule) =>
+    rule.from.endsWith('/') ? req.path.startsWith(rule.from) : req.path === rule.from,
+  );
+
+  if (match) {
+    const suffix = match.from.endsWith('/') ? req.path.slice(match.from.length) : '';
+    req.url = match.to + suffix + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '');
+  }
+
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use('/api', rateLimit({ windowMs: 60_000, max: 120 }));
 
