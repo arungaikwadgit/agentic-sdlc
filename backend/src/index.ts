@@ -35,9 +35,13 @@ const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
     ? []  // production with no explicit list = deny all (fail secure)
     : ['http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000'];
 
+function isTrustedVercelPreview(origin: string): boolean {
+  return /^https:\/\/agentic-sdlc(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
+}
+
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    if (!origin || ALLOWED_ORIGINS.includes(origin) || (origin ? isTrustedVercelPreview(origin) : false)) {
       return callback(null, true);
     }
     callback(new Error(`CORS: origin '${origin}' not allowed`));
