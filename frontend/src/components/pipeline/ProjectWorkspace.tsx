@@ -24,6 +24,7 @@ import DiagramPreview from '../documents/DiagramPreview';
 import OrchestratorView from './OrchestratorView';
 import PrototypeViewer from '../documents/PrototypeViewer';
 import AgentContextUploader from './AgentContextUploader';
+import { useAuth } from '@/contexts/AuthContext';
 import { exportTraceabilityCSV } from '@/services/traceability';
 import { checkPromptInjection } from '@/utils/sanitize';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
@@ -174,6 +175,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function ProjectWorkspace({ projectId, onBack }: Props) {
+  const { user, adminMode, loading: authLoading } = useAuth();
   // useLiveQuery returns `undefined` while the query is initialising.
   // Once it resolves, undefined means "not found", so we track the first non-undefined result.
   const queryResult = useLiveQuery(() => db.projects.get(projectId), [projectId]);
@@ -256,12 +258,40 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  // Check API key availability
+  // Check API/provider availability only after auth state is settled.
+  // In production, a one-time pre-auth check can incorrectly freeze this
+  // banner into the "no key configured" state even when the backend is fine.
   useEffect(() => {
-    api.callAgent({ systemPrompt: 'ping', userPrompt: 'ping', testMode: true })
-      .then(() => setApiReady(true))
-      .catch(() => setApiReady(false));
-  }, []);
+    if (authLoading) return;
+    let cancelled = false;
+
+    async function checkApiReady() {
+      // If the user is not authenticated yet, defer rather than showing a
+      // misleading "no key configured" error.
+      if (!user && !adminMode) {
+        if (!cancelled) setApiReady(null);
+        return;
+      }
+
+      if (!cancelled) setApiReady(null);
+
+      try {
+        const openAi = await api.testProviderConnection('openai');
+        if (openAi.ok) {
+          if (!cancelled) setApiReady(true);
+          return;
+        }
+
+        const claude = await api.testProviderConnection('claude');
+        if (!cancelled) setApiReady(claude.ok);
+      } catch {
+        if (!cancelled) setApiReady(false);
+      }
+    }
+
+    checkApiReady();
+    return () => { cancelled = true; };
+  }, [authLoading, user?.id, adminMode]);
 
   // Auto-switch to preview for orchestrator and prototype agents
   useEffect(() => {
@@ -1310,6 +1340,14 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           }}
           onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}
+        />
+      )}
+
+      {showTeamPanel && (
+        <ProjectSettings
+          project={project}
+          onClose={() => setShowTeamPanel(false)}
+          onRestartPipeline={() => setShouldAutoStart(true)}
         />
       )}
     </div>
