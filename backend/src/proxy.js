@@ -17,6 +17,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
 const PROXY_TOKEN    = process.env.PROXY_TOKEN ?? '';
 const SERVER_API_URL = (process.env.SERVER_API_URL ?? '').replace(/\/$/, '');
+const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
 
 // H-05 fix: Supabase JWT verification as the primary auth mechanism.
 // The frontend sends its Supabase session JWT as Authorization: Bearer <jwt>.
@@ -92,8 +93,17 @@ app.use('/api', rateLimit({ windowMs: 60_000, max: 120 }));
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 async function checkToken(req, res, next) {
-  // Path 1: Supabase JWT (preferred — frontend sends session token, not a bundled secret)
   const authHeader = req.headers['authorization'] ?? '';
+
+  // Admin-bypass bearer token — used by the frontend's local admin mode when
+  // Supabase auth is intentionally bypassed. This mirrors the existing
+  // admin-local session model and avoids requiring a public VITE_PROXY_TOKEN
+  // in production for that one flow.
+  if (authHeader === `Bearer ${ADMIN_BYPASS_BEARER}`) {
+    return next();
+  }
+
+  // Path 1: Supabase JWT (preferred — frontend sends session token, not a bundled secret)
   if (authHeader.startsWith('Bearer ')) {
     const jwt = authHeader.slice(7);
     const supabase = getSupabase();

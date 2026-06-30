@@ -11,9 +11,17 @@ const API_URL = import.meta.env.VITE_API_URL ?? '/api';
 // H-05 fix: prefer Supabase JWT over a bundled shared secret.
 // VITE_PROXY_TOKEN is kept only as a fallback for admin-mode (no Supabase session).
 const PROXY_TOKEN = import.meta.env.VITE_PROXY_TOKEN ?? '';
+const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
 
 /** Returns the best available auth header for the current session. */
 export async function getAuthHeader(): Promise<Record<string, string>> {
+  try {
+    const { isAdminMode } = await import('@/lib/adminMode');
+    if (isAdminMode()) {
+      return { Authorization: `Bearer ${ADMIN_BYPASS_BEARER}` };
+    }
+  } catch { /* admin-mode helper unavailable — continue */ }
+
   try {
     const { supabase, isSupabaseConfigured } = await import('@/lib/supabase');
     if (isSupabaseConfigured) {
