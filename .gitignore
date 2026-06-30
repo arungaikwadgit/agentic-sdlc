@@ -13,3 +13,6 @@ debug.log
 .env.*.local
 backend/.env
 frontend/.env
+
+.vercel
+.env*
