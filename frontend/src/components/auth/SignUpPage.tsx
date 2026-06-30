@@ -8,6 +8,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { ADMIN_EMAIL } from '@/lib/adminMode';
 import styles from './AuthPage.module.css';
 
 interface Props {
@@ -29,7 +30,7 @@ export default function SignUpPage({ onSuccess, onSignIn }: Props) {
     setError(null);
 
     if (!isSupabaseConfigured) {
-      setError('Supabase is not configured. Use admin@local / admin on the sign-in page for local access.');
+      setError(`Supabase is not configured. Use ${ADMIN_EMAIL} on the sign-in page for admin access.`);
       return;
     }
     if (password.length < 8) {
@@ -88,7 +89,7 @@ export default function SignUpPage({ onSuccess, onSignIn }: Props) {
         {!isSupabaseConfigured && (
           <div className={styles.configWarning}>
             ⚠️ Supabase not configured. Sign-up unavailable.{' '}
-            <button className={styles.linkBtn} onClick={onSignIn}>Sign in with admin@local</button> instead.
+            <button className={styles.linkBtn} onClick={onSignIn}>Sign in with {ADMIN_EMAIL}</button> instead.
           </div>
         )}
 

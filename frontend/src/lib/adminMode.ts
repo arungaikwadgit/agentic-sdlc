@@ -12,7 +12,7 @@
  */
 
 export const ADMIN_USER_ID = '__admin_local__';
-export const ADMIN_EMAIL   = 'admin@local';
+export const ADMIN_EMAIL   = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined) ?? 'admin@local';
 
 /** Returns true when the current session is an admin bypass session. */
 export function isAdminMode(): boolean {

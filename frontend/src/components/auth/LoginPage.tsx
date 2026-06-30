@@ -8,6 +8,7 @@
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { ADMIN_EMAIL } from '@/lib/adminMode';
 import styles from './AuthPage.module.css';
 
 interface Props {
@@ -82,9 +83,10 @@ export default function LoginPage({ onSuccess, onSignUp }: Props) {
           </button>
         </form>
 
-        {/* Admin bypass hint — always visible so first-run users know how to get in */}
         <p className={styles.adminHint}>
-          Local access: <code>admin@local</code> / <code>admin</code>
+          {isSupabaseConfigured
+            ? <>Admin access is configured for <code>{ADMIN_EMAIL}</code>.</>
+            : <>Local access: <code>{ADMIN_EMAIL}</code> / <code>admin</code></>}
           {!isSupabaseConfigured && ' · Supabase not configured'}
         </p>
 
