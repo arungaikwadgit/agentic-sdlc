@@ -1052,6 +1052,7 @@ const { randomUUID } = require('crypto');
 const RESEND_API_KEY   = process.env.RESEND_API_KEY ?? '';
 const RESEND_FROM      = process.env.RESEND_FROM ?? 'noreply@yourdomain.com';
 const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
+const INVITABLE_APP_ROLES = ['editor', 'reviewer', 'viewer'];
 
 // In-memory fallback when Postgres is unavailable
 const inviteStore = new Map();
@@ -1190,25 +1191,28 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   if (!projectId || !email || !appRole) {
     return res.status(400).json({ error: 'projectId, email, and appRole are required' });
   }
-  const validRoles = ['project_owner', 'editor', 'reviewer', 'viewer'];
-  if (!validRoles.includes(appRole)) {
-    return res.status(400).json({ error: `appRole must be one of: ${validRoles.join(', ')}` });
+  if (!INVITABLE_APP_ROLES.includes(appRole)) {
+    return res.status(400).json({ error: `Invite links can grant only: ${INVITABLE_APP_ROLES.join(', ')}` });
+  }
+  const normalizedEmail = String(email).trim().toLowerCase();
+  if (!normalizedEmail.includes('@')) {
+    return res.status(400).json({ error: 'A valid invite email is required' });
   }
 
   const token = randomUUID();
-  const inviteLink = `${APP_URL}/invite?token=${token}&email=${encodeURIComponent(email)}`;
+  const inviteLink = `${APP_URL}/invite?token=${token}&projectId=${encodeURIComponent(projectId)}&email=${encodeURIComponent(normalizedEmail)}`;
 
   // Store in memory
   inviteStore.set(token, {
-    projectId, projectName, email: email.toLowerCase(), name, appRole,
+    projectId, projectName, email: normalizedEmail, name, appRole,
     invitedBy, invitedAt: Date.now(), acceptedAt: null,
   });
 
   // Persist to DB if available
-  await dbUpsertMember({ projectId, name, email: email.toLowerCase(), appRole, inviteToken: token }).catch(() => {});
+  await dbUpsertMember({ projectId, name, email: normalizedEmail, appRole, inviteToken: token }).catch(() => {});
 
   // Send email
-  const emailResult = await sendInviteEmail({ to: email, name, projectName, appRole, inviteLink, invitedBy });
+  const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy });
 
   if (!emailResult.ok && !emailResult.dev) {
     return res.status(502).json({

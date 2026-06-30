@@ -7,7 +7,7 @@ import { updateProject } from '@/db/projectRepository';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/project.types';
-import { ROLE_PERMISSIONS } from '@/types/project.types';
+import { INVITABLE_APP_ROLES, ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId } from '@/types/agent.types';
 import styles from './TeamPanel.module.css';
 
@@ -21,7 +21,7 @@ const AVATAR_COLORS = [
   '#dc2626', '#7c3aed', '#db2777', '#0d9488',
 ];
 
-const ROLES: AppRole[] = ['project_owner', 'editor', 'reviewer', 'viewer'];
+const ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
 function initials(name: string) {
   return name.split(' ').map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('');
@@ -67,6 +67,10 @@ export default function TeamPanel({ project, onClose }: Props) {
   }
 
   const sendInvite = useCallback(async (member: TeamMember) => {
+    if (member.appRole === 'project_owner') {
+      alert('Invite links cannot grant Project Owner access. Use Editor, Reviewer, or Viewer.');
+      return;
+    }
     setSending(member.id);
     setInviteLink(null);
     try {
@@ -223,6 +227,7 @@ export default function TeamPanel({ project, onClose }: Props) {
             {/* Add + invite form */}
             <section className={styles.section}>
               <h3>Invite a Team Member</h3>
+              <p className={styles.hint}>Each invite creates a unique link bound to this project and the invited email address.</p>
               <div className={styles.addForm}>
                 <div className={styles.formRow}>
                   <input placeholder="Full name *" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addMember()} />

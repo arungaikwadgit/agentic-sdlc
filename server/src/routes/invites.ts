@@ -22,7 +22,7 @@ const router = Router();
 
 const CreateInviteSchema = z.object({
   projectId: z.string().uuid(),
-  role: z.enum(['admin', 'member', 'viewer']).default('member'),
+  role: z.enum(['member', 'viewer']).default('member'),
   email: z.string().email().optional(),           // optional: lock invite to a specific email
   expiresInDays: z.number().min(1).max(30).default(7),
 });

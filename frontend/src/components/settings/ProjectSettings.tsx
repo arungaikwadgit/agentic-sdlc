@@ -13,7 +13,7 @@ import { api } from '@/services/api';
 import { useIntegrations } from '@/hooks/useIntegrations';
 import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/project.types';
 import type { DomainId } from '@/types/domain.types';
-import { ROLE_PERMISSIONS } from '@/types/project.types';
+import { INVITABLE_APP_ROLES, ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId } from '@/types/agent.types';
 import type { GithubCredentials } from '@/types/integration.types';
 import styles from './ProjectSettings.module.css';
@@ -28,7 +28,7 @@ export function initials(name: string) {
   return name.split(' ').map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('');
 }
 
-const INVITE_ROLES: AppRole[] = ['project_owner', 'editor', 'reviewer', 'viewer'];
+const INVITE_ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
 type Tab = 'general' | 'team' | 'assignments' | 'knowledge';
 
@@ -114,6 +114,7 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
           {appRole && (
             <p className={styles.roleHint}>{ROLE_PERMISSIONS[appRole].description}</p>
           )}
+          <p className={styles.fieldHint}>Invite links are unique, locked to this project, and cannot grant Project Owner access.</p>
         </div>
 
         {/* Role permissions mini-grid */}
@@ -231,6 +232,10 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
 
   // ─── Invite logic ──────────────────────────────────────────────────────────
   async function sendInvite(member: TeamMember) {
+    if (member.appRole === 'project_owner') {
+      alert('Invite links cannot grant Project Owner access. Assign Editor, Reviewer, or Viewer first.');
+      return;
+    }
     setInvSending(member.id);
     setInviteLink(null);
     try {

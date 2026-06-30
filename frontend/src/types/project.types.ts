@@ -79,6 +79,13 @@ export const ROLE_PERMISSIONS: Record<AppRole, {
   },
 };
 
+/**
+ * Roles that can be granted through invite links.
+ * Elevated project ownership/admin authority must be assigned explicitly
+ * inside the project after membership exists, never via email link.
+ */
+export const INVITABLE_APP_ROLES: AppRole[] = ['editor', 'reviewer', 'viewer'];
+
 /** Many-to-many: one agent can have multiple assigned members */
 export interface AgentAssignment {
   agentId: AgentId;
