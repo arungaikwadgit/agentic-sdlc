@@ -16,6 +16,7 @@ const PORT  = process.env.PORT ?? 3001;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
 const PROXY_TOKEN    = process.env.PROXY_TOKEN ?? '';
+const SERVER_API_URL = (process.env.SERVER_API_URL ?? '').replace(/\/$/, '');
 
 // H-05 fix: Supabase JWT verification as the primary auth mechanism.
 // The frontend sends its Supabase session JWT as Authorization: Bearer <jwt>.
@@ -208,6 +209,55 @@ app.get('/api/health', (_req, res) => {
     ts: Date.now(),
   });
 });
+
+// Forward selected API surfaces to the separate `server/` backend service.
+// This keeps the frontend pointed at a single proxy URL in production while
+// still allowing project/invite/admin routes to live on their dedicated API.
+async function forwardToServer(req, res) {
+  if (!SERVER_API_URL) {
+    return res.status(503).json({ error: 'SERVER_API_URL is not configured' });
+  }
+
+  const targetUrl = SERVER_API_URL + req.originalUrl;
+  const headers = {};
+
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value == null) continue;
+    const lower = key.toLowerCase();
+    if (lower === 'host' || lower === 'content-length' || lower === 'connection') continue;
+    headers[key] = value;
+  }
+
+  const init = {
+    method: req.method,
+    headers,
+  };
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    init.body = JSON.stringify(req.body ?? {});
+    if (!headers['content-type'] && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+  }
+
+  try {
+    const upstream = await fetch(targetUrl, init);
+    const text = await upstream.text();
+
+    const contentType = upstream.headers.get('content-type');
+    if (contentType) {
+      res.setHeader('content-type', contentType);
+    }
+    return res.status(upstream.status).send(text);
+  } catch (err) {
+    console.error('Server forward error:', err.message);
+    return res.status(502).json({ error: 'Upstream server unavailable', detail: err.message });
+  }
+}
+
+app.use('/api/projects', checkToken, forwardToServer);
+app.use('/api/invites', forwardToServer);
+app.use('/api/admin', forwardToServer);
 
 // ── Provider resolution ──────────────────────────────────────────────────────
 // Resolution order: explicit request `provider` -> per-agent routing hint
