@@ -7,8 +7,6 @@
  */
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { isSupabaseConfigured } from '@/lib/supabase';
-import { ADMIN_EMAIL } from '@/lib/adminMode';
 import AppLogo from '@/components/common/AppLogo';
 import styles from './AuthPage.module.css';
 
@@ -17,7 +15,7 @@ interface Props {
   onSignUp:  () => void;
 }
 
-export default function LoginPage({ onSuccess, onSignUp }: Props) {
+export default function LoginPage({ onSuccess }: Props) {
   const { signIn } = useAuth();
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
@@ -82,20 +80,6 @@ export default function LoginPage({ onSuccess, onSignUp }: Props) {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-
-        <p className={styles.adminHint}>
-          {isSupabaseConfigured
-            ? <>Admin access is configured for <code>{ADMIN_EMAIL}</code>.</>
-            : <>Local access: <code>{ADMIN_EMAIL}</code> / <code>admin</code></>}
-          {!isSupabaseConfigured && ' · Supabase not configured'}
-        </p>
-
-        <p className={styles.switchText}>
-          Don't have an account?{' '}
-          <button className={styles.linkBtn} onClick={onSignUp} disabled={!isSupabaseConfigured}>
-            Create one
-          </button>
-        </p>
       </div>
     </div>
   );
