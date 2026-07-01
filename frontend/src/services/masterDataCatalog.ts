@@ -80,14 +80,29 @@ interface MasterCatalogResponse {
   roleTemplateAgents: RoleTemplateAgentRow[];
 }
 
+const MASTER_CATALOG_TIMEOUT_MS = 15_000;
+
 async function fetchMasterCatalog(): Promise<MasterCatalogResponse | null> {
   const authHeaders = await getAuthHeader();
-  const response = await fetch(`${API_URL}/master-data/catalog`, {
-    headers: {
-      ...authHeaders,
-      ...(!authHeaders.Authorization && PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {}),
-    },
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), MASTER_CATALOG_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/master-data/catalog`, {
+      headers: {
+        ...authHeaders,
+        ...(!authHeaders.Authorization && PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {}),
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Master catalog request timed out after ${MASTER_CATALOG_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`Master catalog request failed: ${response.status}`);

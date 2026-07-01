@@ -1572,17 +1572,42 @@ async function dbDeleteBacklogItem(id) {
   await dbPool.query(`DELETE FROM admin_backlog_items WHERE id = $1`, [id]);
 }
 
+const MASTER_CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
+let masterCatalogCache = {
+  value: null,
+  expiresAt: 0,
+};
+
 async function dbGetMasterCatalog() {
+  if (masterCatalogCache.value && Date.now() < masterCatalogCache.expiresAt) {
+    return masterCatalogCache.value;
+  }
+
   if (!dbPool) {
-    return {
-      phases: await fetchSupabaseTable('master_phases?select=id,order_index,label,sdlc_stage,is_parallel&order=order_index.asc'),
-      reviewGates: await fetchSupabaseTable('master_review_gates?select=gate_id,phase_id,phase_order&order=gate_id.asc,phase_order.asc'),
-      agents: await fetchSupabaseTable('master_agents?select=id,name,phase_id,description,output_label,depends_on,max_iterations&is_enabled=eq.true&order=phase_id.asc,id.asc'),
-      phaseAgents: await fetchSupabaseTable('master_phase_agents?select=phase_id,agent_id,agent_order&order=phase_id.asc,agent_order.asc'),
-      domains: await fetchSupabaseTable('master_domains?select=id,label,color,bg_color,context,template&order=label.asc'),
-      roleTemplates: await fetchSupabaseTable('master_role_templates?select=id,title,description,color,sort_order&order=sort_order.asc,title.asc'),
-      roleTemplateAgents: await fetchSupabaseTable('master_role_template_agents?select=role_template_id,agent_id,sort_order&order=role_template_id.asc,sort_order.asc'),
+    const [
+      phases,
+      reviewGates,
+      agents,
+      phaseAgents,
+      domains,
+      roleTemplates,
+      roleTemplateAgents,
+    ] = await Promise.all([
+      fetchSupabaseTable('master_phases?select=id,order_index,label,sdlc_stage,is_parallel&order=order_index.asc'),
+      fetchSupabaseTable('master_review_gates?select=gate_id,phase_id,phase_order&order=gate_id.asc,phase_order.asc'),
+      fetchSupabaseTable('master_agents?select=id,name,phase_id,description,output_label,depends_on,max_iterations&is_enabled=eq.true&order=phase_id.asc,id.asc'),
+      fetchSupabaseTable('master_phase_agents?select=phase_id,agent_id,agent_order&order=phase_id.asc,agent_order.asc'),
+      fetchSupabaseTable('master_domains?select=id,label,color,bg_color,context,template&order=label.asc'),
+      fetchSupabaseTable('master_role_templates?select=id,title,description,color,sort_order&order=sort_order.asc,title.asc'),
+      fetchSupabaseTable('master_role_template_agents?select=role_template_id,agent_id,sort_order&order=role_template_id.asc,sort_order.asc'),
+    ]);
+
+    const catalog = { phases, reviewGates, agents, phaseAgents, domains, roleTemplates, roleTemplateAgents };
+    masterCatalogCache = {
+      value: catalog,
+      expiresAt: Date.now() + MASTER_CATALOG_CACHE_TTL_MS,
     };
+    return catalog;
   }
 
   const [
@@ -1632,7 +1657,7 @@ async function dbGetMasterCatalog() {
     `),
   ]);
 
-  return {
+  const catalog = {
     phases: phasesRes.rows,
     reviewGates: gatesRes.rows,
     agents: agentsRes.rows,
@@ -1641,6 +1666,11 @@ async function dbGetMasterCatalog() {
     roleTemplates: roleTemplatesRes.rows,
     roleTemplateAgents: roleTemplateAgentsRes.rows,
   };
+  masterCatalogCache = {
+    value: catalog,
+    expiresAt: Date.now() + MASTER_CATALOG_CACHE_TTL_MS,
+  };
+  return catalog;
 }
 
 async function dbUpsertMember({ projectId, name, email, appRole, inviteToken }) {
