@@ -60,7 +60,12 @@ export default function App() {
     (async () => {
       await initializeMasterDataCatalog();
       try {
+        try {
         await initializeQualityDefaults();
+      } catch {
+        // Quality-default seeding is an admin-only app-state concern and
+        // must not block public application bootstrap in production.
+      }
       } catch {
         // Quality-default seeding is an admin-only app-state concern and
         // must not block public application bootstrap in production.
