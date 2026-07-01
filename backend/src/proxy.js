@@ -1175,7 +1175,10 @@ app.delete('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (
   return res.json({ ok: true });
 });
 
-app.get('/api/master-data/catalog', checkToken, async (_req, res) => {
+// Public, read-only bootstrap endpoint.
+// The frontend needs this before any sign-in flow completes so it can render
+// the app shell, labels, domains, phases, and role templates.
+app.get('/api/master-data/catalog', async (_req, res) => {
   if (!dbPool) {
     return res.status(503).json({ error: 'Postgres is not configured for master data.' });
   }

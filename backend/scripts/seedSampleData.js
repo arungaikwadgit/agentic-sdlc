@@ -16,7 +16,9 @@ function compilePsqlTemplate(source) {
   const withoutSetLines = source
     .split(/\r?\n/)
     .filter((line) => {
-      const match = line.match(/^\\set\s+([A-Za-z_][A-Za-z0-9_]*)\s+'((?:''|[^'])*)'\s*$/);
+      const match = line.match(
+        /^\\set\s+([A-Za-z_][A-Za-z0-9_]*)\s+'((?:''|[^'])*)'\s*(?:--.*)?$/,
+      );
       if (!match) return true;
       variables.set(match[1], match[2].replace(/''/g, "'"));
       return false;
