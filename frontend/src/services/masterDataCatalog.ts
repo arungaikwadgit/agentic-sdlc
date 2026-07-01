@@ -8,6 +8,7 @@ import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { DomainDefinition, DomainId } from '@/types/domain.types';
 
 const API_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+const PROXY_TOKEN = (import.meta.env.VITE_PROXY_TOKEN ?? '').trim();
 
 interface PhaseRow {
   id: PhaseId;
@@ -73,9 +74,11 @@ interface MasterCatalogResponse {
 }
 
 async function fetchMasterCatalog(): Promise<MasterCatalogResponse | null> {
+  const authHeaders = await getAuthHeader();
   const response = await fetch(`${API_URL}/master-data/catalog`, {
     headers: {
-      ...(await getAuthHeader()),
+      ...authHeaders,
+      ...(!authHeaders.Authorization && PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {}),
     },
   });
 
