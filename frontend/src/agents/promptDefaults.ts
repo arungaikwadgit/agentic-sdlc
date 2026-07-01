@@ -96,11 +96,35 @@ export function initializeQualityDefaults(): Promise<void> {
   return _initPromise;
 }
 
+function isAppStateAccessError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('authentication required') ||
+    msg.includes('invalid or expired session') ||
+    msg.includes('admin access required') ||
+    msg.includes('not authenticated') ||
+    msg.includes('401')
+  );
+}
+
 async function _doInit(): Promise<void> {
-  const already = await getAppConfigValue<boolean>(QUALITY_INIT_KEY, false);
+  let already = false;
+  try {
+    already = await getAppConfigValue<boolean>(QUALITY_INIT_KEY, false);
+  } catch (error) {
+    if (isAppStateAccessError(error)) return;
+    throw error;
+  }
   if (already) return;
 
-  const current = await getPromptDefaults();
+  let current: PromptDefaultsMap = {};
+  try {
+    current = await getPromptDefaults();
+  } catch (error) {
+    if (isAppStateAccessError(error)) return;
+    throw error;
+  }
   const updates: PromptDefaultsMap = {};
 
   // Only seed agents that haven't been customised yet
@@ -121,8 +145,18 @@ All sections must be self-contained in a single HTML file with embedded CSS and 
   }
 
   if (Object.keys(updates).length > 0) {
-    await setAppConfigValue(SETTINGS_KEY, { ...current, ...updates });
+    try {
+      await setAppConfigValue(SETTINGS_KEY, { ...current, ...updates });
+    } catch (error) {
+      if (isAppStateAccessError(error)) return;
+      throw error;
+    }
   }
 
-  await setAppConfigValue(QUALITY_INIT_KEY, true);
+  try {
+    await setAppConfigValue(QUALITY_INIT_KEY, true);
+  } catch (error) {
+    if (isAppStateAccessError(error)) return;
+    throw error;
+  }
 }

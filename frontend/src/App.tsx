@@ -59,7 +59,12 @@ export default function App() {
     let active = true;
     (async () => {
       await initializeMasterDataCatalog();
-      await initializeQualityDefaults();
+      try {
+        await initializeQualityDefaults();
+      } catch {
+        // Quality-default seeding is an admin-only app-state concern and
+        // must not block public application bootstrap in production.
+      }
       if (active) {
         setCatalogReady(true);
         setCatalogError(null);
