@@ -35,6 +35,7 @@ const ADMIN_EMAIL_ALLOWLIST = Array.from(new Set(
 // PROXY_TOKEN remains as a fallback for admin-mode / server-to-server callers.
 const SUPABASE_URL     = process.env.SUPABASE_URL ?? '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? '';
 let _supabaseClient = null;
 function getSupabase() {
   if (_supabaseClient) return _supabaseClient;
@@ -44,6 +45,24 @@ function getSupabase() {
     _supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     return _supabaseClient;
   } catch { return null; }
+}
+
+async function fetchSupabaseTable(path) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    throw new Error('Supabase service-role access is not configured.');
+  }
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      Accept: 'application/json',
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Supabase REST ${response.status}: ${detail || response.statusText}`);
+  }
+  return await response.json();
 }
 
 // Anthropic (Claude) — optional second provider
@@ -1555,7 +1574,17 @@ async function dbDeleteBacklogItem(id) {
 }
 
 async function dbGetMasterCatalog() {
-  if (!dbPool) return null;
+  if (!dbPool) {
+    return {
+      phases: await fetchSupabaseTable('master_phases?select=id,order_index,label,sdlc_stage,is_parallel&order=order_index.asc'),
+      reviewGates: await fetchSupabaseTable('master_review_gates?select=gate_id,phase_id,phase_order&order=gate_id.asc,phase_order.asc'),
+      agents: await fetchSupabaseTable('master_agents?select=id,name,phase_id,description,output_label,depends_on,max_iterations&is_enabled=eq.true&order=phase_id.asc,id.asc'),
+      phaseAgents: await fetchSupabaseTable('master_phase_agents?select=phase_id,agent_id,agent_order&order=phase_id.asc,agent_order.asc'),
+      domains: await fetchSupabaseTable('master_domains?select=id,label,color,bg_color,context,template&order=label.asc'),
+      roleTemplates: await fetchSupabaseTable('master_role_templates?select=id,title,description,color,sort_order&order=sort_order.asc,title.asc'),
+      roleTemplateAgents: await fetchSupabaseTable('master_role_template_agents?select=role_template_id,agent_id,sort_order&order=role_template_id.asc,sort_order.asc'),
+    };
+  }
 
   const [
     phasesRes,
