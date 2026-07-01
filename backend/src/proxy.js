@@ -1198,9 +1198,6 @@ app.delete('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (
 // The frontend needs this before any sign-in flow completes so it can render
 // the app shell, labels, domains, phases, and role templates.
 app.get('/api/master-data/catalog', async (_req, res) => {
-  if (!dbPool) {
-    return res.status(503).json({ error: 'Postgres is not configured for master data.' });
-  }
   try {
     const catalog = await dbGetMasterCatalog();
     return res.json(catalog ?? {});
