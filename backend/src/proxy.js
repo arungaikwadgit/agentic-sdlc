@@ -126,6 +126,8 @@ const API_ALIAS_RULES = [
   { from: '/health', to: '/api/health' },
   { from: '/agent', to: '/api/agent' },
   { from: '/agents/call', to: '/api/agents/call' },
+  { from: '/master-data/catalog', to: '/api/master-data/catalog' },
+  { from: '/app-state/', to: '/api/app-state/' },
   { from: '/fetch-site', to: '/api/fetch-site' },
   { from: '/figma/styles', to: '/api/figma/styles' },
   { from: '/github/test', to: '/api/github/test' },

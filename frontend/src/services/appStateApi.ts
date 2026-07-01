@@ -8,7 +8,14 @@ import { getAuthHeader } from '@/services/api';
 import type { BacklogItem } from '@/types/adminData.types';
 import type { IntegrationCredential } from '@/types/integration.types';
 
-const API_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+function getApiBase(raw: string | undefined): string {
+  const base = (raw ?? '/api').replace(/\/$/, '');
+  if (!base || base === '/') return '/api';
+  if (base === '/api' || base.endsWith('/api')) return base;
+  return `${base}/api`;
+}
+
+const API_URL = getApiBase(import.meta.env.VITE_API_URL);
 
 type AppStateTopic = 'config' | 'integrations' | 'backlog';
 type AppStateListener = (topic: AppStateTopic) => void;

@@ -7,7 +7,14 @@ import { ROLE_TEMPLATES, type RoleTemplate } from '@/data/roleTemplates';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { DomainDefinition, DomainId } from '@/types/domain.types';
 
-const API_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+function getApiBase(raw: string | undefined): string {
+  const base = (raw ?? '/api').replace(/\/$/, '');
+  if (!base || base === '/') return '/api';
+  if (base === '/api' || base.endsWith('/api')) return base;
+  return `${base}/api`;
+}
+
+const API_URL = getApiBase(import.meta.env.VITE_API_URL);
 const PROXY_TOKEN = (import.meta.env.VITE_PROXY_TOKEN ?? '').trim();
 
 interface PhaseRow {
