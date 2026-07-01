@@ -3,12 +3,11 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
  * TestsTab — Admin test runner dashboard.
- * Triggers Railway backend test jobs; stores and displays results.
+ * Triggers Railway backend test jobs; keeps transient run history in memory.
  */
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type TestRunResult } from '@/db/database';
-import { api } from '@/services/api';
+import type { TestRunResult } from '@/types/adminData.types';
+import { getAuthHeader } from '@/services/api';
 
 function nanoid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -28,7 +27,7 @@ async function triggerTestRun(suite: TestRunResult['suite']): Promise<{ jobId?: 
   try {
     const resp = await fetch(`${PROXY_URL}/api/admin/test-runs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-proxy-token': import.meta.env.VITE_PROXY_TOKEN ?? '' },
+      headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
       body: JSON.stringify({ suite }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -47,7 +46,7 @@ async function pollTestRun(jobId: string): Promise<Partial<TestRunResult>> {
   if (!PROXY_URL) return { status: 'error', output: 'No backend URL.' };
   try {
     const resp = await fetch(`${PROXY_URL}/api/admin/test-runs/${jobId}`, {
-      headers: { 'x-proxy-token': import.meta.env.VITE_PROXY_TOKEN ?? '' },
+      headers: await getAuthHeader(),
       signal: AbortSignal.timeout(10_000),
     });
     if (!resp.ok) return { status: 'error', output: `Poll failed: ${resp.status}` };
@@ -77,11 +76,7 @@ export default function TestsTab() {
   const [running, setRunning] = useState<Set<TestRunResult['suite']>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const runs = useLiveQuery(
-    () => db.testRuns.orderBy('startedAt').reverse().limit(50).toArray(),
-    []
-  ) ?? [];
+  const [runs, setRuns] = useState<TestRunResult[]>([]);
 
   // Group latest run per suite
   const latestBySuite = Object.fromEntries(
@@ -103,12 +98,14 @@ export default function TestsTab() {
       startedAt: Date.now(),
       triggeredBy: 'admin',
     };
-    await db.testRuns.add(runRecord);
+    setRuns((prev) => [runRecord, ...prev]);
 
     const { jobId, error } = await triggerTestRun(suite);
 
     if (error || !jobId) {
-      await db.testRuns.update(runId, { status: 'error', output: error ?? 'No job ID returned', finishedAt: Date.now() });
+      setRuns((prev) => prev.map((run) => run.id === runId
+        ? { ...run, status: 'error', output: error ?? 'No job ID returned', finishedAt: Date.now() }
+        : run));
       setErrors((prev) => ({ ...prev, [suite]: error ?? 'Unknown error' }));
       setRunning((prev) => { const n = new Set(prev); n.delete(suite); return n; });
       return;
@@ -120,7 +117,9 @@ export default function TestsTab() {
 
     const poll = async () => {
       if (Date.now() > deadline) {
-        await db.testRuns.update(runId, { status: 'error', output: 'Timed out waiting for test run results (5 min limit).', finishedAt: Date.now() });
+        setRuns((prev) => prev.map((run) => run.id === runId
+          ? { ...run, status: 'error', output: 'Timed out waiting for test run results (5 min limit).', finishedAt: Date.now() }
+          : run));
         setRunning((prev) => { const n = new Set(prev); n.delete(suite); return n; });
         return;
       }
@@ -128,15 +127,18 @@ export default function TestsTab() {
       const result = await pollTestRun(jobId);
       lastStatus = result.status ?? 'running';
 
-      await db.testRuns.update(runId, {
-        status: result.status,
-        passed: result.passed,
-        failed: result.failed,
-        skipped: result.skipped,
-        output: result.output,
-        durationMs: result.durationMs,
-        finishedAt: result.finishedAt ?? (lastStatus !== 'running' ? Date.now() : undefined),
-      });
+      setRuns((prev) => prev.map((run) => run.id === runId
+        ? {
+            ...run,
+            status: result.status ?? run.status,
+            passed: result.passed,
+            failed: result.failed,
+            skipped: result.skipped,
+            output: result.output,
+            durationMs: result.durationMs,
+            finishedAt: result.finishedAt ?? (lastStatus !== 'running' ? Date.now() : run.finishedAt),
+          }
+        : run));
 
       if (lastStatus === 'running' || lastStatus === 'pending') {
         setTimeout(poll, 5000);
@@ -150,7 +152,7 @@ export default function TestsTab() {
 
   async function clearHistory() {
     if (!confirm('Clear all test run history?')) return;
-    await db.testRuns.clear();
+    setRuns([]);
   }
 
   return (
@@ -160,7 +162,7 @@ export default function TestsTab() {
         <div>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Test Runner</h3>
           <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
-            Triggers Railway backend jobs · Results stored locally
+            Triggers Railway backend jobs · Results kept only for this session
           </p>
         </div>
         {runs.length > 0 && (

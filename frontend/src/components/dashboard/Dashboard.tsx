@@ -3,13 +3,15 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import {
   listVisibleProjects,
   deleteProject,
   restoreProject,
+  subscribeProjectRepositoryChange,
 } from '@/db/projectRepository';
-import { getCurrentUser, clearCurrentUser } from '@/services/userIdentity';
+import type { ProjectSummary } from '@/types/project.types';
+import { getInviteSession, clearInviteSession } from '@/services/inviteSession';
+import { importLegacyProjectsIfNeeded } from '@/services/legacyProjectImport';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import NewProjectModal from './NewProjectModal';
@@ -48,11 +50,39 @@ export default function Dashboard({ onOpenProject }: Props) {
   const [confirmSwitchUser, setConfirmSwitchUser] = useState(false);
 
   useEffect(() => {
-    getCurrentUser().then((u) => setUserEmail(u?.email ?? null)).catch(() => {});
-  }, []);
+    const inviteSession = getInviteSession();
+    setUserEmail(user?.email ?? inviteSession?.email ?? null);
+  }, [user?.email]);
 
-  // useLiveQuery returns undefined while the DB query is initialising
-  const allProjects = useLiveQuery(() => listVisibleProjects(), []);
+  const [allProjects, setAllProjects] = useState<ProjectSummary[] | undefined>(undefined);
+
+  useEffect(() => {
+    let active = true;
+    async function loadProjects() {
+      try {
+        let projects = await listVisibleProjects();
+        if (projects.length === 0) {
+          const migrated = await importLegacyProjectsIfNeeded(projects.length);
+          if (migrated > 0) {
+            toast(`Imported ${migrated} legacy project${migrated === 1 ? '' : 's'} into Supabase.`, 'success');
+            projects = await listVisibleProjects();
+          }
+        }
+        if (active) setAllProjects(projects);
+      } catch {
+        if (active) setAllProjects([]);
+      }
+    }
+    loadProjects();
+    const unsubscribe = subscribeProjectRepositoryChange(() => {
+      void loadProjects();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [toast]);
+
   const isLoading = allProjects === undefined;
   const safeProjects = allProjects ?? [];
   const archivedCount = safeProjects.filter((p) => p.archived).length;
@@ -60,8 +90,8 @@ export default function Dashboard({ onOpenProject }: Props) {
 
   async function handleSwitchUserConfirmed() {
     setConfirmSwitchUser(false);
-    await clearCurrentUser();
-    setUserEmail(null);
+    clearInviteSession();
+    setUserEmail(user?.email ?? null);
     toast('Switched to owner mode', 'info');
   }
 

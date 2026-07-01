@@ -83,7 +83,6 @@ export default function UploadStep({ files, onFilesAdded, onFileRemove }: Props)
         onKeyDown={(e) => e.key === 'Enter' && inputRef.current?.click()}
         aria-label="Upload documents"
       >
-        <div className={styles.dropIcon}>\ud83d\udcc4</div>
         <p className={styles.dropTitle}>Drop files here or click to browse</p>
         <p className={styles.dropHint}>PDF, DOCX, TXT, XLSX, XLS, CSV &mdash; up to 5 files</p>
         <input

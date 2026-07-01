@@ -1,37 +1,41 @@
 /**
  * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  *
- * SignUpPage — email + password account creation.
- * Disabled when Supabase is not configured — use admin@local / admin instead.
+ * SignUpPage - email + password account creation.
+ * Disabled when Supabase is not configured.
  */
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabase';
-import { ADMIN_EMAIL } from '@/lib/adminMode';
+import { ADMIN_BYPASS_ENABLED, ADMIN_EMAIL } from '@/lib/adminMode';
 import AppLogo from '@/components/common/AppLogo';
 import styles from './AuthPage.module.css';
 
 interface Props {
   onSuccess: () => void;
-  onSignIn:  () => void;
+  onSignIn: () => void;
 }
 
 export default function SignUpPage({ onSuccess, onSignIn }: Props) {
   const { signUp } = useAuth();
-  const [email,    setEmail]    = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirm,  setConfirm]  = useState('');
-  const [error,    setError]    = useState<string | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [done,     setDone]     = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
     if (!isSupabaseConfigured) {
-      setError(`Supabase is not configured. Use ${ADMIN_EMAIL} on the sign-in page for admin access.`);
+      setError(
+        ADMIN_BYPASS_ENABLED
+          ? `Supabase is not configured. Use ${ADMIN_EMAIL} on the sign-in page for local development access.`
+          : 'Supabase is not configured. Account creation is unavailable until authentication is configured.'
+      );
       return;
     }
     if (password.length < 8) {
@@ -87,8 +91,12 @@ export default function SignUpPage({ onSuccess, onSignIn }: Props) {
 
         {!isSupabaseConfigured && (
           <div className={styles.configWarning}>
-            ⚠️ Supabase not configured. Sign-up unavailable.{' '}
-            <button className={styles.linkBtn} onClick={onSignIn}>Sign in with {ADMIN_EMAIL}</button> instead.
+            Supabase is not configured. Sign-up is unavailable.{' '}
+            {ADMIN_BYPASS_ENABLED ? (
+              <button className={styles.linkBtn} onClick={onSignIn}>Sign in with {ADMIN_EMAIL}</button>
+            ) : (
+              <span>Configure authentication to create accounts.</span>
+            )}
           </div>
         )}
 
@@ -141,7 +149,7 @@ export default function SignUpPage({ onSuccess, onSignIn }: Props) {
             type="submit"
             disabled={loading || !isSupabaseConfigured}
           >
-            {loading ? 'Creating account…' : 'Create account'}
+            {loading ? 'Creating account...' : 'Create account'}
           </button>
         </form>
 

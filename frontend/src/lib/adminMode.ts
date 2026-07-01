@@ -2,20 +2,23 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
- * Admin-mode flag — activated when signing in with the local admin credentials.
- * Bypasses Supabase and routes all project data through local Dexie storage.
- * Intended for first-run testing before Supabase is configured.
+ * Admin-mode flag — activated only in local development when signing in with
+ * the local admin credentials.
+ * Bypasses Supabase sign-in while still using the backend/Postgres data path.
  *
- * Change credentials via env vars:
- *   VITE_ADMIN_EMAIL    (default: admin@local)
- *   VITE_ADMIN_PASSWORD (default: admin)
+ * This bypass is intentionally local-development only. Production builds
+ * must use Supabase authentication and never depend on browser-bundled
+ * admin credentials.
  */
 
 export const ADMIN_USER_ID = '__admin_local__';
-export const ADMIN_EMAIL   = (import.meta.env.VITE_ADMIN_EMAIL as string | undefined) ?? 'admin@local';
+export const ADMIN_EMAIL   = 'admin@local';
+export const ADMIN_PASSWORD = 'admin';
+export const ADMIN_BYPASS_ENABLED = import.meta.env.DEV;
 
 /** Returns true when the current session is an admin bypass session. */
 export function isAdminMode(): boolean {
+  if (!ADMIN_BYPASS_ENABLED) return false;
   try {
     return sessionStorage.getItem('__admin_mode') === '1';
   } catch {
@@ -25,6 +28,7 @@ export function isAdminMode(): boolean {
 
 /** Activate or deactivate admin bypass mode. */
 export function setAdminMode(active: boolean): void {
+  if (!ADMIN_BYPASS_ENABLED) return;
   try {
     if (active) sessionStorage.setItem('__admin_mode', '1');
     else         sessionStorage.removeItem('__admin_mode');

@@ -2,16 +2,41 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/database';
-import { updateProject, deleteProject } from '@/db/projectRepository';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  getProject,
+  updateProject,
+  deleteProject,
+  subscribeProjectRepositoryChange,
+} from '@/db/projectRepository';
 import type { Project } from '@/types/project.types';
 
 export function useProject(projectId: string) {
-  const project = useLiveQuery<Project | undefined>(
-    () => db.projects.get(projectId),
-    [projectId]
-  );
+  const [project, setProject] = useState<Project | undefined>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await getProject(projectId);
+      setProject(next);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    refresh();
+    return subscribeProjectRepositoryChange((changedProjectId) => {
+      if (!changedProjectId || changedProjectId === projectId) {
+        refresh();
+      }
+    });
+  }, [projectId, refresh]);
 
   async function save(updater: (p: Project) => void) {
     await updateProject(projectId, updater);
@@ -21,5 +46,5 @@ export function useProject(projectId: string) {
     await deleteProject(projectId);
   }
 
-  return { project, save, remove };
+  return { project, loading, error, refresh, save, remove };
 }

@@ -10,7 +10,7 @@
 
 import Papa from 'papaparse';
 import { saveAs } from 'file-saver';
-import { db } from '@/db/database';
+import { getProject } from '@/db/projectRepository';
 
 interface TraceRow {
   storyId: string;
@@ -104,7 +104,7 @@ function parseRequirements(markdown: string): Array<{ id: string; title: string 
 }
 
 export async function generateTraceabilityMatrix(projectId: string): Promise<string> {
-  const project = await db.projects.get(projectId);
+  const project = await getProject(projectId);
   if (!project) throw new Error('Project not found');
 
   const storyOutput = project.agentRuns['userStory']?.output ?? '';

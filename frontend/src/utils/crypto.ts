@@ -5,7 +5,7 @@
 /**
  * AES-GCM encryption/decryption using Web Crypto API.
  * Key is derived from a password via PBKDF2 (SHA-256, 100k iterations).
- * Used for storing integration credentials in IndexedDB.
+ * Used for encrypting integration credentials before storing them via backend APIs.
  */
 
 const PBKDF2_ITERATIONS = 100_000;

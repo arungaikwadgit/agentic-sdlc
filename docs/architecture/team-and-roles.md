@@ -36,7 +36,7 @@ which role templates are offered for a given project.
 | R1 | A project's team is `project.teamMembers: TeamMember[]` (`id`, `name`, `email`, `role`, `avatarColor`, `isAdmin`). The first member added to a project is automatically `isAdmin: true`. |
 | R2 | Adding a member requires a non-empty name, a valid email (must contain `@`), and a role — either selected from `visibleRoleTemplates` (role templates not hidden by `disabledRoleIds`) or a custom free-text role via the "Custom role..." option. |
 | R3 | If the selected role matches a `ROLE_TEMPLATES` title, adding the member also seeds `agentAssignments` for every agent in that template's `suggestedAgents`, appending the new member's id to `memberIds` (creating the assignment entry if it doesn't exist yet). |
-| R4 | "Admin session" is a lightweight identity selector, not a login: `activeAdminId` (persisted on the project) picks which `TeamMember` the current browser tab is "acting as". `isAdmin` is true only if `activeAdminId` resolves to a team member whose `isAdmin` flag is `true`. All Team/Assignments mutations (add/remove member, toggle admin, assign agents, apply templates, toggle role visibility, archive/restore, GitHub integration, domain knowledge, branding) are gated on `isAdmin`. |
+| R4 | `activeAdminId` (persisted on the project) picks which `TeamMember` the UI is acting as for project-scoped actions. `isAdmin` is true only if `activeAdminId` resolves to a team member whose `isAdmin` flag is `true`. In production, privileged backend routes still require an authenticated admin email allowlisted on the server, so the selector is a UX control rather than the sole authorization boundary. |
 | R5 | The first member added to an empty project automatically becomes the active admin session (`setAdminSessionId` is called immediately after `addMember`). |
 | R6 | Removing a team member (admin only) deletes them from `teamMembers` and strips their id from every `agentAssignments[].memberIds`. If they were `activeAdminId`, that field is cleared. Removal is blocked — with an inline error — if the target is the **only** admin (`wouldLeaveNoAdmin`). |
 | R7 | `toggleAdmin(memberId)` flips a member's `isAdmin` flag (admin only). It is blocked with an inline error if the target is the only admin and currently `isAdmin: true` — there must always be at least one admin once any member exists. |
@@ -51,9 +51,9 @@ which role templates are offered for a given project.
 
 | # | Requirement |
 |---|---|
-| NFR1 | All team/role mutations go through `updateProject` (`db/projectRepository.ts`) — the same Dexie-backed persistence covered in Module 1. No new tables; `teamMembers`, `agentAssignments`, `activeAdminId`, and `disabledRoleIds` are fields on the existing `Project` record. |
+| NFR1 | All team/role mutations go through `updateProject` (`db/projectRepository.ts`) and backend APIs backed by Postgres. `teamMembers`, `agentAssignments`, `activeAdminId`, and `disabledRoleIds` persist on the authoritative project record rather than browser-only storage. |
 | NFR2 | `disabledRoleIds`, `activeAdminId`, and `agentAssignments`/`teamMembers` for pre-existing projects default to `[]` / `undefined` via `?? []` / `?? undefined` fallbacks — no migration required for projects created before these fields existed. |
-| NFR3 | The admin model is **identity selection, not authentication** — there is no password or credential check. Anyone with access to the project can select any member (including an admin) from the "Viewing as" dropdown. This is a deliberate trust boundary for a single-tenant local app, not a security control. |
+| NFR3 | The "Viewing as" selector is a project-level UX aid, not the sole security control. Production authentication is handled through Supabase and backend authorization. The local admin bypass exists only in development and is not part of the production trust model. |
 
 ---
 
@@ -145,7 +145,7 @@ agent prompting), but the **admin session selector** and **archive/restore
 
 #### 2.3.1 Admin session bar (always visible, all tabs)
 
-A bar above the tabs shows either "🔑 Admin session active" (if
+A bar above the tabs shows either "Admin session active" (if
 `isAdmin`) or "Viewing as:" with a `<select>` listing every team member
 (showing 🔑 next to admins). Selecting a member calls `selectAdminSession`,
 which sets local state `adminSessionId` and persists
@@ -279,12 +279,12 @@ attribute the work to.
    fallback never triggers. Documented for completeness; not a team/roles
    bug, but it's the same `adminSessionId` mechanism documented in §2.3.1.
 
-5. **No persistence-layer changes needed.** `disabledRoleIds`,
-   `activeAdminId`, `teamMembers`, and `agentAssignments` are plain fields
-   on the `Project` record (Dexie/IndexedDB, per Module 1). Existing
-   projects without these fields work via `?? []` / `?? undefined`
-   defaults — confirmed by reading `ProjectSettings.tsx` (lines 39-40, 101,
-   115-117).
+5. **No schema changes were needed for these fields.** `disabledRoleIds`,
+   `activeAdminId`, `teamMembers`, and `agentAssignments` remain plain
+   fields on the `Project` record now served through backend APIs and
+   Postgres. Existing projects without these fields still work via
+   `?? []` / `?? undefined` defaults — confirmed by reading
+   `ProjectSettings.tsx` (lines 39-40, 101, 115-117).
 
 ---
 
@@ -307,9 +307,9 @@ list. Highlights:
 
 ## 5. Deployment & Maintenance Notes
 
-- No new environment variables, endpoints, or build steps. This module is
-  pure frontend state (`Project` fields) persisted via the existing Dexie
-  layer documented in Module 1.
+- No module-specific build steps. The relevant operational dependency is
+  the backend project API, because these project fields now persist through
+  backend APIs and Postgres rather than Dexie-only browser storage.
 - If `TeamPanel.tsx` is deleted (see §3.1), confirm no dynamic imports or
   test files reference it first (`grep -rn "TeamPanel"`).
 - Any future change to `ROLE_TEMPLATES` (add/remove/rename a role) should

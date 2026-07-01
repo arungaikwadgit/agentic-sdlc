@@ -10,12 +10,12 @@
  *   2. app:promptDefaults[agentId]                  (app-level, set via App Settings → Agent Prompts)
  *   3. AGENT_DEFINITIONS[agentId].systemPrompt      (hardcoded fallback)
  *
- * Stored in the existing `settings` Dexie table under a single key so no schema migration is required.
+ * Stored in the backend app-state config store so Postgres remains the source of truth.
  */
-import { db } from '@/db/database';
 import { AGENT_DEFINITIONS } from './definitions';
 import type { AgentId } from '@/types/agent.types';
 import type { LlmProvider } from '@/services/api';
+import { getAppConfigValue, setAppConfigValue } from '@/services/appStateApi';
 
 const SETTINGS_KEY = 'app:promptDefaults';
 const PROVIDER_HINTS_KEY = 'app:agentProviderHints';
@@ -33,11 +33,7 @@ export type AgentProviderHintsMap = Partial<Record<AgentId, ProviderHint>>;
 
 /** Load the app-level per-agent provider routing hints (empty object if none saved yet). */
 export async function getAgentProviderHints(): Promise<AgentProviderHintsMap> {
-  const row = await db.settings.get(PROVIDER_HINTS_KEY);
-  if (row?.value && typeof row.value === 'object') {
-    return row.value as AgentProviderHintsMap;
-  }
-  return {};
+  return await getAppConfigValue<AgentProviderHintsMap>(PROVIDER_HINTS_KEY, {});
 }
 
 /** Save (or clear, via 'auto') the provider hint for one agent. */
@@ -49,16 +45,12 @@ export async function saveAgentProviderHint(agentId: AgentId, hint: ProviderHint
   } else {
     next[agentId] = hint;
   }
-  await db.settings.put({ key: PROVIDER_HINTS_KEY, value: next });
+  await setAppConfigValue(PROVIDER_HINTS_KEY, next);
 }
 
 /** Load the full app-level prompt defaults map (empty object if none saved yet). */
 export async function getPromptDefaults(): Promise<PromptDefaultsMap> {
-  const row = await db.settings.get(SETTINGS_KEY);
-  if (row?.value && typeof row.value === 'object') {
-    return row.value as PromptDefaultsMap;
-  }
-  return {};
+  return await getAppConfigValue<PromptDefaultsMap>(SETTINGS_KEY, {});
 }
 
 /** Get the effective default prompt for an agent: app-level override if set, else the hardcoded definition. */
@@ -71,7 +63,7 @@ export async function getEffectivePromptDefault(agentId: AgentId): Promise<strin
 export async function savePromptDefault(agentId: AgentId, prompt: string): Promise<void> {
   const defaults = await getPromptDefaults();
   const next: PromptDefaultsMap = { ...defaults, [agentId]: prompt };
-  await db.settings.put({ key: SETTINGS_KEY, value: next });
+  await setAppConfigValue(SETTINGS_KEY, next);
 }
 
 /** Remove the app-level override for an agent, reverting it to the hardcoded definition. */
@@ -80,7 +72,7 @@ export async function resetPromptDefault(agentId: AgentId): Promise<void> {
   if (agentId in defaults) {
     const next = { ...defaults };
     delete next[agentId];
-    await db.settings.put({ key: SETTINGS_KEY, value: next });
+    await setAppConfigValue(SETTINGS_KEY, next);
   }
 }
 
@@ -105,8 +97,8 @@ export function initializeQualityDefaults(): Promise<void> {
 }
 
 async function _doInit(): Promise<void> {
-  const already = await db.settings.get(QUALITY_INIT_KEY);
-  if (already?.value) return;
+  const already = await getAppConfigValue<boolean>(QUALITY_INIT_KEY, false);
+  if (already) return;
 
   const current = await getPromptDefaults();
   const updates: PromptDefaultsMap = {};
@@ -129,8 +121,8 @@ All sections must be self-contained in a single HTML file with embedded CSS and 
   }
 
   if (Object.keys(updates).length > 0) {
-    await db.settings.put({ key: SETTINGS_KEY, value: { ...current, ...updates } });
+    await setAppConfigValue(SETTINGS_KEY, { ...current, ...updates });
   }
 
-  await db.settings.put({ key: QUALITY_INIT_KEY, value: true });
+  await setAppConfigValue(QUALITY_INIT_KEY, true);
 }

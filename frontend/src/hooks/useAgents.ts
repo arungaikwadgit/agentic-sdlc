@@ -3,10 +3,9 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/database';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
+import { useProject } from './useProject';
 import type { AgentId, AgentRun, PhaseId } from '@/types/agent.types';
 
 export interface AgentWithStatus {
@@ -27,7 +26,7 @@ export interface PhaseWithAgents {
 }
 
 export function useAgents(projectId: string): PhaseWithAgents[] {
-  const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
+  const { project } = useProject(projectId);
 
   return useMemo(() => {
     if (!project) return [];

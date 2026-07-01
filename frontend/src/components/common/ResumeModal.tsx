@@ -7,9 +7,7 @@
  * On mount, checks for any project with status='running' and offers to resume.
  */
 import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/database';
-import { updateProject } from '@/db/projectRepository';
+import { listVisibleProjects, updateProject, subscribeProjectRepositoryChange } from '@/db/projectRepository';
 import type { ProjectSummary } from '@/types/project.types';
 
 interface Props {
@@ -18,24 +16,27 @@ interface Props {
 
 export default function ResumeModal({ onResume }: Props) {
   const [dismissed, setDismissed] = useState(false);
+  const [runningProjects, setRunningProjects] = useState<ProjectSummary[]>([]);
 
-  const runningProjects = useLiveQuery(
-    () => db.projects
-      .where('status')
-      .equals('running')
-      .toArray()
-      .then((ps) => ps.map((p): ProjectSummary => ({
-        id: p.id,
-        name: p.name,
-        domain: p.domain,
-        status: p.status,
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-        completedAgents: Object.values(p.agentRuns).filter((r) => r?.status === 'complete').length,
-        totalAgents: 22,
-      }))),
-    []
-  ) ?? [];
+  useEffect(() => {
+    let active = true;
+    async function loadRunningProjects() {
+      try {
+        const projects = await listVisibleProjects();
+        if (active) setRunningProjects(projects.filter((p) => p.status === 'running'));
+      } catch {
+        if (active) setRunningProjects([]);
+      }
+    }
+    loadRunningProjects();
+    const unsubscribe = subscribeProjectRepositoryChange(() => {
+      void loadRunningProjects();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   // On load, mark any 'running' project as 'paused' (it can't actually be running)
   useEffect(() => {

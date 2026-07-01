@@ -3,8 +3,6 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/database';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import {
@@ -19,8 +17,19 @@ import {
   saveDomainKnowledgeDefault,
   resetDomainKnowledgeDefault,
 } from '@/agents/domainKnowledgeDefaults';
-import { listProjects, updateProject, restoreProject, deleteProject } from '@/db/projectRepository';
+import {
+  listProjects,
+  updateProject,
+  restoreProject,
+  deleteProject,
+  exportAllProjects,
+  subscribeProjectRepositoryChange,
+} from '@/db/projectRepository';
 import { api, type ProviderTestResult } from '@/services/api';
+import {
+  getAppConfigValue,
+  setAppConfigValue,
+} from '@/services/appStateApi';
 import type { AgentId } from '@/types/agent.types';
 import type { DomainId } from '@/types/domain.types';
 import styles from './AppSettingsModal.module.css';
@@ -132,7 +141,7 @@ export default function AppSettingsModal({ onClose }: Props) {
   // Projects tab state
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
-  const allProjectSummaries = useLiveQuery(() => listProjects(), []) ?? [];
+  const [allProjectSummaries, setAllProjectSummaries] = useState<Awaited<ReturnType<typeof listProjects>>>([]);
   const [showArchivedProjects, setShowArchivedProjects] = useState(false);
   const [archivingId, setArchivingId] = useState<string | null>(null);
   const [archiveReasonDraft, setArchiveReasonDraft] = useState('');
@@ -143,18 +152,18 @@ export default function AppSettingsModal({ onClose }: Props) {
     showArchivedProjects ? !!p.archived : !p.archived
   );
 
-  // Load persisted settings from IndexedDB on mount
+  // Load persisted app config from the backend app-state store on mount
   useEffect(() => {
     (async () => {
       const [storedModel, storedTheme, defaults, domainDefaults, providerHints] = await Promise.all([
-        db.settings.get('app:model'),
-        db.settings.get('app:theme'),
+        getAppConfigValue<string>('app:model', 'gpt-4o'),
+        getAppConfigValue<Theme>('app:theme', 'dark'),
         getPromptDefaults(),
         getDomainKnowledgeDefaults(),
         getAgentProviderHints(),
       ]);
-      if (storedModel?.value) setModel(storedModel.value as string);
-      if (storedTheme?.value) setTheme(storedTheme.value as Theme);
+      if (storedModel) setModel(storedModel);
+      if (storedTheme) setTheme(storedTheme);
       setPromptDefaults(defaults);
       setDomainKnowledgeDefaults(domainDefaults);
       setAgentProviderHints(providerHints);
@@ -184,6 +193,26 @@ export default function AppSettingsModal({ onClose }: Props) {
         // Backend unreachable — leave defaults as-is.
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function loadProjects() {
+      try {
+        const projects = await listProjects();
+        if (active) setAllProjectSummaries(projects);
+      } catch {
+        if (active) setAllProjectSummaries([]);
+      }
+    }
+    loadProjects();
+    const unsubscribe = subscribeProjectRepositoryChange(() => {
+      void loadProjects();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   // When switching the selected agent (or loading defaults), refresh the draft
@@ -312,8 +341,7 @@ export default function AppSettingsModal({ onClose }: Props) {
       payload.anthropicEnabled = claudeEnabled;
       payload.defaultLlmProvider = defaultProvider;
 
-      // Save model to IndexedDB (no restart needed, frontend reads it)
-      await db.settings.put({ key: 'app:model', value: model });
+      await setAppConfigValue('app:model', model);
 
       const result = await saveBackendSettings(payload);
       if (result.ok) {
@@ -373,7 +401,7 @@ export default function AppSettingsModal({ onClose }: Props) {
     try {
       await saveBackendSettings({ agentProviderMap: updated });
     } catch {
-      // Non-fatal — the frontend hint (Dexie) still takes effect via the
+      // Non-fatal — the frontend hint still takes effect via the
       // `provider` field sent with each /api/agent request.
     }
   }
@@ -395,7 +423,7 @@ export default function AppSettingsModal({ onClose }: Props) {
   async function handleSaveTheme(t: Theme) {
     setTheme(t);
     applyTheme(t);
-    await db.settings.put({ key: 'app:theme', value: t });
+    await setAppConfigValue('app:theme', t);
     setThemeSaved(true);
     setTimeout(() => setThemeSaved(false), 2000);
   }
@@ -432,15 +460,14 @@ export default function AppSettingsModal({ onClose }: Props) {
     await deleteProject(projectId);
   }
 
-  // H-03 fix: export all local Dexie projects to a JSON file so users can
-  // migrate them to a Supabase-backed deployment or keep a backup.
+  // Export the backend-backed project data as a JSON backup from the server source of truth.
   async function handleExportLocalData() {
     setExporting(true);
     setExportMsg(null);
     try {
-      const allProjects = await db.projects.toArray();
+      const payload = await exportAllProjects();
       const blob = new Blob(
-        [JSON.stringify({ exportedAt: new Date().toISOString(), version: 1, projects: allProjects }, null, 2)],
+        [payload],
         { type: 'application/json' },
       );
       const url = URL.createObjectURL(blob);
@@ -451,7 +478,7 @@ export default function AppSettingsModal({ onClose }: Props) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setExportMsg(`Exported ${allProjects.length} project${allProjects.length !== 1 ? 's' : ''} successfully.`);
+      setExportMsg(`Exported ${allProjectSummaries.length} project${allProjectSummaries.length !== 1 ? 's' : ''} successfully.`);
     } catch (e) {
       setExportMsg(`Export failed: ${String(e)}`);
     } finally {
@@ -1003,9 +1030,9 @@ export default function AppSettingsModal({ onClose }: Props) {
                   style={{ fontSize: 11, padding: '2px 8px', marginLeft: 'auto' }}
                   onClick={handleExportLocalData}
                   disabled={exporting}
-                  title="Download all local projects as a JSON backup. Use this to migrate data when switching to Supabase cloud auth."
+                  title="Download all backend projects as a JSON backup from the server source of truth."
                 >
-                  {exporting ? 'Exporting…' : '⬇ Export local data'}
+                  {exporting ? 'Exporting…' : '⬇ Export backend data'}
                 </button>
                 {exportMsg && (
                   <span style={{ fontSize: 11, color: exportMsg.startsWith('Export failed') ? 'var(--error)' : 'var(--success)' }}>

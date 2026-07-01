@@ -1,29 +1,47 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * Project repository.
  *
- * Project repository — talks to the Express backend API when Supabase is
- * configured, or falls back to local Dexie storage in admin mode.
- *
- * The calling interface is identical so no other files need to change.
+ * Core project data is backend-owned and persisted in Postgres through the
+ * Express API. The frontend may still have browser-only UI preferences in
+ * other modules, but project records and project-attached document context do
+ * do not use browser-local persistence here.
  */
 import type { Project, ProjectSummary } from '@/types/project.types';
 import type { AgentId, AgentRun } from '@/types/agent.types';
 import type { ProjectDocument } from '@/types/extraction.types';
 import { TOTAL_AGENTS } from '@/agents/constants';
 import { supabase } from '@/lib/supabase';
-import { isAdminMode, ADMIN_USER_ID } from '@/lib/adminMode';
-import { db } from './database';
-
-// ── API layer ─────────────────────────────────────────────────────────────────
+import { getInviteSession } from '@/services/inviteSession';
+import { getAuthHeader } from '@/services/api';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001';
+const PROJECT_REPOSITORY_EVENT = 'sdlc:project-repository-change';
+
+function emitProjectRepositoryChange(projectId?: string): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(PROJECT_REPOSITORY_EVENT, { detail: { projectId } }));
+}
+
+export function subscribeProjectRepositoryChange(listener: (projectId?: string) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (event: Event) => {
+    const custom = event as CustomEvent<{ projectId?: string }>;
+    listener(custom.detail?.projectId);
+  };
+  window.addEventListener(PROJECT_REPOSITORY_EVENT, handler as EventListener);
+  return () => window.removeEventListener(PROJECT_REPOSITORY_EVENT, handler as EventListener);
+}
 
 async function authHeaders(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error('Not authenticated');
-  return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const headers = await getAuthHeader();
+  if (!headers.Authorization && !headers['X-API-Token']) {
+    throw new Error('Not authenticated');
+  }
+  return { 'Content-Type': 'application/json', ...headers };
+}
+
+function hasInviteSession(): boolean {
+  return !!getInviteSession()?.token;
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -34,7 +52,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    // On 401, clear local state so UI redirects to login
     if (res.status === 401) {
       await supabase.auth.signOut().catch(() => {});
     }
@@ -44,174 +61,167 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── Server row shape ──────────────────────────────────────────────────────────
-
 interface ApiProjectRow {
-  id:          string;
-  owner_id:    string;
-  name:        string;
+  id: string;
+  owner_id: string;
+  name: string;
   description: string;
-  domain:      string;
-  status:      string;
-  data:        Record<string, unknown>;
-  created_at:  string;
-  updated_at:  string;
-  members?:    unknown[];
+  domain: string;
+  status: string;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  members?: unknown[];
 }
 
 interface ApiCreatePayload {
-  name:         string;
+  name: string;
   description?: string;
-  domain?:      string;
-  status?:      string;
-  data?:        Record<string, unknown>;
+  domain?: string;
+  status?: string;
+  data?: Record<string, unknown>;
 }
 
 function rowToProject(row: ApiProjectRow): Project {
   const blob = (row.data ?? {}) as Partial<Project>;
   return {
-    id:               row.id,
-    name:             row.name,
-    description:      row.description ?? '',
-    domain:           (row.domain ?? '') as Project['domain'],
-    status:           (row.status as Project['status']) ?? 'draft',
-    createdAt:        new Date(row.created_at).getTime(),
-    updatedAt:        new Date(row.updated_at).getTime(),
-    ownerId:          row.owner_id,
-    version:          (blob.version as number) ?? 1,
-    agentRuns:        (blob.agentRuns as Project['agentRuns']) ?? {},
-    reviewGates:      (blob.reviewGates as Project['reviewGates']) ?? {},
-    promptOverrides:  (blob.promptOverrides as Project['promptOverrides']) ?? [],
-    teamMembers:      (blob.teamMembers as Project['teamMembers']) ?? [],
+    id: row.id,
+    name: row.name,
+    description: row.description ?? '',
+    domain: (row.domain ?? '') as Project['domain'],
+    status: (row.status as Project['status']) ?? 'draft',
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+    ownerId: row.owner_id,
+    version: (blob.version as number) ?? 1,
+    agentRuns: (blob.agentRuns as Project['agentRuns']) ?? {},
+    reviewGates: (blob.reviewGates as Project['reviewGates']) ?? {},
+    promptOverrides: (blob.promptOverrides as Project['promptOverrides']) ?? [],
+    teamMembers: (blob.teamMembers as Project['teamMembers']) ?? [],
     agentAssignments: (blob.agentAssignments as Project['agentAssignments']) ?? [],
-    techStack:        blob.techStack,
-    domainKnowledge:  blob.domainKnowledge,
+    techStack: blob.techStack,
+    domainKnowledge: blob.domainKnowledge,
     brandingGuidelines: blob.brandingGuidelines,
-    sourceDocumentIds:  blob.sourceDocumentIds ?? [],
-    archived:         blob.archived,
-    archivedReason:   blob.archivedReason,
-    archivedAt:       blob.archivedAt,
-    archivedBy:       blob.archivedBy,
-    activeAdminId:      blob.activeAdminId,
-    mode:               (blob.mode as Project['mode']) ?? 'simple',
+    sourceDocumentIds: blob.sourceDocumentIds ?? [],
+    archived: blob.archived,
+    archivedReason: blob.archivedReason,
+    archivedAt: blob.archivedAt,
+    archivedBy: blob.archivedBy,
+    activeAdminId: blob.activeAdminId,
+    mode: (blob.mode as Project['mode']) ?? 'simple',
     mockupVersionCount: typeof blob.mockupVersionCount === 'number' ? blob.mockupVersionCount : undefined,
-    exportAccess:       blob.exportAccess as Project['exportAccess'],
+    exportAccess: blob.exportAccess as Project['exportAccess'],
+    owner: blob.owner,
+    team: blob.team,
+    projectType: blob.projectType,
+    priority: blob.priority,
+    startDate: blob.startDate,
+    targetEndDate: blob.targetEndDate,
+    targetUsers: blob.targetUsers,
+    initialRisks: blob.initialRisks,
+    skippedAgentIds: blob.skippedAgentIds,
+    contextDocuments: blob.contextDocuments,
+    extractionPackage: blob.extractionPackage,
+    creationApproval: blob.creationApproval,
+    replanFlags: blob.replanFlags,
+    disabledRoleIds: blob.disabledRoleIds,
+    githubIntegrationId: blob.githubIntegrationId,
+    currentPhase: blob.currentPhase,
   };
 }
 
 function projectToPayload(p: Project): ApiCreatePayload {
   return {
-    name:        p.name,
+    name: p.name,
     description: p.description,
-    domain:      p.domain,
-    status:      p.status,
+    domain: p.domain,
+    status: p.status,
     data: {
-      version:            p.version,
-      agentRuns:          p.agentRuns,
-      reviewGates:        p.reviewGates,
-      promptOverrides:    p.promptOverrides,
-      teamMembers:        p.teamMembers,
-      agentAssignments:   p.agentAssignments,
-      techStack:          p.techStack,
-      domainKnowledge:    p.domainKnowledge,
+      version: p.version,
+      agentRuns: p.agentRuns,
+      reviewGates: p.reviewGates,
+      promptOverrides: p.promptOverrides,
+      teamMembers: p.teamMembers,
+      agentAssignments: p.agentAssignments,
+      techStack: p.techStack,
+      domainKnowledge: p.domainKnowledge,
       brandingGuidelines: p.brandingGuidelines,
-      sourceDocumentIds:  p.sourceDocumentIds,
-      archived:           p.archived,
-      archivedReason:     p.archivedReason,
-      archivedAt:         p.archivedAt,
-      archivedBy:         p.archivedBy,
-      activeAdminId:      p.activeAdminId,
-      mode:               p.mode,
+      sourceDocumentIds: p.sourceDocumentIds,
+      archived: p.archived,
+      archivedReason: p.archivedReason,
+      archivedAt: p.archivedAt,
+      archivedBy: p.archivedBy,
+      activeAdminId: p.activeAdminId,
+      mode: p.mode,
       mockupVersionCount: p.mockupVersionCount,
-      exportAccess:       p.exportAccess,
+      exportAccess: p.exportAccess,
+      owner: p.owner,
+      team: p.team,
+      projectType: p.projectType,
+      priority: p.priority,
+      startDate: p.startDate,
+      targetEndDate: p.targetEndDate,
+      targetUsers: p.targetUsers,
+      initialRisks: p.initialRisks,
+      skippedAgentIds: p.skippedAgentIds,
+      contextDocuments: p.contextDocuments,
+      extractionPackage: p.extractionPackage,
+      creationApproval: p.creationApproval,
+      replanFlags: p.replanFlags,
+      disabledRoleIds: p.disabledRoleIds,
+      githubIntegrationId: p.githubIntegrationId,
+      currentPhase: p.currentPhase,
     },
   };
 }
 
-// ── Dexie fallback (admin / local mode) ───────────────────────────────────────
-
 function toSummary(p: Project): ProjectSummary {
   return {
-    id:              p.id,
-    name:            p.name,
-    domain:          p.domain,
-    status:          p.status,
-    createdAt:       p.createdAt,
-    updatedAt:       p.updatedAt,
+    id: p.id,
+    name: p.name,
+    domain: p.domain,
+    status: p.status,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
     completedAgents: Object.values(p.agentRuns).filter((r) => r?.status === 'complete').length,
-    totalAgents:     TOTAL_AGENTS,
-    archived:        p.archived,
-    archivedReason:  p.archivedReason,
-    archivedAt:      p.archivedAt,
-    archivedBy:      p.archivedBy,
+    totalAgents: TOTAL_AGENTS,
+    archived: p.archived,
+    archivedReason: p.archivedReason,
+    archivedAt: p.archivedAt,
+    archivedBy: p.archivedBy,
   };
 }
-
-async function dexieCreate(
-  data: Omit<Project, 'id' | 'version' | 'createdAt' | 'updatedAt' | 'agentRuns' | 'reviewGates' | 'promptOverrides' | 'teamMembers' | 'agentAssignments' | 'activeAdminId'>
-): Promise<Project> {
-  const project: Project = {
-    ...data,
-    id:               crypto.randomUUID(),
-    ownerId:          ADMIN_USER_ID,
-    version:          1,
-    createdAt:        Date.now(),
-    updatedAt:        Date.now(),
-    agentRuns:        {},
-    reviewGates:      {},
-    promptOverrides:  [],
-    teamMembers:      [],
-    agentAssignments: [],
-    sourceDocumentIds: data.sourceDocumentIds ?? [],
-  };
-  await db.projects.add(project);
-  return project;
-}
-
-async function dexieUpdate(
-  id: string,
-  updater: (p: Project) => Project | void
-): Promise<Project> {
-  const current = await db.projects.get(id);
-  if (!current) throw new Error('Project not found: ' + id);
-  const updated = updater(current) ?? current;
-  updated.version  = (updated.version ?? 1) + 1;
-  updated.updatedAt = Date.now();
-  await db.projects.put(updated);
-  return updated;
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
 
 export async function createProject(
   data: Omit<Project, 'id' | 'version' | 'createdAt' | 'updatedAt' | 'agentRuns' | 'reviewGates' | 'promptOverrides' | 'teamMembers' | 'agentAssignments' | 'activeAdminId'>
 ): Promise<Project> {
-  if (isAdminMode()) return dexieCreate(data);
-
   const partial: Project = {
     ...data,
-    id:               '',
-    version:          1,
-    createdAt:        Date.now(),
-    updatedAt:        Date.now(),
-    agentRuns:        {},
-    reviewGates:      {},
-    promptOverrides:  [],
-    teamMembers:      [],
+    id: '',
+    version: 1,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    agentRuns: {},
+    reviewGates: {},
+    promptOverrides: [],
+    teamMembers: [],
     agentAssignments: [],
   };
   const row = await apiFetch<ApiProjectRow>('/api/projects', {
     method: 'POST',
-    body:   JSON.stringify(projectToPayload(partial)),
+    body: JSON.stringify(projectToPayload(partial)),
   });
-  return rowToProject(row);
+  const project = rowToProject(row);
+  emitProjectRepositoryChange(project.id);
+  return project;
 }
 
 export async function getProject(id: string): Promise<Project | undefined> {
-  if (isAdminMode()) return db.projects.get(id);
-
   try {
-    const row = await apiFetch<ApiProjectRow>(`/api/projects/${id}`);
+    const path = hasInviteSession()
+      ? `/api/invite/projects/${id}`
+      : `/api/projects/${id}`;
+    const row = await apiFetch<ApiProjectRow>(path);
     return rowToProject(row);
   } catch (err) {
     if (err instanceof Error && err.message.includes('404')) return undefined;
@@ -220,12 +230,16 @@ export async function getProject(id: string): Promise<Project | undefined> {
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
-  if (isAdminMode()) {
-    const projects = await db.projects.toArray();
-    return projects.map(toSummary);
-  }
-  const rows = await apiFetch<ApiProjectRow[]>('/api/projects');
-  return rows.map((row) => toSummary(rowToProject(row)));
+  const projects = await listProjectRecords();
+  return projects.map(toSummary);
+}
+
+export async function listProjectRecords(): Promise<Project[]> {
+  const path = hasInviteSession()
+    ? '/api/invite/projects'
+    : '/api/projects';
+  const rows = await apiFetch<ApiProjectRow[]>(path);
+  return rows.map(rowToProject);
 }
 
 export async function listVisibleProjects(): Promise<ProjectSummary[]> {
@@ -236,18 +250,21 @@ export async function updateProject(
   id: string,
   updater: (p: Project) => Project | void
 ): Promise<Project> {
-  if (isAdminMode()) return dexieUpdate(id, updater);
-
   const current = await getProject(id);
   if (!current) throw new Error('Project not found: ' + id);
   const updated = updater(current) ?? current;
-  updated.version  += 1;
+  updated.version += 1;
   updated.updatedAt = Date.now();
-  const row = await apiFetch<ApiProjectRow>(`/api/projects/${id}`, {
+  const path = hasInviteSession()
+    ? `/api/invite/projects/${id}`
+    : `/api/projects/${id}`;
+  const row = await apiFetch<ApiProjectRow>(path, {
     method: 'PATCH',
-    body:   JSON.stringify(projectToPayload(updated)),
+    body: JSON.stringify(projectToPayload(updated)),
   });
-  return rowToProject(row);
+  const project = rowToProject(row);
+  emitProjectRepositoryChange(project.id);
+  return project;
 }
 
 export async function updateAgentRun(
@@ -256,59 +273,44 @@ export async function updateAgentRun(
   run: Partial<AgentRun>
 ): Promise<void> {
   await updateProject(projectId, (p) => {
-    // M-08 fix: cap stored output at 50K chars to prevent Dexie quota exhaustion
-    // on large 30-agent projects. Truncated marker helps diagnose display issues.
     const MAX_OUTPUT_CHARS = 50_000;
     const runToStore = { ...run };
     if (typeof runToStore.output === 'string' && runToStore.output.length > MAX_OUTPUT_CHARS) {
       runToStore.output = runToStore.output.slice(0, MAX_OUTPUT_CHARS) +
-        '\n\n[...output truncated — exceeded 50K character storage limit]';
+        '\n\n[...output truncated - exceeded 50K character storage limit]';
     }
     p.agentRuns[agentId] = { ...(p.agentRuns[agentId] ?? { agentId, status: 'idle' }), ...runToStore };
   });
 }
 
 export async function deleteProject(id: string): Promise<void> {
-  if (isAdminMode()) {
-    await db.projects.delete(id);
-    return;
-  }
   await apiFetch<void>(`/api/projects/${id}`, { method: 'DELETE' });
+  emitProjectRepositoryChange(id);
 }
 
 export async function restoreProject(id: string): Promise<void> {
   await updateProject(id, (p) => {
-    p.archived       = false;
+    p.archived = false;
     p.archivedReason = undefined;
-    p.archivedAt     = undefined;
-    p.archivedBy     = undefined;
+    p.archivedAt = undefined;
+    p.archivedBy = undefined;
   });
 }
 
 export async function exportAllProjects(): Promise<string> {
-  let projects: Project[];
-  if (isAdminMode()) {
-    projects = await db.projects.toArray();
-  } else {
-    const rows = await apiFetch<ApiProjectRow[]>('/api/projects');
-    projects = rows.map(rowToProject);
-  }
+  const rows = await apiFetch<ApiProjectRow[]>('/api/projects');
+  const projects = rows.map(rowToProject);
   return JSON.stringify({ version: 1, exportedAt: Date.now(), projects }, null, 2);
 }
 
-/**
- * Validates that an imported object has the minimum fields required for a
- * Project to be safely inserted.  Rejects nulls, non-objects, and anything
- * missing the three fields every downstream consumer depends on.
- */
 function isValidProjectShape(p: unknown): p is Project {
   if (!p || typeof p !== 'object') return false;
   const obj = p as Record<string, unknown>;
   return (
-    typeof obj.id          === 'string' && obj.id.trim() !== '' &&
-    typeof obj.name        === 'string' && obj.name.trim() !== '' &&
+    typeof obj.id === 'string' && obj.id.trim() !== '' &&
+    typeof obj.name === 'string' && obj.name.trim() !== '' &&
     typeof obj.description === 'string' &&
-    typeof obj.domain      === 'string' &&
+    typeof obj.domain === 'string' &&
     (obj.agentRuns === undefined || (typeof obj.agentRuns === 'object' && obj.agentRuns !== null))
   );
 }
@@ -323,33 +325,76 @@ export async function importProjects(json: string): Promise<number> {
       console.warn('[importProjects] Skipping invalid project entry:', p);
       continue;
     }
-    if (isAdminMode()) {
-      await db.projects.put({ ...p, ownerId: p.ownerId || ADMIN_USER_ID });
-    } else {
-      await apiFetch<ApiProjectRow>('/api/projects', {
-        method: 'POST',
-        body:   JSON.stringify(projectToPayload(p)),
-      });
-    }
+    await apiFetch<ApiProjectRow>('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify(projectToPayload(p)),
+    });
     count++;
   }
+  emitProjectRepositoryChange();
   return count;
 }
 
-// ── Project documents (always local Dexie — binary blobs) ─────────────────────
+function mapContextDocumentToProjectDocument(projectId: string, doc: NonNullable<Project['contextDocuments']>[number]): ProjectDocument {
+  return {
+    id: doc.id,
+    projectId,
+    fileName: doc.name,
+    fileType: doc.kind === 'spreadsheet' ? 'xlsx'
+      : doc.kind === 'pdf' ? 'pdf'
+      : doc.kind === 'document' ? 'docx'
+      : 'txt',
+    fileSize: Math.max(0, Math.round(doc.sizeKb * 1024)),
+    mimeType: 'text/plain',
+    extractedText: doc.content,
+    charCount: doc.content.length,
+    uploadedAt: 0,
+  };
+}
+
+function mapProjectDocumentToContextDocument(doc: ProjectDocument): NonNullable<Project['contextDocuments']>[number] {
+  const kind = doc.fileType === 'pdf' ? 'pdf'
+    : doc.fileType === 'xlsx' || doc.fileType === 'csv' ? 'spreadsheet'
+    : doc.fileType === 'docx' ? 'document'
+    : 'text';
+  return {
+    id: doc.id,
+    name: doc.fileName,
+    sizeKb: Math.max(1, Math.round(doc.fileSize / 1024)),
+    kind,
+    content: doc.extractedText,
+  };
+}
 
 export async function addProjectDocument(doc: ProjectDocument): Promise<void> {
-  await db.projectDocuments.add(doc);
+  await updateProject(doc.projectId, (project) => {
+    const existing = project.contextDocuments ?? [];
+    project.contextDocuments = [
+      ...existing.filter((item) => item.id !== doc.id),
+      mapProjectDocumentToContextDocument(doc),
+    ];
+  });
 }
 
 export async function getProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
-  return db.projectDocuments.where('projectId').equals(projectId).sortBy('uploadedAt');
+  const project = await getProject(projectId);
+  return (project?.contextDocuments ?? []).map((doc) => mapContextDocumentToProjectDocument(projectId, doc));
 }
 
 export async function deleteProjectDocument(docId: string): Promise<void> {
-  await db.projectDocuments.delete(docId);
+  const summaries = await listProjects();
+  for (const summary of summaries) {
+    const project = await getProject(summary.id);
+    if (!project?.contextDocuments?.some((doc) => doc.id === docId)) continue;
+    await updateProject(summary.id, (current) => {
+      current.contextDocuments = (current.contextDocuments ?? []).filter((doc) => doc.id !== docId);
+    });
+    return;
+  }
 }
 
 export async function deleteProjectDocuments(projectId: string): Promise<void> {
-  await db.projectDocuments.where('projectId').equals(projectId).delete();
+  await updateProject(projectId, (project) => {
+    project.contextDocuments = [];
+  });
 }

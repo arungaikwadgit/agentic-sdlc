@@ -57,7 +57,7 @@ app.use(rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
 }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // ── DB connection pool ──────────────────────────────────────────────────────
 export const db = new Pool({

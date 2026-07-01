@@ -6,52 +6,47 @@
  * InviteAcceptPage — handles /invite?token=<hex> URLs.
  *
  * Flow:
- *  1. Fetch invite info from GET /api/invites/:token (no auth needed)
- *  2. If not logged in → show auth UI first, then resume
- *  3. POST /api/invites/:token/accept with the user's JWT
- *  4. Redirect to the project
+ *  1. Fetch invite info from GET /api/invite/validate (no auth needed)
+ *  2. Activate a project-scoped invite session from POST /api/invite/accept
+ *  3. Cache the invited project locally so the workspace can open immediately
+ *  4. Redirect to the invited project only
  */
 import { useEffect, useState } from 'react';
 import styles from './InviteAcceptPage.module.css';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { recordAcceptedInvite } from '@/services/userIdentity';
-import LoginPage  from '@/components/auth/LoginPage';
-import SignUpPage from '@/components/auth/SignUpPage';
+import { setInviteSession } from '@/services/inviteSession';
+import { getProject } from '@/db/projectRepository';
 import AppLogo from '@/components/common/AppLogo';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined ?? 'http://localhost:3001').replace(/\/$/, '');
 
-type AuthView = 'login' | 'signup';
-
 interface InviteInfo {
-  id:           string;
-  role:         string;
+  id: string;
+  role: string;
   invitedEmail: string | null;
-  expiresAt:    string | null;
+  expiresAt: string | null;
   project: {
-    id:          string;
-    name:        string;
+    id: string;
+    name: string;
     description: string;
   };
 }
 
 type State =
   | { status: 'loading' }
-  | { status: 'ready';     invite: InviteInfo }
-  | { status: 'needsAuth'; invite: InviteInfo; authView: AuthView }
+  | { status: 'ready'; invite: InviteInfo }
   | { status: 'accepting' }
-  | { status: 'done';      projectId: string; projectName: string }
-  | { status: 'error';     message: string };
+  | { status: 'done'; projectId: string; projectName: string }
+  | { status: 'error'; message: string };
 
 export default function InviteAcceptPage() {
   const { user } = useAuth();
-  const params  = new URLSearchParams(window.location.search);
-  const token   = params.get('token') ?? '';
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token') ?? '';
 
   const [state, setState] = useState<State>({ status: 'loading' });
 
-  // Step 1: load invite info
   useEffect(() => {
     if (!token) {
       setState({ status: 'error', message: 'No invite token found in this link.' });
@@ -69,57 +64,56 @@ export default function InviteAcceptPage() {
       .catch(() => setState({ status: 'error', message: 'Could not connect to the server. Please try again.' }));
   }, [token]);
 
-  // Step 2: if ready and user clicks Accept, check auth then call API
   async function accept() {
     if (state.status !== 'ready') return;
-    const { invite } = state;
-
-    // Require auth before accepting
-    if (!user) {
-      setState({ status: 'needsAuth', invite, authView: 'login' });
-      return;
-    }
-
-    await doAccept(invite);
-  }
-
-  async function doAccept(invite: InviteInfo) {
     setState({ status: 'accepting' });
 
-    const { data } = await supabase.auth.getSession();
-    const token_jwt = data.session?.access_token;
-    if (!token_jwt) {
-      setState({ status: 'error', message: 'Not signed in — please sign in and try again.' });
-      return;
-    }
+    try {
+      const { data } = await supabase.auth.getSession();
+      const jwt = data.session?.access_token;
 
-    const res = await fetch(`${API_URL}/invite/accept`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token_jwt}`,
-      },
-      body: JSON.stringify({
-        token,
-        email: user?.email ?? invite.invitedEmail ?? '',
-      }),
-    });
-    const result = await res.json();
-    if (result.error) {
-      setState({ status: 'error', message: result.error });
-    } else {
-      await recordAcceptedInvite(result.email ?? user?.email ?? invite.invitedEmail ?? '', result.name, result.projectId);
-      setState({ status: 'done', projectId: result.projectId, projectName: invite.project.name });
+      const res = await fetch(`${API_URL}/invite/accept`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+        },
+        body: JSON.stringify({
+          token,
+          email: user?.email ?? state.invite.invitedEmail ?? '',
+        }),
+      });
+
+      const result = await res.json();
+      if (result.error) {
+        setState({ status: 'error', message: result.error });
+        return;
+      }
+
+      const resolvedEmail = (result.email ?? user?.email ?? state.invite.invitedEmail ?? '').toLowerCase();
+
+      setInviteSession({
+        token: result.accessToken ?? token,
+        projectId: result.projectId,
+        email: resolvedEmail,
+        appRole: result.appRole,
+        name: result.name,
+        expiresAt: typeof result.expiresAt === 'string'
+          ? Date.parse(result.expiresAt)
+          : (typeof result.expiresAt === 'number' ? result.expiresAt : undefined),
+      });
+
+      await getProject(result.projectId).catch(() => undefined);
+
+      setState({
+        status: 'done',
+        projectId: result.projectId,
+        projectName: state.invite.project.name,
+      });
+    } catch {
+      setState({ status: 'error', message: 'Could not activate this invite. Please try again.' });
     }
   }
-
-  // After auth completes, auto-accept
-  useEffect(() => {
-    if (state.status === 'needsAuth' && user) {
-      doAccept(state.invite);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
 
   useEffect(() => {
     if (state.status !== 'done') return;
@@ -129,25 +123,6 @@ export default function InviteAcceptPage() {
     return () => window.clearTimeout(timer);
   }, [state]);
 
-  // ── Render auth gates ──────────────────────────────────────────────────────
-  if (state.status === 'needsAuth') {
-    if (state.authView === 'signup') {
-      return (
-        <SignUpPage
-          onSuccess={() => setState({ ...state, authView: 'login' })}
-          onSignIn={() => setState({ ...state, authView: 'login' })}
-        />
-      );
-    }
-    return (
-      <LoginPage
-        onSuccess={() => { /* user state change triggers the useEffect above */ }}
-        onSignUp={() => setState({ ...state, authView: 'signup' })}
-      />
-    );
-  }
-
-  // ── Main invite card ───────────────────────────────────────────────────────
   return (
     <div className={styles.page}>
       <div className={styles.card}>
@@ -172,9 +147,12 @@ export default function InviteAcceptPage() {
             </div>
             {state.invite.invitedEmail && (
               <p className={styles.emailNote}>
-                Access will be linked to: <strong>{state.invite.invitedEmail}</strong>
+                This link is reserved for: <strong>{state.invite.invitedEmail}</strong>
               </p>
             )}
+            <p className={styles.sub}>
+              Accepting this link gives access only to this project and only with the assigned role.
+            </p>
             <button className={styles.acceptBtn} onClick={accept}>
               Accept Invitation
             </button>
@@ -184,7 +162,7 @@ export default function InviteAcceptPage() {
         {state.status === 'accepting' && (
           <div className={styles.center}>
             <div className={styles.spinner} />
-            <p>Accepting…</p>
+            <p>Activating your project access…</p>
           </div>
         )}
 
@@ -195,7 +173,7 @@ export default function InviteAcceptPage() {
             <p className={styles.sub}>
               You've joined <strong>{state.projectName}</strong>.
             </p>
-            <p className={styles.sub}>Taking you into the appâ€¦</p>
+            <p className={styles.sub}>Taking you into the project…</p>
             <a href={`/?project=${state.projectId}`} className={styles.acceptBtn}>
               Open Project
             </a>

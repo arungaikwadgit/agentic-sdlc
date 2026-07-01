@@ -1,4 +1,4 @@
-/**
+﻿/**
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
@@ -17,7 +17,20 @@ import { useState, useEffect, useCallback } from 'react';
 import { isAdminMode } from '@/lib/adminMode';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { getAuthHeader } from '@/services/api';
-import { db } from '@/db/database';
+import {
+  listProjectRecords,
+  updateProject,
+  deleteProject,
+  getProject,
+  exportAllProjects,
+  subscribeProjectRepositoryChange,
+} from '@/db/projectRepository';
+import {
+  clearAppConfig,
+  listAppConfig,
+  listBacklogItems,
+  listIntegrations,
+} from '@/services/appStateApi';
 import type { Project } from '@/types/project.types';
 import BacklogTab from './BacklogTab';
 import TestsTab from './TestsTab';
@@ -109,7 +122,7 @@ function HealthTab() {
     { label: 'Agent Runtime (port 4000)',status: 'checking' },
     { label: 'Supabase Config',          status: 'checking' },
     { label: 'Admin Mode',               status: 'checking' },
-    { label: 'Local DB (Dexie)',         status: 'checking' },
+    { label: 'Project Repository',       status: 'checking' },
     { label: 'LLM Connectivity',         status: 'checking' },
     { label: 'VITE_SUPABASE_URL',        status: 'checking' },
     { label: 'VITE_SUPABASE_ANON_KEY',   status: 'checking' },
@@ -161,17 +174,17 @@ function HealthTab() {
     results.push({
       label: 'Admin Mode',
       status: isAdminMode() ? 'ok' : 'warn',
-      detail: isAdminMode() ? 'Active — Dexie-only storage' : 'Not active — using API',
+      detail: isAdminMode() ? 'Active — admin session enabled' : 'Not active — standard authenticated mode',
     });
 
-    // Local DB
+    // Project repository
     try {
-      const count = await db.projects.count();
-      const runCount = (await db.projects.toArray()).reduce((n, p) => n + Object.keys(p.agentRuns).length, 0);
-      results.push({ label: 'Local DB (Dexie)', status: 'ok',
-        detail: `${count} project(s) · ${runCount} agent run(s) stored locally` });
+      const projects = await listProjectRecords();
+      const runCount = projects.reduce((n, p) => n + Object.keys(p.agentRuns).length, 0);
+      results.push({ label: 'Project Repository', status: 'ok',
+        detail: `${projects.length} project(s) · ${runCount} agent run(s) loaded from backend` });
     } catch (e) {
-      results.push({ label: 'Local DB (Dexie)', status: 'error', detail: String(e) });
+      results.push({ label: 'Project Repository', status: 'error', detail: String(e) });
     }
 
     // LLM connectivity (lightweight ping via /api/settings to verify backend has keys)
@@ -239,58 +252,94 @@ function ProjectsTab() {
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
-  useEffect(() => { db.projects.toArray().then(setProjects); }, []);
+  const reload = useCallback(async () => {
+    setProjects(await listProjectRecords());
+  }, []);
 
-  const reload = () => db.projects.toArray().then(setProjects);
+  useEffect(() => {
+    void reload();
+    return subscribeProjectRepositoryChange(() => {
+      void reload();
+    });
+  }, [reload]);
 
   const setStatus = async (id: string, status: Project['status']) => {
-    await db.projects.where('id').equals(id).modify({ status, updatedAt: Date.now() });
+    await updateProject(id, (project) => { project.status = status; });
     setMessage(`Status set to "${status}"`);
-    reload();
+    await reload();
   };
 
   const clearAgentRuns = async (id: string) => {
-    await db.projects.where('id').equals(id).modify({ agentRuns: {}, reviewGates: {}, updatedAt: Date.now() });
+    await updateProject(id, (project) => {
+      project.agentRuns = {};
+      project.reviewGates = {};
+    });
     setMessage('Agent pipeline cleared');
-    reload();
+    await reload();
   };
 
   const unlockGate = async (id: string, gateKey: string) => {
-    const proj = await db.projects.get(id);
+    const proj = await getProject(id);
     if (!proj) return;
-    const gates = { ...(proj.reviewGates ?? {}) } as Record<string, boolean>;
-    gates[gateKey] = true;
-    await db.projects.update(id, { reviewGates: gates, updatedAt: Date.now() });
+    await updateProject(id, (project) => {
+      const existing = project.reviewGates[gateKey as keyof typeof project.reviewGates];
+      project.reviewGates[gateKey as keyof typeof project.reviewGates] = {
+        id: gateKey as any,
+        afterPhases: existing?.afterPhases ?? [],
+        approved: true,
+        approvedAt: Date.now(),
+        approvedBy: 'admin-panel',
+        notes: existing?.notes,
+      } as any;
+    });
     setMessage(`Review gate "${gateKey}" unlocked`);
-    reload();
+    await reload();
   };
 
   const lockGate = async (id: string, gateKey: string) => {
-    const proj = await db.projects.get(id);
+    const proj = await getProject(id);
     if (!proj) return;
-    const gates = { ...(proj.reviewGates ?? {}) } as Record<string, boolean>;
-    gates[gateKey] = false;
-    await db.projects.update(id, { reviewGates: gates, updatedAt: Date.now() });
+    await updateProject(id, (project) => {
+      const existing = project.reviewGates[gateKey as keyof typeof project.reviewGates];
+      project.reviewGates[gateKey as keyof typeof project.reviewGates] = {
+        id: gateKey as any,
+        afterPhases: existing?.afterPhases ?? [],
+        approved: false,
+        approvedAt: undefined,
+        approvedBy: undefined,
+        notes: existing?.notes,
+      } as any;
+    });
     setMessage(`Review gate "${gateKey}" locked`);
-    reload();
+    await reload();
   };
 
   const unlockAllGates = async (id: string) => {
-    const proj = await db.projects.get(id);
+    const proj = await getProject(id);
     if (!proj) return;
-    const gates = { ...(proj.reviewGates ?? {}) } as Record<string, boolean>;
-    Object.keys(gates).forEach(k => { gates[k] = true; });
-    await db.projects.update(id, { reviewGates: gates, updatedAt: Date.now() });
+    await updateProject(id, (project) => {
+      for (const gateId of Object.keys(project.reviewGates ?? {})) {
+        const existing = project.reviewGates[gateId as keyof typeof project.reviewGates];
+        project.reviewGates[gateId as keyof typeof project.reviewGates] = {
+          id: gateId as any,
+          afterPhases: existing?.afterPhases ?? [],
+          approved: true,
+          approvedAt: Date.now(),
+          approvedBy: 'admin-panel',
+          notes: existing?.notes,
+        } as any;
+      }
+    });
     setMessage('All review gates unlocked');
-    reload();
+    await reload();
   };
 
-  const deleteLocal = async (id: string) => {
-    if (!confirm('Delete this project from local storage?')) return;
-    await db.projects.delete(id);
+  const deleteRemote = async (id: string) => {
+    if (!confirm('Delete this project from the backend repository?')) return;
+    await deleteProject(id);
     setSelected(null);
     setMessage('Project deleted');
-    reload();
+    await reload();
   };
 
   const sel = projects.find(p => p.id === selected);
@@ -300,7 +349,7 @@ function ProjectsTab() {
     <div className={styles.splitPane}>
       <div className={styles.list}>
         <div className={styles.sectionHeader}>Projects ({projects.length})<button className={styles.smallBtn} onClick={reload}>↻</button></div>
-        {projects.length === 0 && <div className={styles.empty}>No local projects</div>}
+        {projects.length === 0 && <div className={styles.empty}>No projects</div>}
         {projects.map(p => (
           <div
             key={p.id}
@@ -327,7 +376,7 @@ function ProjectsTab() {
 
             <div className={styles.actionGroup}>
               <div className={styles.actionLabel}>Override Status</div>
-              {(['draft','active','completed','archived'] as Project['status'][]).map(s => (
+              {(['draft','running','paused','complete','error'] as Project['status'][]).map(s => (
                 <button key={s} className={styles.smallBtn} onClick={() => setStatus(sel.id, s)}>{s}</button>
               ))}
             </div>
@@ -360,7 +409,7 @@ function ProjectsTab() {
             </div>
 
             <div className={styles.actionGroup}>
-              <button className={styles.dangerBtn} onClick={() => deleteLocal(sel.id)}>Delete Local Copy</button>
+              <button className={styles.dangerBtn} onClick={() => deleteRemote(sel.id)}>Delete Project</button>
             </div>
           </>
         )}
@@ -376,30 +425,42 @@ function AgentsTab() {
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState('');
 
-  useEffect(() => { db.projects.toArray().then(setProjects); }, []);
+  const reload = useCallback(async () => {
+    setProjects(await listProjectRecords());
+  }, []);
+
+  useEffect(() => {
+    void reload();
+    return subscribeProjectRepositoryChange(() => {
+      void reload();
+    });
+  }, [reload]);
 
   const sel = projects.find(p => p.id === selected);
   const agentEntries = sel ? Object.entries(sel.agentRuns) : [];
 
   const setAgentStatus = async (projectId: string, agentId: string, status: string) => {
-    const proj = await db.projects.get(projectId);
+    const proj = await getProject(projectId);
     if (!proj) return;
-    const runs = { ...proj.agentRuns };
-    runs[agentId as keyof typeof runs] = {
-      ...(runs[agentId as keyof typeof runs] ?? {}),
-      agentId,
-      status: status as 'idle' | 'running' | 'complete' | 'failed',
-      updatedAt: Date.now(),
-    } as any;
-    await db.projects.update(projectId, { agentRuns: runs, updatedAt: Date.now() });
+    await updateProject(projectId, (project) => {
+      project.agentRuns[agentId as keyof typeof project.agentRuns] = {
+        ...(project.agentRuns[agentId as keyof typeof project.agentRuns] ?? {}),
+        agentId,
+        status: status as 'idle' | 'running' | 'complete' | 'error',
+        updatedAt: Date.now(),
+      } as any;
+    });
     setMessage(`Agent ${agentId} → ${status}`);
-    db.projects.toArray().then(setProjects);
+    await reload();
   };
 
   const resetAll = async (projectId: string) => {
-    await db.projects.update(projectId, { agentRuns: {}, reviewGates: {}, updatedAt: Date.now() });
+    await updateProject(projectId, (project) => {
+      project.agentRuns = {};
+      project.reviewGates = {};
+    });
     setMessage('All agents reset');
-    db.projects.toArray().then(setProjects);
+    await reload();
   };
 
   return (
@@ -434,7 +495,7 @@ function AgentsTab() {
                   <div className={styles.agentStatus}>{(run as any)?.status ?? 'idle'}</div>
                 </div>
                 <div className={styles.agentActions}>
-                  {(['idle','running','complete','failed'] as const).map(s => (
+                  {(['idle','running','complete','error'] as const).map(s => (
                     <button key={s} className={styles.tinyBtn} onClick={() => setAgentStatus(sel.id, agentId, s)}>{s}</button>
                   ))}
                 </div>
@@ -760,7 +821,7 @@ const SDLC_ENHANCEMENTS = [
   },
 ] as const;
 
-// ── Settings Tab ───────────�
+// ── Settings Tab ───────────�
 function SettingsTab() {
   const [message, setMessage] = useState('');
 
@@ -789,21 +850,26 @@ function SettingsTab() {
     setMessage('Session overrides cleared');
   };
 
-  const clearLocalProjects = async () => {
-    if (!confirm('Delete ALL local projects from Dexie? This cannot be undone.')) return;
-    await db.projects.clear();
-    setMessage('All local projects cleared');
-  };
-
   const clearSettings = async () => {
-    await db.settings.clear();
+    await clearAppConfig();
     setMessage('Settings cleared — reload to apply defaults');
   };
 
   const exportData = async () => {
-    const projects = await db.projects.toArray();
-    const settings = await db.settings.toArray();
-    const blob = new Blob([JSON.stringify({ version: 1, exportedAt: Date.now(), projects, settings }, null, 2)], { type: 'application/json' });
+    const projects = JSON.parse(await exportAllProjects()).projects ?? [];
+    const [appConfig, integrations, backlogItems] = await Promise.all([
+      listAppConfig(),
+      listIntegrations(),
+      listBacklogItems(),
+    ]);
+    const blob = new Blob([JSON.stringify({
+      version: 2,
+      exportedAt: Date.now(),
+      projects,
+      appConfig,
+      integrations,
+      backlogItems,
+    }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -817,7 +883,6 @@ function SettingsTab() {
     ['VITE_SUPABASE_URL',      import.meta.env.VITE_SUPABASE_URL],
     ['VITE_SUPABASE_ANON_KEY', import.meta.env.VITE_SUPABASE_ANON_KEY],
     ['VITE_API_URL',           import.meta.env.VITE_API_URL],
-    ['VITE_ADMIN_EMAIL',       import.meta.env.VITE_ADMIN_EMAIL],
     ['MODE',                   import.meta.env.MODE],
     ['DEV',                    String(import.meta.env.DEV)],
   ] as [string, string | undefined][];
@@ -879,8 +944,7 @@ function SettingsTab() {
       {/* Data management */}
       <div className={styles.sectionHeader} style={{ marginTop: '1.5rem' }}>Data</div>
       <div className={styles.actionGroup}>
-        <button className={styles.smallBtn} onClick={exportData}>⬇ Export All Data</button>
-        <button className={styles.dangerBtn} onClick={clearLocalProjects}>🗑 Clear Local Projects</button>
+        <button className={styles.smallBtn} onClick={exportData}>⬇ Export Backend Project Data</button>
         <button className={styles.dangerBtn} onClick={clearSettings}>🗑 Clear App Settings</button>
       </div>
 
@@ -899,7 +963,7 @@ function SettingsTab() {
       </div>
 
       <div className={styles.copyright}>
-        Agentic SDLC Framework - 2026 Arun Gaikwad<br/>
+        Agentic SDLC - 2026 Arun Gaikwad<br/>
         All rights reserved. Proprietary &amp; Confidential.<br/>
         <span style={{ opacity: 0.5 }}>Admin Panel v2.0 - {new Date().toLocaleDateString()}</span>
       </div>

@@ -15,6 +15,7 @@ The initiative requires a Postgres schema with 6+ tables (agent_runs, agent_jobs
 **CHOSEN: node-pg-migrate**
 
 Migrations are SQL-first `.sql` files under `backend/migrations/`. The runner is `node-pg-migrate` invoked via npm scripts: `migrate:up` and `migrate:down`.
+Sample/demo seed files are not part of that migration chain; they live under `backend/seeds/` and are executed separately.
 
 ## Alternatives Considered
 

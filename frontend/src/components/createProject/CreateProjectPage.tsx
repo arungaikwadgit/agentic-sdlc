@@ -363,7 +363,7 @@ export default function CreateProjectPage({ onClose, onCreated }: Props) {
         sourceDocumentIds: files.filter((f) => f.status === 'ready').map((f) => f.id),
       });
 
-      // Persist document records to IndexedDB
+      // Persist document records into the backend-backed project record
       await Promise.all(
         files
           .filter((f) => f.status === 'ready')

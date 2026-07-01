@@ -10,11 +10,11 @@
  *   2. app:domainKnowledgeDefaults[domainId]             (app-level, set via App Settings → Domain Knowledge)
  *   3. DOMAIN_KNOWLEDGE_TEMPLATES[domainId]              (hardcoded starter template)
  *
- * Stored in the existing `settings` Dexie table under a single key so no schema migration is required.
+ * Stored in the backend app-state config store so Postgres remains the source of truth.
  */
-import { db } from '@/db/database';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from './domainKnowledgeTemplates';
 import type { DomainId } from '@/types/domain.types';
+import { getAppConfigValue, setAppConfigValue } from '@/services/appStateApi';
 
 const SETTINGS_KEY = 'app:domainKnowledgeDefaults';
 
@@ -22,11 +22,7 @@ export type DomainKnowledgeDefaultsMap = Partial<Record<DomainId, string>>;
 
 /** Load the full app-level domain knowledge defaults map (empty object if none saved yet). */
 export async function getDomainKnowledgeDefaults(): Promise<DomainKnowledgeDefaultsMap> {
-  const row = await db.settings.get(SETTINGS_KEY);
-  if (row?.value && typeof row.value === 'object') {
-    return row.value as DomainKnowledgeDefaultsMap;
-  }
-  return {};
+  return await getAppConfigValue<DomainKnowledgeDefaultsMap>(SETTINGS_KEY, {});
 }
 
 /** Get the effective default brief for a domain: app-level override if set, else the hardcoded template. */
@@ -39,7 +35,7 @@ export async function getEffectiveDomainKnowledgeDefault(domainId: DomainId): Pr
 export async function saveDomainKnowledgeDefault(domainId: DomainId, brief: string): Promise<void> {
   const defaults = await getDomainKnowledgeDefaults();
   const next: DomainKnowledgeDefaultsMap = { ...defaults, [domainId]: brief };
-  await db.settings.put({ key: SETTINGS_KEY, value: next });
+  await setAppConfigValue(SETTINGS_KEY, next);
 }
 
 /** Remove the app-level override for a domain, reverting it to the hardcoded template. */
@@ -48,6 +44,6 @@ export async function resetDomainKnowledgeDefault(domainId: DomainId): Promise<v
   if (domainId in defaults) {
     const next = { ...defaults };
     delete next[domainId];
-    await db.settings.put({ key: SETTINGS_KEY, value: next });
+    await setAppConfigValue(SETTINGS_KEY, next);
   }
 }

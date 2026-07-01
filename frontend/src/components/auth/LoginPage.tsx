@@ -1,26 +1,27 @@
 /**
  * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  *
- * LoginPage — email + password sign-in.
- * Supports both Supabase auth and the local admin bypass (admin@local / admin).
+ * LoginPage - email + password sign-in.
+ * Uses Supabase auth in production and keeps local admin bypass in development only.
  */
 import { useState, type FormEvent } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { ADMIN_BYPASS_ENABLED, ADMIN_EMAIL } from '@/lib/adminMode';
 import AppLogo from '@/components/common/AppLogo';
 import styles from './AuthPage.module.css';
 
 interface Props {
   onSuccess: () => void;
-  onSignUp:  () => void;
+  onSignUp: () => void;
 }
 
 export default function LoginPage({ onSuccess }: Props) {
   const { signIn } = useAuth();
-  const [email,    setEmail]    = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error,    setError]    = useState<string | null>(null);
-  const [loading,  setLoading]  = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -43,7 +44,10 @@ export default function LoginPage({ onSuccess }: Props) {
         </div>
 
         <h1 className={styles.heading}>Sign in</h1>
-        <p className={styles.subheading}>Welcome back — let's build something.</p>
+        <p className={styles.subheading}>Welcome back - let&apos;s build something.</p>
+        {ADMIN_BYPASS_ENABLED && (
+          <p className={styles.subheading}>Local admin sign-in is enabled for development as {ADMIN_EMAIL}.</p>
+        )}
 
         <form onSubmit={handleSubmit} className={styles.form}>
           <label className={styles.label}>
@@ -69,7 +73,7 @@ export default function LoginPage({ onSuccess }: Props) {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="........"
               required
             />
           </label>
@@ -77,7 +81,7 @@ export default function LoginPage({ onSuccess }: Props) {
           {error && <p className={styles.error}>{error}</p>}
 
           <button className={styles.primaryBtn} type="submit" disabled={loading}>
-            {loading ? 'Signing in…' : 'Sign in'}
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
       </div>

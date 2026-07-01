@@ -35,7 +35,7 @@ router.get('/', requireAuth, async (req, res) => {
     // Owned projects
     const { data: owned, error: e1 } = await supabaseAdmin
       .from('projects')
-      .select('id, name, description, domain, status, created_at, updated_at, owner_id')
+      .select('id, name, description, domain, status, data, created_at, updated_at, owner_id')
       .eq('owner_id', userId)
       .order('updated_at', { ascending: false });
 
@@ -44,7 +44,7 @@ router.get('/', requireAuth, async (req, res) => {
     // Member projects
     const { data: memberOf, error: e2 } = await supabaseAdmin
       .from('project_members')
-      .select('role, projects(id, name, description, domain, status, created_at, updated_at, owner_id)')
+      .select('role, projects(id, name, description, domain, status, data, created_at, updated_at, owner_id)')
       .eq('user_id', userId);
 
     if (e2) throw e2;
@@ -54,8 +54,16 @@ router.get('/', requireAuth, async (req, res) => {
       .map((m) => ({ ...(m.projects as object), userRole: m.role }));
 
     const ownedWithRole = (owned ?? []).map((p) => ({ ...p, userRole: 'owner' }));
+    const deduped = new Map<string, unknown>();
+    for (const project of [...ownedWithRole, ...memberProjects]) {
+      const id = (project as { id?: string }).id;
+      if (!id) continue;
+      if (!deduped.has(id) || (project as { userRole?: string }).userRole === 'owner') {
+        deduped.set(id, project);
+      }
+    }
 
-    res.json([...ownedWithRole, ...memberProjects]);
+    res.json(Array.from(deduped.values()));
   } catch (err) {
     console.error('[GET /projects]', err);
     res.status(500).json({ error: 'Failed to fetch projects' });
@@ -106,6 +114,21 @@ router.post('/', requireAuth, async (req, res) => {
       .single();
 
     if (error || !data) throw error ?? new Error('Insert failed');
+
+    const { error: membershipError } = await supabaseAdmin
+      .from('project_members')
+      .upsert({
+        project_id: data.id,
+        user_id: userId,
+        role: 'admin',
+        invited_email: req.user!.email || null,
+        joined_at: new Date().toISOString(),
+      }, { onConflict: 'project_id,user_id' });
+
+    if (membershipError) {
+      await supabaseAdmin.from('projects').delete().eq('id', data.id);
+      throw membershipError;
+    }
 
     res.status(201).json(data);
   } catch (err) {

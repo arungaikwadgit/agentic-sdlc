@@ -7,8 +7,14 @@
  * Admin can add, edit, archive, and change status of any item.
  */
 import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type BacklogItem } from '@/db/database';
+import type { BacklogItem } from '@/types/adminData.types';
+import {
+  createBacklogItem,
+  deleteBacklogItem,
+  listBacklogItems,
+  subscribeAppStateChange,
+  updateBacklogItem,
+} from '@/services/appStateApi';
 
 // ── Seed data: all skipped/deferred enhancements from our sessions ────────────
 const SEED_ITEMS: Omit<BacklogItem, 'id' | 'createdAt' | 'updatedAt'>[] = [
@@ -22,11 +28,11 @@ const SEED_ITEMS: Omit<BacklogItem, 'id' | 'createdAt' | 'updatedAt'>[] = [
   { title: 'Diagram editor — edit Mermaid source inline', description: 'Allow users to edit the Mermaid source code of a diagram directly in the Diagrams tab and re-render without re-running the agent.', category: 'ux', priority: 'medium', status: 'open', source: 'ai-suggested' },
   { title: 'Bulk agent re-run for a phase', description: 'Add a "Re-run all agents in this phase" button so users don\'t have to individually re-run each agent after a prompt change.', category: 'ux', priority: 'medium', status: 'open', source: 'ai-suggested' },
   { title: 'Mobile-responsive layout', description: 'The pipeline workspace layout is not usable on small screens. Needs a responsive sidebar collapse, touch-friendly tap targets, and horizontal scroll prevention.', category: 'ux', priority: 'medium', status: 'open', source: 'assessment' },
-  { title: 'Project templates', description: 'Allow starting a new project from a saved template (pre-filled domain, tech stack, team, and prompt overrides). Templates stored in Dexie settings table.', category: 'feature', priority: 'medium', status: 'open', source: 'ai-suggested' },
+  { title: 'Project templates', description: 'Allow starting a new project from a saved template (pre-filled domain, tech stack, team, and prompt overrides). Templates should live in the backend config store.', category: 'feature', priority: 'medium', status: 'open', source: 'ai-suggested' },
   { title: 'Dashboard pagination / virtualised list', description: 'The projects list loads all projects at once. Add pagination or virtual scrolling for accounts with 20+ projects.', category: 'performance', priority: 'medium', status: 'open', source: 'assessment' },
   { title: 'Backend unit test suite (vitest)', description: 'Add unit tests for server/index.ts route handlers (proxy, health, settings, invite). Currently only frontend unit tests exist.', category: 'testing', priority: 'medium', status: 'open', source: 'assessment' },
   { title: 'Test coverage reporting in CI', description: 'Add --coverage flag to the vitest CI job and publish the coverage report as a GitHub Actions artifact. Target: 80% line coverage.', category: 'testing', priority: 'low', status: 'open', source: 'assessment' },
-  { title: 'Admin audit log', description: 'Track all admin actions (settings changes, user management, test triggers) in a Dexie/Supabase audit table with timestamp, action, and before/after values.', category: 'security', priority: 'medium', status: 'open', source: 'ai-suggested' },
+  { title: 'Admin audit log', description: 'Track all admin actions (settings changes, user management, test triggers) in a Postgres audit table with timestamp, action, and before/after values.', category: 'security', priority: 'medium', status: 'open', source: 'ai-suggested' },
   { title: 'Export diagram to PDF / PNG', description: 'Add PDF and PNG export options to the Diagrams tab (currently only SVG). Use html2canvas or a server-side Puppeteer render.', category: 'feature', priority: 'low', status: 'open', source: 'ai-suggested' },
   { title: 'Webhook notifications on pipeline completion', description: 'Allow project owners to configure a webhook URL that gets called (POST) when the pipeline finishes, with a JSON payload summarising the results.', category: 'feature', priority: 'low', status: 'open', source: 'ai-suggested' },
   { title: 'Sprint plan export to Jira / Linear', description: 'Add an export button on the sprintPlanner output that pushes tasks to Jira or Linear via their APIs. Credentials stored as integrations.', category: 'feature', priority: 'low', status: 'open', source: 'ai-suggested' },
@@ -63,12 +69,15 @@ const STATUS_LABELS: Record<BacklogItem['status'], string> = {
 
 // ── Seeder (runs once when table is empty) ─────────────────────────────────────
 async function seedBacklogIfEmpty() {
-  const count = await db.backlogItems.count();
-  if (count > 0) return;
+  const items = await listBacklogItems();
+  if (items.length > 0) return;
   const now = Date.now();
-  await db.backlogItems.bulkAdd(
-    SEED_ITEMS.map((item) => ({ ...item, id: nanoid(), createdAt: now, updatedAt: now }))
-  );
+  await Promise.all(SEED_ITEMS.map((item) => createBacklogItem({
+    ...item,
+    id: nanoid(),
+    createdAt: now,
+    updatedAt: now,
+  })));
 }
 
 // ── Item form (add / edit) ─────────────────────────────────────────────────────
@@ -128,11 +137,29 @@ export default function BacklogTab() {
   const [editing, setEditing] = useState<BacklogItem | null>(null);
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState('');
+  const [allItems, setAllItems] = useState<BacklogItem[]>([]);
 
   // Seed on first mount
   useEffect(() => { seedBacklogIfEmpty(); }, []);
-
-  const allItems = useLiveQuery(() => db.backlogItems.orderBy('createdAt').toArray(), []) ?? [];
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      try {
+        const items = await listBacklogItems();
+        if (active) setAllItems(items);
+      } catch {
+        if (active) setAllItems([]);
+      }
+    }
+    void load();
+    const unsubscribe = subscribeAppStateChange((topic) => {
+      if (topic === 'backlog') void load();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const items = allItems
     .filter((i) => filterStatus === 'all' || i.status === filterStatus)
@@ -142,23 +169,23 @@ export default function BacklogTab() {
     .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
 
   async function handleAdd(data: Omit<BacklogItem, 'id' | 'createdAt' | 'updatedAt'>) {
-    await db.backlogItems.add({ ...data, id: nanoid(), createdAt: Date.now(), updatedAt: Date.now() });
+    await createBacklogItem({ ...data, id: nanoid(), createdAt: Date.now(), updatedAt: Date.now() });
     setAdding(false);
   }
 
   async function handleEdit(data: Omit<BacklogItem, 'id' | 'createdAt' | 'updatedAt'>) {
     if (!editing) return;
-    await db.backlogItems.update(editing.id, { ...data, updatedAt: Date.now() });
+    await updateBacklogItem(editing.id, { ...data, updatedAt: Date.now() });
     setEditing(null);
   }
 
   async function setStatus(id: string, status: BacklogItem['status']) {
-    await db.backlogItems.update(id, { status, updatedAt: Date.now() });
+    await updateBacklogItem(id, { status, updatedAt: Date.now() });
   }
 
   async function deleteItem(id: string) {
     if (!confirm('Delete this backlog item permanently?')) return;
-    await db.backlogItems.delete(id);
+    await deleteBacklogItem(id);
   }
 
   const counts = {

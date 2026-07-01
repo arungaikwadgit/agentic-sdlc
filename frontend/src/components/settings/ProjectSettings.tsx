@@ -11,6 +11,9 @@ import { DOMAINS } from '@/agents/domains';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import { api } from '@/services/api';
 import { useIntegrations } from '@/hooks/useIntegrations';
+import { useAuth } from '@/contexts/AuthContext';
+import { getInviteSession } from '@/services/inviteSession';
+import { getProjectMember } from '@/lib/projectAccess';
 import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/project.types';
 import type { DomainId } from '@/types/domain.types';
 import { INVITABLE_APP_ROLES, ROLE_PERMISSIONS } from '@/types/project.types';
@@ -156,6 +159,7 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ProjectSettings({ project, onClose, onRestartPipeline }: Props) {
+  const { user, adminMode } = useAuth();
   const [tab, setTab] = useState<Tab>('team');
 
   const [adminSessionId, setAdminSessionId] = useState<string>(
@@ -164,7 +168,13 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
 
   const members = project.teamMembers ?? [];
   const assignments = project.agentAssignments ?? [];
-  const isAdmin = !!adminSessionId && members.find((m) => m.id === adminSessionId)?.isAdmin;
+  const inviteSession = getInviteSession();
+  const currentMember = getProjectMember(project, {
+    adminMode,
+    userEmail: user?.email ?? inviteSession?.email ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const isAdmin = !!adminMode || !!currentMember?.isAdmin;
 
   // ── Team tab state ──
   const [newName, setNewName] = useState('');

@@ -217,7 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_jobs_project_id ON agent_jobs(project_id);
 CREATE INDEX IF NOT EXISTS idx_agent_jobs_status     ON agent_jobs(status);
 -- Partial index used by the worker's queue query (only queued, ready-to-run jobs).
 CREATE INDEX IF NOT EXISTS idx_agent_jobs_queue ON agent_jobs(created_at)
-    WHERE status = 'queued' AND (next_attempt_after IS NULL OR next_attempt_after <= NOW());
+    WHERE status = 'queued';
 
 
 -- ── memory_records ────────────────────────────────────────────────────────────
@@ -368,4 +368,5 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 
 -- ── End of schema ─────────────────────────────────────────────────────────────
--- Run seed_mock_data.sql next to populate the database with sample data.
+-- Run backend/seeds/seed_mock_data.psql through the sample-data seeder if you
+-- want demo records after the schema is in place.

@@ -1,101 +1,81 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * Copyright 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  *
- * AuthContext — wraps Supabase Auth with an admin bypass mode for local dev.
- *
- * Admin bypass: sign in with admin@local / admin (or VITE_ADMIN_EMAIL / VITE_ADMIN_PASSWORD).
- * In admin mode, a mock user is created locally and project data routes through Dexie.
+ * AuthContext wraps Supabase authentication with a local-development-only
+ * admin bypass. Production builds must authenticate through Supabase.
  */
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import type { Session, User, AuthError } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { isAdminMode, setAdminMode, ADMIN_USER_ID, ADMIN_EMAIL } from '@/lib/adminMode';
-
-// ── Mock admin objects (no Supabase required) ──────────────────────────────────
+import {
+  isAdminMode,
+  setAdminMode,
+  ADMIN_USER_ID,
+  ADMIN_EMAIL,
+  ADMIN_PASSWORD,
+  ADMIN_BYPASS_ENABLED,
+} from '@/lib/adminMode';
 
 const MOCK_ADMIN_USER = {
-  id:            ADMIN_USER_ID,
-  email:         ADMIN_EMAIL,
-  app_metadata:  { provider: 'local', providers: ['local'] },
+  id: ADMIN_USER_ID,
+  email: ADMIN_EMAIL,
+  app_metadata: { provider: 'local', providers: ['local'] },
   user_metadata: { name: 'Admin', full_name: 'Arun Gaikwad' },
-  aud:           'authenticated',
-  role:          'authenticated',
-  created_at:    new Date().toISOString(),
-  updated_at:    new Date().toISOString(),
-  identities:    [],
-  factors:       [],
+  aud: 'authenticated',
+  role: 'authenticated',
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  identities: [],
+  factors: [],
 } as unknown as User;
 
 const makeMockSession = (): Session => ({
-  access_token:  'admin-local-bypass-token',
+  access_token: 'admin-local-bypass-token',
   refresh_token: 'admin-local-refresh',
-  expires_at:    Math.floor(Date.now() / 1000) + 86400 * 365,
-  expires_in:    86400 * 365,
-  token_type:    'bearer',
-  user:          MOCK_ADMIN_USER,
+  expires_at: Math.floor(Date.now() / 1000) + 86400 * 365,
+  expires_in: 86400 * 365,
+  token_type: 'bearer',
+  user: MOCK_ADMIN_USER,
 }) as unknown as Session;
 
-// ── Admin credentials (override via .env) ─────────────────────────────────────
-const ADMIN_BYPASS_EMAIL    = (import.meta.env.VITE_ADMIN_EMAIL    as string | undefined) ?? 'admin@local';
-const ADMIN_BYPASS_PASSWORD = (import.meta.env.VITE_ADMIN_PASSWORD as string | undefined) ?? 'admin';
-
-// Guard: if running in production with the default password, the fallback value
-// will be inlined in the public JS bundle. Log a warning so CI/CD catches it.
-// We use console.warn rather than throwing so a misconfigured prod deploy
-// still loads (Supabase auth still works); it just lacks the admin bypass.
-if (import.meta.env.PROD && ADMIN_BYPASS_PASSWORD === 'admin') {
-  console.warn(
-    '[AuthContext] VITE_ADMIN_PASSWORD is using the insecure default value "admin".' +
-    ' Set VITE_ADMIN_PASSWORD to a strong secret in your production environment variables.' +
-    ' The admin bypass will remain active but the default credential is baked into the bundle.'
-  );
-}
-
-// ── Context types ─────────────────────────────────────────────────────────────
-
 interface AuthContextValue {
-  user:          User | null;
-  session:       Session | null;
-  loading:       boolean;
-  adminMode:     boolean;
-
-  signUp:  (email: string, password: string) => Promise<{ error: AuthError | null }>;
-  signIn:  (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
+  adminMode: boolean;
+  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// ── Provider ──────────────────────────────────────────────────────────────────
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,      setUser]      = useState<User | null>(null);
-  const [session,   setSession]   = useState<Session | null>(null);
-  const [loading,   setLoading]   = useState(true);
-  const [adminMode, setAdminModeSt] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [adminMode, setAdminModeState] = useState(false);
 
   useEffect(() => {
-    // Restore admin bypass session from sessionStorage
     if (isAdminMode()) {
-      const s = makeMockSession();
-      setUser(s.user);
-      setSession(s);
-      setAdminModeSt(true);
+      const mockSession = makeMockSession();
+      setUser(mockSession.user);
+      setSession(mockSession);
+      setAdminModeState(true);
       setLoading(false);
       return;
     }
 
-    // Otherwise restore Supabase session from localStorage
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setUser(data.session?.user ?? null);
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
     });
 
     return () => listener.subscription.unsubscribe();
@@ -107,13 +87,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
-    // Admin bypass — works without Supabase configured
-    if (email.trim() === ADMIN_BYPASS_EMAIL && password === ADMIN_BYPASS_PASSWORD) {
-      const s = makeMockSession();
+    if (ADMIN_BYPASS_ENABLED && email.trim() === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      const mockSession = makeMockSession();
       setAdminMode(true);
-      setAdminModeSt(true);
-      setUser(s.user);
-      setSession(s);
+      setAdminModeState(true);
+      setUser(mockSession.user);
+      setSession(mockSession);
       return { error: null };
     }
 
@@ -122,13 +101,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    try {
+      const { clearInviteSession } = await import('@/services/inviteSession');
+      clearInviteSession();
+    } catch {
+      // ignore
+    }
+
     if (adminMode) {
       setAdminMode(false);
-      setAdminModeSt(false);
+      setAdminModeState(false);
       setUser(null);
       setSession(null);
       return;
     }
+
     await supabase.auth.signOut();
   }, [adminMode]);
 
@@ -138,8 +125,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 }
-
-// ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);

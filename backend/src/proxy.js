@@ -18,6 +18,16 @@ const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
 const PROXY_TOKEN    = process.env.PROXY_TOKEN ?? '';
 const SERVER_API_URL = (process.env.SERVER_API_URL ?? '').replace(/\/$/, '');
 const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+const ADMIN_EMAIL_ALLOWLIST = Array.from(new Set(
+  [
+    process.env.ADMIN_EMAIL_ALLOWLIST ?? '',
+    process.env.ADMIN_EMAIL ?? '',
+    process.env.VITE_ADMIN_EMAIL ?? '',
+  ]
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean),
+));
 
 // H-05 fix: Supabase JWT verification as the primary auth mechanism.
 // The frontend sends its Supabase session JWT as Authorization: Bearer <jwt>.
@@ -135,7 +145,7 @@ async function checkToken(req, res, next) {
   // Supabase auth is intentionally bypassed. This mirrors the existing
   // admin-local session model and avoids requiring a public VITE_PROXY_TOKEN
   // in production for that one flow.
-  if (authHeader === `Bearer ${ADMIN_BYPASS_BEARER}`) {
+  if (process.env.NODE_ENV !== 'production' && authHeader === `Bearer ${ADMIN_BYPASS_BEARER}`) {
     req.authUser = { email: null, adminBypass: true };
     return next();
   }
@@ -167,6 +177,23 @@ async function checkToken(req, res, next) {
   // PROXY_TOKEN set but header missing or wrong
   if (PROXY_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
   next();
+}
+
+function isConfiguredAdminEmail(email) {
+  return !!email && ADMIN_EMAIL_ALLOWLIST.includes(String(email).trim().toLowerCase());
+}
+
+function requireAdmin(req, res, next) {
+  if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+    return next();
+  }
+
+  const email = req.authUser?.email ?? null;
+  if (isConfiguredAdminEmail(email)) {
+    return next();
+  }
+
+  return res.status(403).json({ error: 'Admin access required.' });
 }
 
 // ── HTTPS POST with optional corporate proxy tunnel ───────────────────────────
@@ -899,7 +926,7 @@ app.post('/api/github/issues', checkToken, async (req, res) => {
 });
 
 // ── Settings (read backend .env) ─────────────────────────────────────────────
-app.get('/api/settings', checkToken, (req, res) => {
+app.get('/api/settings', checkToken, requireAdmin, (req, res) => {
   const fs   = require('fs');
   const path = require('path');
   const envPath = path.resolve(__dirname, '../.env');
@@ -960,7 +987,7 @@ function rejectsEnvInjection(value) {
   return typeof value === 'string' && /[\r\n]/.test(value);
 }
 
-app.post('/api/settings', checkToken, (req, res) => {
+app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
   const {
     openaiApiKey, proxyToken, openaiModel,
     anthropicApiKey, anthropicModel, anthropicEnabled,
@@ -1037,6 +1064,130 @@ app.post('/api/settings', checkToken, (req, res) => {
   }
 });
 
+app.get('/api/app-state/config', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const keys = typeof req.query.keys === 'string'
+    ? req.query.keys.split(',').map((key) => normalizeConfigKey(key)).filter(Boolean)
+    : null;
+  const values = await dbGetAppConfigMap(keys);
+  return res.json({ values });
+});
+
+app.get('/api/app-state/config/:key', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const key = normalizeConfigKey(req.params.key);
+  if (!key) return res.status(400).json({ error: 'key is required' });
+  const values = await dbGetAppConfigMap([key]);
+  return res.json({ key, value: values[key] ?? null });
+});
+
+app.put('/api/app-state/config/:key', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const key = normalizeConfigKey(req.params.key);
+  if (!key) return res.status(400).json({ error: 'key is required' });
+  await dbSetAppConfigValue(key, req.body?.value ?? null);
+  return res.json({ ok: true });
+});
+
+app.post('/api/app-state/config/batch', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const values = req.body?.values;
+  if (!values || typeof values !== 'object' || Array.isArray(values)) {
+    return res.status(400).json({ error: 'values must be an object' });
+  }
+  for (const [key, value] of Object.entries(values)) {
+    const normalizedKey = normalizeConfigKey(key);
+    if (!normalizedKey) continue;
+    await dbSetAppConfigValue(normalizedKey, value);
+  }
+  return res.json({ ok: true });
+});
+
+app.delete('/api/app-state/config', checkToken, requireAdmin, async (_req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  await dbDeleteAllAppConfig();
+  return res.json({ ok: true });
+});
+
+app.get('/api/app-state/integrations', checkToken, requireAdmin, async (_req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const items = await dbListIntegrations();
+  return res.json({ items });
+});
+
+app.get('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const item = await dbGetIntegration(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Integration not found.' });
+  return res.json(item);
+});
+
+app.put('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const payload = req.body ?? {};
+  const record = {
+    id: req.params.id,
+    provider: payload.provider,
+    label: payload.label,
+    encryptedData: payload.encryptedData,
+    iv: payload.iv,
+    createdAt: payload.createdAt ?? Date.now(),
+  };
+  if (!record.id || !record.provider || !record.label || !record.encryptedData || !record.iv) {
+    return res.status(400).json({ error: 'id, provider, label, encryptedData, and iv are required.' });
+  }
+  await dbSaveIntegration(record);
+  return res.json({ ok: true, id: record.id });
+});
+
+app.delete('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  await dbDeleteIntegration(req.params.id);
+  return res.json({ ok: true });
+});
+
+app.get('/api/app-state/backlog-items', checkToken, requireAdmin, async (_req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const items = await dbListBacklogItems();
+  return res.json({ items });
+});
+
+app.post('/api/app-state/backlog-items', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const item = req.body ?? {};
+  if (!item.id || !item.title || !item.category || !item.priority || !item.status || !item.source) {
+    return res.status(400).json({ error: 'id, title, category, priority, status, and source are required.' });
+  }
+  await dbCreateBacklogItem(item);
+  return res.json({ ok: true, id: item.id });
+});
+
+app.patch('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  const item = await dbUpdateBacklogItem(req.params.id, req.body ?? {});
+  if (!item) return res.status(404).json({ error: 'Backlog item not found.' });
+  return res.json({ ok: true, item });
+});
+
+app.delete('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (req, res) => {
+  if (!await requireAppStateDb(res)) return;
+  await dbDeleteBacklogItem(req.params.id);
+  return res.json({ ok: true });
+});
+
+app.get('/api/master-data/catalog', checkToken, async (_req, res) => {
+  if (!dbPool) {
+    return res.status(503).json({ error: 'Postgres is not configured for master data.' });
+  }
+  try {
+    const catalog = await dbGetMasterCatalog();
+    return res.json(catalog ?? {});
+  } catch (err) {
+    console.error('Master catalog query failed:', err.message);
+    return res.status(500).json({ error: 'Master data catalog is unavailable.' });
+  }
+});
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INVITE SYSTEM
@@ -1053,6 +1204,8 @@ const RESEND_API_KEY   = process.env.RESEND_API_KEY ?? '';
 const RESEND_FROM      = process.env.RESEND_FROM ?? 'noreply@yourdomain.com';
 const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
 const INVITABLE_APP_ROLES = ['editor', 'reviewer', 'viewer'];
+const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const INVITE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 // In-memory fallback when Postgres is unavailable
 const inviteStore = new Map();
@@ -1082,14 +1235,381 @@ const inviteSendRateLimit = rateLimit({
 
 // ── DB helpers (no-op if POSTGRES_URL not set) ────────────────────────────────
 let dbPool = null;
+let appStateReady = null;
+let inviteSessionReady = null;
 if (process.env.POSTGRES_URL) {
   try {
     dbPool = new Pool({ connectionString: process.env.POSTGRES_URL });
-    dbPool.query('SELECT 1').then(() => console.log('Invite system: DB connected')).catch(() => {
+    dbPool.query('SELECT 1').then(async () => {
+      console.log('Invite system: DB connected');
+      await ensureAppStateTables().catch((err) => {
+        console.error('App state schema init failed:', err.message);
+      });
+    }).catch(() => {
       console.warn('Invite system: DB connection failed, using in-memory store');
       dbPool = null;
     });
   } catch { dbPool = null; }
+}
+
+async function ensureAppStateTables() {
+  if (!dbPool) return;
+  if (!appStateReady) {
+    appStateReady = (async () => {
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS app_config (
+          key TEXT PRIMARY KEY,
+          value JSONB NOT NULL DEFAULT 'null'::jsonb,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS app_integrations (
+          id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          label TEXT NOT NULL,
+          encrypted_data TEXT NOT NULL,
+          iv TEXT NOT NULL,
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL
+        )
+      `);
+      await dbPool.query(`
+        CREATE INDEX IF NOT EXISTS idx_app_integrations_provider
+        ON app_integrations(provider)
+      `);
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS admin_backlog_items (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          category TEXT NOT NULL,
+          priority TEXT NOT NULL,
+          status TEXT NOT NULL,
+          source TEXT NOT NULL,
+          notes TEXT,
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL
+        )
+      `);
+      await dbPool.query(`
+        CREATE INDEX IF NOT EXISTS idx_admin_backlog_items_status_priority
+        ON admin_backlog_items(status, priority, created_at)
+      `);
+    })().catch((err) => {
+      appStateReady = null;
+      throw err;
+    });
+  }
+  await appStateReady;
+}
+
+async function ensureInviteSessionTable() {
+  if (!dbPool) return;
+  if (!inviteSessionReady) {
+    inviteSessionReady = (async () => {
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS invite_sessions (
+          token TEXT PRIMARY KEY,
+          member_id UUID NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+          project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          email TEXT NOT NULL,
+          app_role app_role NOT NULL,
+          name TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ
+        )
+      `);
+      await dbPool.query(`
+        CREATE INDEX IF NOT EXISTS idx_invite_sessions_member_id
+        ON invite_sessions(member_id)
+      `);
+      await dbPool.query(`
+        CREATE INDEX IF NOT EXISTS idx_invite_sessions_project_id
+        ON invite_sessions(project_id)
+      `);
+      await dbPool.query(`
+        CREATE INDEX IF NOT EXISTS idx_invite_sessions_expires_at
+        ON invite_sessions(expires_at)
+      `);
+    })().catch((err) => {
+      inviteSessionReady = null;
+      throw err;
+    });
+  }
+  await inviteSessionReady;
+}
+
+async function requireAppStateDb(res) {
+  if (!dbPool) {
+    res.status(503).json({ error: 'Postgres is not configured for app state.' });
+    return false;
+  }
+  try {
+    await ensureAppStateTables();
+    return true;
+  } catch (err) {
+    console.error('App state DB error:', err.message);
+    res.status(500).json({ error: 'App state database is unavailable.' });
+    return false;
+  }
+}
+
+function normalizeConfigKey(key) {
+  return typeof key === 'string' ? key.trim() : '';
+}
+
+async function dbGetAppConfigMap(keys = null) {
+  if (!dbPool) return {};
+  const query = keys?.length
+    ? {
+        text: `SELECT key, value FROM app_config WHERE key = ANY($1::text[])`,
+        values: [keys],
+      }
+    : {
+        text: `SELECT key, value FROM app_config`,
+        values: [],
+      };
+  const { rows } = await dbPool.query(query);
+  const values = {};
+  for (const row of rows) values[row.key] = row.value;
+  return values;
+}
+
+async function dbSetAppConfigValue(key, value) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    INSERT INTO app_config (key, value, updated_at)
+    VALUES ($1, $2::jsonb, NOW())
+    ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value,
+          updated_at = NOW()
+  `, [key, JSON.stringify(value)]);
+}
+
+async function dbDeleteAllAppConfig() {
+  if (!dbPool) return;
+  await dbPool.query(`DELETE FROM app_config`);
+}
+
+async function dbListIntegrations() {
+  if (!dbPool) return [];
+  const { rows } = await dbPool.query(`
+    SELECT id, provider, label, encrypted_data, iv, created_at
+    FROM app_integrations
+    ORDER BY created_at ASC
+  `);
+  return rows.map((row) => ({
+    id: row.id,
+    provider: row.provider,
+    label: row.label,
+    encryptedData: row.encrypted_data,
+    iv: row.iv,
+    createdAt: Number(row.created_at),
+  }));
+}
+
+async function dbGetIntegration(id) {
+  if (!dbPool) return null;
+  const { rows } = await dbPool.query(`
+    SELECT id, provider, label, encrypted_data, iv, created_at
+    FROM app_integrations
+    WHERE id = $1
+    LIMIT 1
+  `, [id]);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    provider: row.provider,
+    label: row.label,
+    encryptedData: row.encrypted_data,
+    iv: row.iv,
+    createdAt: Number(row.created_at),
+  };
+}
+
+async function dbSaveIntegration(record) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    INSERT INTO app_integrations (id, provider, label, encrypted_data, iv, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (id) DO UPDATE
+      SET provider = EXCLUDED.provider,
+          label = EXCLUDED.label,
+          encrypted_data = EXCLUDED.encrypted_data,
+          iv = EXCLUDED.iv,
+          created_at = EXCLUDED.created_at,
+          updated_at = EXCLUDED.updated_at
+  `, [
+    record.id,
+    record.provider,
+    record.label,
+    record.encryptedData,
+    record.iv,
+    Number(record.createdAt ?? Date.now()),
+    Date.now(),
+  ]);
+}
+
+async function dbDeleteIntegration(id) {
+  if (!dbPool) return;
+  await dbPool.query(`DELETE FROM app_integrations WHERE id = $1`, [id]);
+}
+
+async function dbListBacklogItems() {
+  if (!dbPool) return [];
+  const { rows } = await dbPool.query(`
+    SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
+    FROM admin_backlog_items
+    ORDER BY created_at ASC
+  `);
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    category: row.category,
+    priority: row.priority,
+    status: row.status,
+    source: row.source,
+    notes: row.notes ?? undefined,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  }));
+}
+
+async function dbCreateBacklogItem(item) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    INSERT INTO admin_backlog_items (
+      id, title, description, category, priority, status, source, notes, created_at, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, [
+    item.id,
+    item.title,
+    item.description ?? '',
+    item.category,
+    item.priority,
+    item.status,
+    item.source,
+    item.notes ?? null,
+    Number(item.createdAt ?? Date.now()),
+    Number(item.updatedAt ?? Date.now()),
+  ]);
+}
+
+async function dbUpdateBacklogItem(id, patch) {
+  if (!dbPool) return null;
+  const current = await dbPool.query(`
+    SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
+    FROM admin_backlog_items
+    WHERE id = $1
+    LIMIT 1
+  `, [id]);
+  if (!current.rows[0]) return null;
+  const row = current.rows[0];
+  const next = {
+    title: patch.title ?? row.title,
+    description: patch.description ?? row.description,
+    category: patch.category ?? row.category,
+    priority: patch.priority ?? row.priority,
+    status: patch.status ?? row.status,
+    source: patch.source ?? row.source,
+    notes: patch.notes === undefined ? row.notes : patch.notes,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(patch.updatedAt ?? Date.now()),
+  };
+  await dbPool.query(`
+    UPDATE admin_backlog_items
+    SET title = $2,
+        description = $3,
+        category = $4,
+        priority = $5,
+        status = $6,
+        source = $7,
+        notes = $8,
+        updated_at = $9
+    WHERE id = $1
+  `, [
+    id,
+    next.title,
+    next.description,
+    next.category,
+    next.priority,
+    next.status,
+    next.source,
+    next.notes ?? null,
+    next.updatedAt,
+  ]);
+  return { id, ...next };
+}
+
+async function dbDeleteBacklogItem(id) {
+  if (!dbPool) return;
+  await dbPool.query(`DELETE FROM admin_backlog_items WHERE id = $1`, [id]);
+}
+
+async function dbGetMasterCatalog() {
+  if (!dbPool) return null;
+
+  const [
+    phasesRes,
+    gatesRes,
+    agentsRes,
+    phaseAgentsRes,
+    domainsRes,
+    roleTemplatesRes,
+    roleTemplateAgentsRes,
+  ] = await Promise.all([
+    dbPool.query(`
+      SELECT id, order_index, label, sdlc_stage, is_parallel
+      FROM master_phases
+      ORDER BY order_index ASC
+    `),
+    dbPool.query(`
+      SELECT gate_id, phase_id, phase_order
+      FROM master_review_gates
+      ORDER BY gate_id ASC, phase_order ASC
+    `),
+    dbPool.query(`
+      SELECT id, name, phase_id, description, output_label, depends_on, max_iterations
+      FROM master_agents
+      WHERE is_enabled = TRUE
+      ORDER BY phase_id ASC, id ASC
+    `),
+    dbPool.query(`
+      SELECT phase_id, agent_id, agent_order
+      FROM master_phase_agents
+      ORDER BY phase_id ASC, agent_order ASC
+    `),
+    dbPool.query(`
+      SELECT id, label, color, bg_color, context, template
+      FROM master_domains
+      ORDER BY label ASC
+    `),
+    dbPool.query(`
+      SELECT id, title, description, color, sort_order
+      FROM master_role_templates
+      ORDER BY sort_order ASC, title ASC
+    `),
+    dbPool.query(`
+      SELECT role_template_id, agent_id, sort_order
+      FROM master_role_template_agents
+      ORDER BY role_template_id ASC, sort_order ASC
+    `),
+  ]);
+
+  return {
+    phases: phasesRes.rows,
+    reviewGates: gatesRes.rows,
+    agents: agentsRes.rows,
+    phaseAgents: phaseAgentsRes.rows,
+    domains: domainsRes.rows,
+    roleTemplates: roleTemplatesRes.rows,
+    roleTemplateAgents: roleTemplateAgentsRes.rows,
+  };
 }
 
 async function dbUpsertMember({ projectId, name, email, appRole, inviteToken }) {
@@ -1098,25 +1618,68 @@ async function dbUpsertMember({ projectId, name, email, appRole, inviteToken }) 
     INSERT INTO team_members (project_id, name, email, role, app_role, invite_token, invite_status, invited_at)
     VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
     ON CONFLICT (project_id, email) DO UPDATE
-      SET app_role = $5, invite_token = $6, invite_status = 'pending', invited_at = NOW()
+      SET app_role = $5, invite_token = $6, invite_status = 'pending', invited_at = NOW(), accepted_at = NULL
   `, [projectId, name, email, appRole, appRole, inviteToken]);
 }
 
 async function dbAcceptInvite(token, email) {
   if (!dbPool) return null;
-  const { rows } = await dbPool.query(`
-    UPDATE team_members
-    SET invite_status = 'accepted', accepted_at = NOW(), invite_token = NULL
-    WHERE id IN (
-      SELECT tm.id
+  await ensureInviteSessionTable();
+  const client = await dbPool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const pendingRes = await client.query(`
+      SELECT tm.id, tm.project_id, tm.name, tm.email, tm.app_role
       FROM team_members tm
-      WHERE tm.invite_token = $1 AND tm.email = $2 AND tm.invite_status = 'pending'
-    )
-    RETURNING id, project_id, name, email, app_role
-  `, [token, email]);
-  if (!rows[0]) return null;
-  const projectRow = await dbPool.query(`SELECT name FROM projects WHERE id = $1`, [rows[0].project_id]).catch(() => ({ rows: [] }));
-  return { ...rows[0], project_name: projectRow.rows?.[0]?.name ?? null };
+      WHERE tm.invite_token = $1
+        AND lower(tm.email) = lower($2)
+        AND tm.invite_status = 'pending'
+      LIMIT 1
+      FOR UPDATE
+    `, [token, email]);
+
+    const pending = pendingRes.rows[0];
+    if (!pending) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    await client.query(`
+      UPDATE team_members
+      SET invite_status = 'accepted',
+          accepted_at = COALESCE(accepted_at, NOW()),
+          invite_token = NULL
+      WHERE id = $1
+    `, [pending.id]);
+
+    await client.query(`
+      UPDATE invite_sessions
+      SET revoked_at = NOW()
+      WHERE member_id = $1 AND revoked_at IS NULL
+    `, [pending.id]);
+
+    const sessionToken = randomUUID();
+    const expiresAt = new Date(Date.now() + INVITE_SESSION_TTL_MS);
+    await client.query(`
+      INSERT INTO invite_sessions (token, member_id, project_id, email, app_role, name, expires_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [sessionToken, pending.id, pending.project_id, pending.email, pending.app_role, pending.name ?? null, expiresAt.toISOString()]);
+
+    const projectRow = await client.query(`SELECT name FROM projects WHERE id = $1`, [pending.project_id]);
+    await client.query('COMMIT');
+    return {
+      ...pending,
+      access_token: sessionToken,
+      expires_at: expiresAt.toISOString(),
+      project_name: projectRow.rows?.[0]?.name ?? null,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function dbGetTeam(projectId) {
@@ -1130,9 +1693,63 @@ async function dbGetTeam(projectId) {
 
 async function dbRevokeInvite(token) {
   if (!dbPool) return;
+  await ensureInviteSessionTable().catch(() => {});
   await dbPool.query(`
-    UPDATE team_members SET invite_status = 'revoked', invite_token = NULL WHERE invite_token = $1
+    UPDATE team_members
+    SET invite_status = 'revoked', invite_token = NULL
+    WHERE invite_token = $1
   `, [token]);
+  await dbPool.query(`
+    UPDATE invite_sessions
+    SET revoked_at = NOW()
+    WHERE token = $1 AND revoked_at IS NULL
+  `, [token]).catch(() => {});
+}
+
+async function dbSyncAcceptedMemberInProjectData(projectId, email, acceptedAtMs) {
+  if (!dbPool) return;
+  await dbPool.query(`
+    UPDATE projects
+    SET data = jsonb_set(
+      COALESCE(data, '{}'::jsonb),
+      '{teamMembers}',
+      COALESCE((
+        SELECT jsonb_agg(
+          CASE
+            WHEN lower(COALESCE(member->>'email', '')) = lower($2)
+              THEN jsonb_set(
+                jsonb_set(member, '{inviteStatus}', '"accepted"'::jsonb, true),
+                '{acceptedAt}',
+                to_jsonb($3::bigint),
+                true
+              )
+            ELSE member
+          END
+        )
+        FROM jsonb_array_elements(COALESCE(data->'teamMembers', '[]'::jsonb)) AS member
+      ), '[]'::jsonb),
+      true
+    ),
+    updated_at = NOW()
+    WHERE id = $1
+  `, [projectId, email, acceptedAtMs]).catch(() => {});
+}
+
+async function dbGetInviteSession(token) {
+  if (!dbPool) return null;
+  await ensureInviteSessionTable();
+  const { rows } = await dbPool.query(`
+    SELECT s.token, s.project_id, s.name, s.email, s.app_role, s.expires_at, tm.invite_status
+    FROM invite_sessions s
+    JOIN team_members tm ON tm.id = s.member_id
+    WHERE s.token = $1
+      AND s.revoked_at IS NULL
+      AND s.expires_at > NOW()
+    LIMIT 1
+  `, [token]);
+  const row = rows[0];
+  if (!row || row.invite_status !== 'accepted') return null;
+  return row;
 }
 
 // ── Email sender (Resend) ─────────────────────────────────────────────────────
@@ -1236,16 +1853,88 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
 // ── POST /api/invite/accept ───────────────────────────────────────────────────
 // Accept an invite after the user signs in. Uses the authenticated user's email
 // when available so the invite link can open directly inside the app flow.
-app.post('/api/invite/accept', checkToken, async (req, res) => {
+app.post('/api/invite/accept', async (req, res) => {
   const token = req.body?.token ?? req.query?.token;
-  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email : null;
-  const queryEmail = typeof req.query?.email === 'string' ? req.query.email : null;
-  const email = (req.authUser?.email ?? bodyEmail ?? queryEmail ?? '').toLowerCase();
+  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : null;
+  const queryEmail = typeof req.query?.email === 'string' ? String(req.query.email).trim().toLowerCase() : null;
 
   if (!token) return res.status(400).json({ error: 'token is required' });
-  if (!email) return res.status(400).json({ error: 'Authenticated user email is required to accept this invite.' });
 
-  const dbRow = await dbAcceptInvite(token, email).catch(() => null);
+  if (dbPool) {
+    const { rows } = await dbPool.query(`
+      SELECT tm.project_id, tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
+      FROM team_members tm
+      JOIN projects p ON p.id = tm.project_id
+      WHERE tm.invite_token = $1
+      LIMIT 1
+    `, [token]).catch(() => ({ rows: [] }));
+
+    const existing = rows[0];
+    if (existing) {
+      if (existing.invite_status === 'revoked') {
+        return res.status(410).json({ error: 'This invite is no longer valid.' });
+      }
+      const resolvedEmail = (bodyEmail || queryEmail || existing.email || '').toLowerCase();
+      if (!resolvedEmail) {
+        return res.status(400).json({ error: 'Invite email is missing for this token.' });
+      }
+      if (existing.email && existing.email.toLowerCase() !== resolvedEmail) {
+        return res.status(403).json({ error: 'Email does not match this invite.' });
+      }
+      const dbRow = await dbAcceptInvite(token, resolvedEmail).catch(() => null);
+      if (dbRow) {
+        await dbSyncAcceptedMemberInProjectData(dbRow.project_id, dbRow.email, Date.now());
+        inviteStore.delete(token);
+        return res.json({
+          ok: true,
+          accessToken: dbRow.access_token,
+          projectId: dbRow.project_id,
+          projectName: dbRow.project_name,
+          appRole: dbRow.app_role,
+          name: dbRow.name,
+          email: dbRow.email,
+          expiresAt: dbRow.expires_at,
+        });
+      }
+    }
+  }
+
+  const email = (bodyEmail ?? queryEmail ?? '').toLowerCase();
+  if (!email) return res.status(400).json({ error: 'Invite email is required to accept this link.' });
+
+  const invite = inviteStore.get(token);
+  if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
+  if (invite.email !== email) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
+
+  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
+    inviteStore.delete(token);
+    return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+  }
+
+  invite.acceptedAt = Date.now();
+  inviteStore.set(token, invite);
+
+  return res.json({
+    ok: true,
+    accessToken: token,
+    projectId: invite.projectId,
+    projectName: invite.projectName,
+    appRole: invite.appRole,
+    name: invite.name,
+    email: invite.email,
+    expiresAt: Date.now() + INVITE_SESSION_TTL_MS,
+  });
+});
+
+// ── GET /api/invite/accept ────────────────────────────────────────────────────
+// Called by the frontend InviteAccept page when the invitee clicks "Accept".
+app.get('/api/invite/accept', async (req, res) => {
+  const { token, email } = req.query;
+  if (!token || !email) return res.status(400).json({ error: 'token and email are required' });
+
+  // Try DB first
+  const dbRow = await dbAcceptInvite(token, email.toLowerCase()).catch(() => null);
   if (dbRow) {
     inviteStore.delete(token);
     return res.json({
@@ -1255,16 +1944,18 @@ app.post('/api/invite/accept', checkToken, async (req, res) => {
       appRole: dbRow.app_role,
       name: dbRow.name,
       email: dbRow.email,
+      accessToken: dbRow.access_token,
+      expiresAt: dbRow.expires_at,
     });
   }
 
+  // Fallback to in-memory
   const invite = inviteStore.get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
-  if (invite.email !== email) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.email !== email.toLowerCase()) return res.status(403).json({ error: 'Email does not match this invite.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
 
-  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-  if (Date.now() - invite.invitedAt > SEVEN_DAYS) {
+  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
     inviteStore.delete(token);
     return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
   }
@@ -1279,38 +1970,9 @@ app.post('/api/invite/accept', checkToken, async (req, res) => {
     appRole: invite.appRole,
     name: invite.name,
     email: invite.email,
+    accessToken: token,
+    expiresAt: Date.now() + INVITE_SESSION_TTL_MS,
   });
-});
-
-// ── GET /api/invite/accept ────────────────────────────────────────────────────
-// Called by the frontend InviteAccept page when the invitee clicks "Accept".
-app.get('/api/invite/accept', async (req, res) => {
-  const { token, email } = req.query;
-  if (!token || !email) return res.status(400).json({ error: 'token and email are required' });
-
-  // Try DB first
-  const dbRow = await dbAcceptInvite(token, email.toLowerCase()).catch(() => null);
-  if (dbRow) {
-    inviteStore.delete(token);
-    return res.json({ ok: true, projectId: dbRow.project_id, appRole: dbRow.app_role, name: dbRow.name, email: dbRow.email });
-  }
-
-  // Fallback to in-memory
-  const invite = inviteStore.get(token);
-  if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
-  if (invite.email !== email.toLowerCase()) return res.status(403).json({ error: 'Email does not match this invite.' });
-  if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
-
-  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
-  if (Date.now() - invite.invitedAt > SEVEN_DAYS) {
-    inviteStore.delete(token);
-    return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
-  }
-
-  invite.acceptedAt = Date.now();
-  inviteStore.set(token, invite);
-
-  return res.json({ ok: true, projectId: invite.projectId, projectName: invite.projectName, appRole: invite.appRole, name: invite.name, email: invite.email });
 });
 
 // ── GET /api/invite/validate ──────────────────────────────────────────────────
@@ -1322,19 +1984,23 @@ app.get('/api/invite/validate', async (req, res) => {
   // DB lookup
   if (dbPool) {
     const { rows } = await dbPool.query(
-      `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, p.id AS project_id, p.name AS project_name, p.description AS project_description
+      `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, tm.invited_at, p.id AS project_id, p.name AS project_name, p.description AS project_description
        FROM team_members tm JOIN projects p ON p.id = tm.project_id
        WHERE tm.invite_token = $1`, [token]
     ).catch(() => ({ rows: [] }));
     if (rows[0]) {
       const r = rows[0];
-      if (r.invite_status !== 'pending') return res.status(409).json({ error: 'This invite is no longer valid.' });
+      if (r.invite_status === 'revoked') return res.status(409).json({ error: 'This invite is no longer valid.' });
+      if (r.invited_at && Date.now() - new Date(r.invited_at).getTime() > INVITE_TOKEN_TTL_MS) {
+        return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+      }
+      if (r.invite_status !== 'pending') return res.status(409).json({ error: 'This invite has already been used.' });
       return res.json({
         ok: true,
         id: token,
         role: r.app_role,
         invitedEmail: r.email,
-        expiresAt: null,
+        expiresAt: r.invited_at ? new Date(new Date(r.invited_at).getTime() + INVITE_TOKEN_TTL_MS).toISOString() : null,
         project: {
           id: r.project_id,
           name: r.project_name,
@@ -1348,12 +2014,16 @@ app.get('/api/invite/validate', async (req, res) => {
   const invite = inviteStore.get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'Already accepted.' });
+  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
+    inviteStore.delete(token);
+    return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+  }
   return res.json({
     ok: true,
     id: token,
     role: invite.appRole,
     invitedEmail: invite.email,
-    expiresAt: null,
+    expiresAt: new Date(invite.invitedAt + INVITE_TOKEN_TTL_MS).toISOString(),
     project: {
       id: invite.projectId,
       name: invite.projectName,
@@ -1369,6 +2039,84 @@ app.delete('/api/invite/revoke', checkToken, async (req, res) => {
   await dbRevokeInvite(token).catch(() => {});
   inviteStore.delete(token);
   return res.json({ ok: true });
+});
+
+// ── Invite-scoped project API ────────────────────────────────────────────────
+function getInviteBearer(req) {
+  const auth = req.headers.authorization ?? '';
+  return auth.startsWith('Bearer invite:') ? auth.slice('Bearer invite:'.length) : '';
+}
+
+app.get('/api/invite/projects', async (req, res) => {
+  const inviteToken = getInviteBearer(req);
+  if (!inviteToken) return res.status(401).json({ error: 'Invite session is required.' });
+  const session = await dbGetInviteSession(inviteToken);
+  if (!session) return res.status(401).json({ error: 'Invite session is invalid or expired.' });
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const { rows } = await dbPool.query(`
+    SELECT id, owner_id, name, description, domain, status, data, created_at, updated_at
+    FROM projects
+    WHERE id = $1
+    LIMIT 1
+  `, [session.project_id]).catch(() => ({ rows: [] }));
+
+  return res.json(rows);
+});
+
+app.get('/api/invite/projects/:projectId', async (req, res) => {
+  const inviteToken = getInviteBearer(req);
+  if (!inviteToken) return res.status(401).json({ error: 'Invite session is required.' });
+  const session = await dbGetInviteSession(inviteToken);
+  if (!session) return res.status(401).json({ error: 'Invite session is invalid or expired.' });
+  if (session.project_id !== req.params.projectId) {
+    return res.status(403).json({ error: 'This invite session can access only its assigned project.' });
+  }
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const { rows } = await dbPool.query(`
+    SELECT id, owner_id, name, description, domain, status, data, created_at, updated_at
+    FROM projects
+    WHERE id = $1
+    LIMIT 1
+  `, [session.project_id]).catch(() => ({ rows: [] }));
+
+  if (!rows[0]) return res.status(404).json({ error: 'Project not found.' });
+  return res.json(rows[0]);
+});
+
+app.patch('/api/invite/projects/:projectId', async (req, res) => {
+  const inviteToken = getInviteBearer(req);
+  if (!inviteToken) return res.status(401).json({ error: 'Invite session is required.' });
+  const session = await dbGetInviteSession(inviteToken);
+  if (!session) return res.status(401).json({ error: 'Invite session is invalid or expired.' });
+  if (session.project_id !== req.params.projectId) {
+    return res.status(403).json({ error: 'This invite session can access only its assigned project.' });
+  }
+  if (session.app_role !== 'editor') {
+    return res.status(403).json({ error: 'Your invite role does not allow editing project data.' });
+  }
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const { name, description, domain, status, data } = req.body ?? {};
+  const { rows } = await dbPool.query(`
+    UPDATE projects
+    SET
+      name = COALESCE($2, name),
+      description = COALESCE($3, description),
+      domain = COALESCE($4, domain),
+      status = COALESCE($5, status),
+      data = COALESCE($6::jsonb, data),
+      updated_at = NOW()
+    WHERE id = $1
+    RETURNING id, owner_id, name, description, domain, status, data, created_at, updated_at
+  `, [session.project_id, name ?? null, description ?? null, domain ?? null, status ?? null, data ? JSON.stringify(data) : null]).catch((err) => {
+    console.error('Invite project update error:', err.message);
+    return { rows: [] };
+  });
+
+  if (!rows[0]) return res.status(404).json({ error: 'Project not found.' });
+  return res.json(rows[0]);
 });
 
 // ── GET /api/invite/team/:projectId ──────────────────────────────────────────

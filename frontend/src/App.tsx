@@ -14,23 +14,25 @@ import ChatWidget from './chatbot/ChatWidget';
 import InviteAcceptPage from './components/invite/InviteAcceptPage';
 import AdminPanel from './components/admin/AdminPanel';
 import ErrorBoundary from './components/common/ErrorBoundary';
-import { db } from './db/database';
 import { isAdminMode } from './lib/adminMode';
 import { initializeQualityDefaults } from './agents/promptDefaults';
+import { getAppConfigValue } from './services/appStateApi';
+import { initializeMasterDataCatalog } from './services/masterDataCatalog';
 
 export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
 
 /** Apply a stored theme preference to <html data-theme="..."> on startup. */
 function useThemeInit() {
   useEffect(() => {
-    db.settings.get('app:theme').then((stored) => {
-      const t = (stored?.value as string) ?? 'dark';
+    getAppConfigValue<string>('app:theme', 'dark').then((t) => {
       if (t === 'system') {
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
       } else {
         document.documentElement.setAttribute('data-theme', t);
       }
+    }).catch(() => {
+      document.documentElement.setAttribute('data-theme', 'dark');
     });
   }, []);
 }
@@ -49,9 +51,27 @@ function detectInitialView(): View {
 
 export default function App() {
   useThemeInit();
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   // Migrate stale pre-upgrade app-level prompt overrides so quality defaults take effect
-  useEffect(() => { initializeQualityDefaults(); }, []);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      await initializeMasterDataCatalog();
+      await initializeQualityDefaults();
+      if (active) {
+        setCatalogReady(true);
+        setCatalogError(null);
+      }
+    })().catch(() => {
+      if (active) {
+        setCatalogReady(true);
+        setCatalogError('Application catalog could not be loaded from the backend API.');
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   const [view, setView] = useState<View>(detectInitialView);
   // H-01 fix: /admin URL only opens panel for admin bypass mode users
@@ -77,6 +97,46 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  if (!catalogReady) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--color-bg, #0f1117)' }}>
+        <span style={{ color: 'var(--color-text-secondary, #8892a4)', fontSize: '0.9rem' }}>Loading application catalog…</span>
+      </div>
+    );
+  }
+
+  if (catalogError) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        background: 'var(--color-bg, #0f1117)',
+        padding: '32px',
+      }}>
+        <div style={{
+          maxWidth: 560,
+          background: 'var(--color-surface, #151924)',
+          border: '1px solid var(--color-border, rgba(255,255,255,0.08))',
+          borderRadius: 16,
+          padding: '28px 24px',
+          color: 'var(--color-text, #e2e8f0)',
+          textAlign: 'center',
+        }}>
+          <h1 style={{ margin: '0 0 12px', fontSize: 28 }}>Agentic SDLC</h1>
+          <p style={{ margin: '0 0 10px', color: 'var(--color-text-secondary, #94a3b8)' }}>
+            {catalogError}
+          </p>
+          <p style={{ margin: 0, color: 'var(--color-text-secondary, #94a3b8)', fontSize: 14 }}>
+            This application is configured to load master data from backend APIs only.
+            Please verify the backend deployment and database connectivity, then refresh.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

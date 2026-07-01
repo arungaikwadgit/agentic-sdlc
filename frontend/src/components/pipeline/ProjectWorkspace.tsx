@@ -3,8 +3,6 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/db/database';
 import { updateProject, updateAgentRun } from '@/db/projectRepository';
 import { PipelineEngine, runSingleAgent } from '@/services/pipelineEngine';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE, TOTAL_AGENTS } from '@/agents/constants';
@@ -24,13 +22,16 @@ import DiagramPreview from '../documents/DiagramPreview';
 import OrchestratorView from './OrchestratorView';
 import PrototypeViewer from '../documents/PrototypeViewer';
 import AgentContextUploader from './AgentContextUploader';
+import { useProject } from '@/hooks/useProject';
 import { useAuth } from '@/contexts/AuthContext';
 import { exportTraceabilityCSV } from '@/services/traceability';
 import { checkPromptInjection } from '@/utils/sanitize';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
-import { getProjectExportPermission } from '@/lib/projectAccess';
+import { getInviteSession } from '@/services/inviteSession';
+import { getProjectExportPermission, getProjectMember, isProjectAdminUser } from '@/lib/projectAccess';
+import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
 import styles from './ProjectWorkspace.module.css';
@@ -179,12 +180,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const { user, adminMode, loading: authLoading } = useAuth();
-  // useLiveQuery returns `undefined` while the query is initialising.
-  // Once it resolves, undefined means "not found", so we track the first non-undefined result.
-  const queryResult = useLiveQuery(() => db.projects.get(projectId), [projectId]);
-  const hasResolved = useRef(false);
-  if (queryResult !== undefined) hasResolved.current = true;
-  const project = queryResult;
+  const { project, loading: projectLoading } = useProject(projectId);
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
@@ -361,7 +357,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     setPromptSaved(false);
   }
 
-  // ── Persist context documents to IndexedDB whenever files change ────────────
+  // ── Persist context documents into the backend-backed project record ────────
   async function handleFilesChange(files: import('@/components/pipeline/AgentContextUploader').ExtractedFile[]) {
     setUploadedFiles(files);
     await updateProject(projectId, (p) => {
@@ -676,8 +672,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     }
   }
 
-  // Still initialising (first render before useLiveQuery resolves)
-  if (!hasResolved.current) {
+  if (projectLoading) {
     return (
       <div className={styles.loading}>
         <div className={styles.spinner} />
@@ -692,7 +687,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         <div style={{ fontSize: 48 }}>🔍</div>
         <h2 style={{ color: 'var(--text)', margin: 0 }}>Project not found</h2>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>
-          This project may have been deleted or doesn&apos;t exist on this device.
+          This project may have been deleted or you may no longer have access to it.
         </p>
         <button className="btn-primary" onClick={onBack}>{'← Back to Dashboard'}</button>
       </div>
@@ -700,10 +695,23 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   }
 
   const members = project.teamMembers ?? [];
-  const isAdmin = !!project.activeAdminId && members.find((m) => m.id === project.activeAdminId)?.isAdmin;
+  const inviteSession = getInviteSession();
+  const currentMember = getProjectMember(project, {
+    adminMode,
+    userEmail: user?.email ?? inviteSession?.email ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const currentPermissions = currentMember ? ROLE_PERMISSIONS[currentMember.appRole] : null;
+  const isAdmin = isProjectAdminUser(project, {
+    adminMode,
+    userEmail: user?.email ?? inviteSession?.email ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const canRunProjectAgents = !!(adminMode || currentPermissions?.canRunAgents);
+  const canEditProjectSettings = !!(adminMode || currentPermissions?.canEditSettings);
   const exportPermission = getProjectExportPermission(project, {
     adminMode,
-    userEmail: user?.email ?? null,
+    userEmail: user?.email ?? inviteSession?.email ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const canExportArtifacts = exportPermission.canExport;
@@ -804,8 +812,14 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             <button
               className="btn-primary"
               onClick={() => startPipeline(project.currentPhase)}
-              disabled={project.status === 'complete' || !teamReady}
-              title={!teamReady ? 'Add at least one team member to run the pipeline' : undefined}
+              disabled={project.status === 'complete' || !teamReady || !canRunProjectAgents}
+              title={
+                !teamReady
+                  ? 'Add at least one team member to run the pipeline'
+                  : !canRunProjectAgents
+                    ? 'Your assigned project role cannot run agents.'
+                    : undefined
+              }
             >
               {project.status === 'draft' ? 'Run Pipeline' :
                project.status === 'paused' ? 'Resume Pipeline' :
@@ -813,7 +827,14 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             </button>
           )}
 
-          <button className="btn-secondary" onClick={openTeamPanel}>Settings</button>
+          <button
+            className="btn-secondary"
+            onClick={openTeamPanel}
+            disabled={!canEditProjectSettings}
+            title={!canEditProjectSettings ? 'Your assigned project role cannot edit settings.' : undefined}
+          >
+            Settings
+          </button>
           <button className="btn-secondary" onClick={() => updateProject(projectId, (p) => { p.mode = p.mode === 'simple' ? 'expert' : 'simple'; })}>
             {project.mode === 'simple' ? 'Expert Mode' : 'Simple Mode'}
           </button>
@@ -860,7 +881,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         </div>
       </header>
 
-      {!teamReady && (
+      {!teamReady && canEditProjectSettings && (
         <div className={styles.teamRequiredBanner}>
           <span>Add at least one team member before running the pipeline.</span>
           <button className="btn-primary" style={{ fontSize: 12 }} onClick={openTeamPanel}>Set Up Team</button>
