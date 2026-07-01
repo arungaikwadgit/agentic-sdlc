@@ -353,7 +353,10 @@ async function forwardToServer(req, res) {
   }
 }
 
-app.use('/api/projects', checkToken, forwardToServer);
+// Forwarded app APIs enforce auth in the dedicated `server/` service.
+// Do not gate them again here with PROXY_TOKEN-only fallback auth, otherwise
+// valid Supabase JWT sessions can be rejected before reaching the real API.
+app.use('/api/projects', forwardToServer);
 app.use('/api/invites', forwardToServer);
 app.use('/api/admin', forwardToServer);
 

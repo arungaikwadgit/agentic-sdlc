@@ -1,8 +1,8 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * Copyright 2025 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  *
- * App — root component. Handles client-side routing and global keyboard shortcuts.
+ * App - root component. Handles client-side routing and global keyboard shortcuts.
  *
  * Admin panel: press Ctrl+Shift+` or navigate to /admin to open.
  */
@@ -15,25 +15,14 @@ import InviteAcceptPage from './components/invite/InviteAcceptPage';
 import AdminPanel from './components/admin/AdminPanel';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { isAdminMode } from './lib/adminMode';
-import { initializeQualityDefaults } from './agents/promptDefaults';
-import { getAppConfigValue } from './services/appStateApi';
 import { initializeMasterDataCatalog } from './services/masterDataCatalog';
 
 export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
 
-/** Apply a stored theme preference to <html data-theme="..."> on startup. */
+/** Apply a default theme to <html data-theme="..."> on startup. */
 function useThemeInit() {
   useEffect(() => {
-    getAppConfigValue<string>('app:theme', 'dark').then((t) => {
-      if (t === 'system') {
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
-      } else {
-        document.documentElement.setAttribute('data-theme', t);
-      }
-    }).catch(() => {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    });
+    document.documentElement.setAttribute('data-theme', 'dark');
   }, []);
 }
 
@@ -54,22 +43,10 @@ export default function App() {
   const [catalogReady, setCatalogReady] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
-  // Migrate stale pre-upgrade app-level prompt overrides so quality defaults take effect
   useEffect(() => {
     let active = true;
     (async () => {
       await initializeMasterDataCatalog();
-      try {
-        try {
-        await initializeQualityDefaults();
-      } catch {
-        // Quality-default seeding is an admin-only app-state concern and
-        // must not block public application bootstrap in production.
-      }
-      } catch {
-        // Quality-default seeding is an admin-only app-state concern and
-        // must not block public application bootstrap in production.
-      }
       if (active) {
         setCatalogReady(true);
         setCatalogError(null);
@@ -84,18 +61,14 @@ export default function App() {
   }, []);
 
   const [view, setView] = useState<View>(detectInitialView);
-  // H-01 fix: /admin URL only opens panel for admin bypass mode users
   const [adminOpen, setAdminOpen] = useState(
     () => isAdminMode() && window.location.pathname === '/admin'
   );
 
-  // Keyboard shortcut: Ctrl+Shift+` opens/closes the admin panel.
-  // H-01 fix: restricted to admin (local bypass) mode only.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey && e.shiftKey && e.key === '`') {
         e.preventDefault();
-        // Only allow toggling admin panel when running in admin bypass mode
         if (isAdminMode()) {
           setAdminOpen((o) => !o);
         }
@@ -111,7 +84,7 @@ export default function App() {
   if (!catalogReady) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--color-bg, #0f1117)' }}>
-        <span style={{ color: 'var(--color-text-secondary, #8892a4)', fontSize: '0.9rem' }}>Loading application catalog…</span>
+        <span style={{ color: 'var(--color-text-secondary, #8892a4)', fontSize: '0.9rem' }}>Loading application catalog...</span>
       </div>
     );
   }
