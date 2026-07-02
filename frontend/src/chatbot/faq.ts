@@ -129,7 +129,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['invite', 'invite team', 'add team member', 'invite member', 'send invite', 'team invite'],
     question: 'How do I invite team members to a project?',
     answer:
-      'Open the project, then click the "Team" button in the workspace toolbar. In the Team & Invites panel, enter the team member\'s name, email, job title, and select their role (Project Owner, Editor, Reviewer, or Viewer). Click "Send Invite" — the system generates a magic link and emails it to the invitee (if a RESEND_API_KEY is configured) or shows you a copyable link to share manually. The invitee clicks the link to accept and joins the project.',
+      'Open the project, then click the "Team" button in the workspace toolbar. In the Team & Invites panel, enter the team member\'s name, email, job title, and select their role (Project Owner, Editor, Reviewer, or Viewer). Click "Send Invite" — the system generates a magic link and emails it to the invitee (if a Gmail address + App Password is configured) or shows you a copyable link to share manually. The invitee clicks the link to accept and joins the project.',
   },
   {
     id: 'roles',

@@ -286,18 +286,43 @@ export async function updateAgentRun(
   });
 }
 
-export async function deleteProject(id: string): Promise<void> {
-  await apiFetch<void>(`/api/projects/${id}`, { method: 'DELETE' });
+/**
+ * Soft-deletes a project. Requires non-empty remarks and app-admin access —
+ * enforced server-side in server/src/routes/projects.ts (DELETE /:id). This
+ * never permanently removes the row; it flips `archived` + records the
+ * remarks/timestamp/admin so the project can be restored via restoreProject().
+ */
+export async function deleteProject(id: string, remarks: string): Promise<void> {
+  await apiFetch<void>(`/api/projects/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ remarks }),
+  });
   emitProjectRepositoryChange(id);
 }
 
+/**
+ * Restores a soft-deleted project. App-admin only — enforced server-side
+ * (POST /:id/restore), not via the generic PATCH path, so a non-admin can't
+ * un-delete a project through a routine project edit.
+ */
 export async function restoreProject(id: string): Promise<void> {
-  await updateProject(id, (p) => {
-    p.archived = false;
-    p.archivedReason = undefined;
-    p.archivedAt = undefined;
-    p.archivedBy = undefined;
-  });
+  await apiFetch<void>(`/api/projects/${id}/restore`, { method: 'POST' });
+  emitProjectRepositoryChange(id);
+}
+
+/**
+ * Returns whether the current authenticated user is an app-wide admin
+ * (ADMIN_EMAIL_ALLOWLIST on the server), used to show/hide delete & restore
+ * controls in the UI. Defaults to false on any error (e.g. invite-session
+ * users, who have no Supabase session to check).
+ */
+export async function checkIsAppAdmin(): Promise<boolean> {
+  try {
+    const result = await apiFetch<{ isAppAdmin: boolean }>('/api/projects/permissions/me');
+    return !!result?.isAppAdmin;
+  } catch {
+    return false;
+  }
 }
 
 export async function exportAllProjects(): Promise<string> {

@@ -3,7 +3,7 @@
 // projects view. Covers TS-51 through TS-59 from
 // docs/test-plans/project-lifecycle-test-plan.md.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
 import type { ProjectSummary } from '../../frontend/src/types/project.types';
@@ -45,6 +45,14 @@ const restoreProjectMock = vi.fn(async (id: string) => {
 });
 const exportAllProjectsMock = vi.fn(async () => '{}');
 const importProjectsMock = vi.fn(async () => 0);
+// Dashboard.tsx only passes onDelete/onRestore to ProjectCard when the
+// current user is an app admin (server-enforced via ADMIN_EMAIL_ALLOWLIST —
+// see server/src/middleware/auth.ts requireAppAdmin). Default to true here so
+// existing delete/restore-focused tests exercise the admin path; the
+// non-admin path is covered separately below (TS-60).
+let isAppAdminFlag = true;
+const checkIsAppAdminMock = vi.fn(async () => isAppAdminFlag);
+const subscribeProjectRepositoryChangeMock = vi.fn(() => () => {});
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
@@ -54,6 +62,9 @@ vi.mock('../../frontend/src/db/projectRepository', () => ({
   listVisibleProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
   deleteProject: (...args: Parameters<typeof deleteProjectMock>) => deleteProjectMock(...args),
   restoreProject: (...args: Parameters<typeof restoreProjectMock>) => restoreProjectMock(...args),
+  checkIsAppAdmin: (...args: unknown[]) => checkIsAppAdminMock(...(args as [])),
+  subscribeProjectRepositoryChange: (...args: Parameters<typeof subscribeProjectRepositoryChangeMock>) =>
+    subscribeProjectRepositoryChangeMock(...args),
   exportAllProjects: (...args: unknown[]) => exportAllProjectsMock(...(args as [])),
   importProjects: (...args: Parameters<typeof importProjectsMock>) => importProjectsMock(...args),
 }));
@@ -66,6 +77,19 @@ vi.mock('../../frontend/src/components/dashboard/NewProjectModal', () => ({
 }));
 vi.mock('../../frontend/src/components/settings/AppSettingsModal', () => ({
   default: () => null,
+}));
+
+// ── Mock AuthContext/ToastContext — Dashboard.tsx calls useAuth()/useToast()
+// directly, both of which throw outside their real Providers. Mocking the
+// hooks (rather than wrapping with the real Providers) keeps this test
+// focused on Dashboard's own archive/delete/restore logic.
+const signOutMock = vi.fn(async () => {});
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: signOutMock }),
+}));
+const toastMock = vi.fn();
+vi.mock('../../frontend/src/contexts/ToastContext', () => ({
+  useToast: () => ({ toast: toastMock }),
 }));
 
 // Import after mocks are registered.
@@ -88,9 +112,12 @@ function makeSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
 describe('Dashboard — archived projects', () => {
   beforeEach(() => {
     summariesStore = [];
+    isAppAdminFlag = true;
     listProjectsMock.mockClear();
     deleteProjectMock.mockClear();
     restoreProjectMock.mockClear();
+    checkIsAppAdminMock.mockClear();
+    toastMock.mockClear();
   });
 
   it('shows no "Archived" toggle and renders "✕" delete buttons when nothing is archived (TS-51)', async () => {
@@ -183,52 +210,92 @@ describe('Dashboard — archived projects', () => {
     confirmSpy.mockRestore();
   });
 
-  it('calls deleteProject(id) when "✕" is clicked and the confirm dialog is accepted (TS-57)', async () => {
+  it('calls deleteProject(id, remarks) when "✕" is clicked, remarks entered, and Delete confirmed (TS-57)', async () => {
+    // Delete now opens Dashboard's ConfirmDialog (requireInput) instead of
+    // window.confirm — remarks are required and forwarded to deleteProject.
     summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     render(<Dashboard onOpenProject={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /delete project/i }));
 
-    expect(window.confirm).toHaveBeenCalledWith('Delete "Demo Project"? This cannot be undone.');
-    expect(deleteProjectMock).toHaveBeenCalledWith('p1');
+    const dialog = await screen.findByRole('dialog');
+    const confirmBtn = within(dialog).getByRole('button', { name: 'Delete' });
+    expect(confirmBtn).toBeDisabled();
 
-    vi.restoreAllMocks();
+    await user.type(within(dialog).getByLabelText(/reason for deleting/i), 'Duplicate project');
+    expect(confirmBtn).toBeEnabled();
+    await user.click(confirmBtn);
+
+    expect(deleteProjectMock).toHaveBeenCalledWith('p1', 'Duplicate project');
   });
 
-  it('does not call deleteProject when the confirm dialog is declined (TS-58)', async () => {
+  it('does not call deleteProject when the confirm dialog is cancelled (TS-58)', async () => {
     summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     const user = userEvent.setup();
     render(<Dashboard onOpenProject={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /delete project/i }));
 
-    expect(window.confirm).toHaveBeenCalled();
-    expect(deleteProjectMock).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
-    vi.restoreAllMocks();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(deleteProjectMock).not.toHaveBeenCalled();
+  });
+
+  it('the Delete confirm button stays disabled for blank/whitespace-only remarks (TS-58b)', async () => {
+    summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
+    const user = userEvent.setup();
+    render(<Dashboard onOpenProject={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /delete project/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    const confirmBtn = within(dialog).getByRole('button', { name: 'Delete' });
+    await user.type(within(dialog).getByLabelText(/reason for deleting/i), '   ');
+
+    expect(confirmBtn).toBeDisabled();
+    expect(deleteProjectMock).not.toHaveBeenCalled();
+  });
+
+  it('does not render Delete/Restore controls for non-admin users (TS-60)', async () => {
+    isAppAdminFlag = false;
+    summariesStore = [
+      makeSummary({ id: 'p1', name: 'Demo Project' }),
+      makeSummary({ id: 'archived-1', name: 'Old Project', archived: true, archivedAt: Date.now() }),
+    ];
+    render(<Dashboard onOpenProject={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /delete project/i })).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /archived \(1\)/i }));
+    expect(screen.queryByRole('button', { name: /restore project/i })).not.toBeInTheDocument();
   });
 
   it('stops propagation so clicking "✕" or "↩ Restore" does not trigger onOpen (TS-59)', async () => {
     const onOpenProject = vi.fn();
 
-    // Active card: click "✕" with confirm accepted.
+    // Active card: click "✕", enter remarks, confirm.
     summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
     const { unmount } = render(<Dashboard onOpenProject={onOpenProject} />);
 
     await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /delete project/i }));
 
-    expect(deleteProjectMock).toHaveBeenCalledWith('p1');
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/reason for deleting/i), 'Duplicate project');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(deleteProjectMock).toHaveBeenCalledWith('p1', 'Duplicate project');
     expect(onOpenProject).not.toHaveBeenCalled();
 
-    vi.restoreAllMocks();
     unmount();
 
     // Archived card: click "↩ Restore".

@@ -199,11 +199,34 @@ let initPromise: Promise<void> | null = null;
 export function initializeMasterDataCatalog(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    const catalog = await fetchMasterCatalog();
-    if (!catalog) {
-      throw new Error('Master catalog API returned no data.');
+    try {
+      const catalog = await fetchMasterCatalog();
+      if (!catalog) {
+        throw new Error('Master catalog API returned no data.');
+      }
+      applyCatalog(catalog);
+    } catch (error) {
+      // Local-dev-only fallback: when the backend can't serve the DB-backed catalog
+      // (e.g. no local Postgres/Supabase configured -- see docs/DEVELOPMENT.md), don't
+      // hard-block the whole app. Log a warning and continue with the built-in
+      // defaults already present in agents/definitions.ts, agents/domains.ts, and
+      // data/roleTemplates.ts (these modules are only ever *overwritten* by
+      // applyCatalog(), never cleared beforehand, so skipping it here just means
+      // "keep what's already loaded").
+      //
+      // Production keeps the original hard-fail behavior -- import.meta.env.DEV is
+      // false in the built app, so this branch is a no-op there and App.tsx's
+      // existing catalogError handling is unchanged.
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[masterDataCatalog] Falling back to built-in agent/domain/role defaults ' +
+          '(catalog fetch failed -- this is expected in local dev without POSTGRES_URL/SUPABASE_* set):',
+          error,
+        );
+        return;
+      }
+      throw error;
     }
-    applyCatalog(catalog);
   })().finally(() => {
     initPromise = null;
   });

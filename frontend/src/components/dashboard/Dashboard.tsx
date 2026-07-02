@@ -7,6 +7,7 @@ import {
   listVisibleProjects,
   deleteProject,
   restoreProject,
+  checkIsAppAdmin,
   subscribeProjectRepositoryChange,
 } from '@/db/projectRepository';
 import type { ProjectSummary } from '@/types/project.types';
@@ -48,10 +49,17 @@ export default function Dashboard({ onOpenProject }: Props) {
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmSwitchUser, setConfirmSwitchUser] = useState(false);
+  const [isAppAdmin, setIsAppAdmin] = useState(false);
 
   useEffect(() => {
     const inviteSession = getInviteSession();
     setUserEmail(user?.email ?? inviteSession?.email ?? null);
+  }, [user?.email]);
+
+  useEffect(() => {
+    let active = true;
+    checkIsAppAdmin().then((result) => { if (active) setIsAppAdmin(result); });
+    return () => { active = false; };
   }, [user?.email]);
 
   const [allProjects, setAllProjects] = useState<ProjectSummary[] | undefined>(undefined);
@@ -95,10 +103,10 @@ export default function Dashboard({ onOpenProject }: Props) {
     toast('Switched to owner mode', 'info');
   }
 
-  async function handleDeleteConfirmed(id: string) {
+  async function handleDeleteConfirmed(id: string, remarks: string) {
     setConfirmDelete(null);
     try {
-      await deleteProject(id);
+      await deleteProject(id, remarks);
       toast('Project deleted', 'success');
     } catch (e) {
       toast(`Delete failed: ${String(e)}`, 'error');
@@ -177,10 +185,10 @@ export default function Dashboard({ onOpenProject }: Props) {
                 key={p.id}
                 project={p}
                 onOpen={() => onOpenProject(p.id)}
-                onDelete={() => setConfirmDelete(p.id)}
+                onDelete={isAppAdmin ? () => setConfirmDelete(p.id) : undefined}
                 onDetails={() => setDetailsProjectId(p.id)}
                 onEdit={() => setEditProjectId(p.id)}
-                onRestore={showArchived ? () => handleRestore(p.id) : undefined}
+                onRestore={showArchived && isAppAdmin ? () => handleRestore(p.id) : undefined}
               />
             ))}
           </div>
@@ -223,10 +231,13 @@ export default function Dashboard({ onOpenProject }: Props) {
       {confirmDelete && (
         <ConfirmDialog
           title="Delete project?"
-          message="This project will be archived and can be restored later. Are you sure you want to delete it?"
+          message="This project will be soft-deleted (archived) and can be restored by an admin later. Are you sure you want to delete it?"
           confirmLabel="Delete"
           danger
-          onConfirm={() => handleDeleteConfirmed(confirmDelete)}
+          requireInput
+          inputLabel="Reason for deleting this project (required)"
+          inputPlaceholder="e.g. Duplicate project, client cancelled, superseded by..."
+          onConfirm={(remarks) => handleDeleteConfirmed(confirmDelete, remarks ?? '')}
           onCancel={() => setConfirmDelete(null)}
         />
       )}

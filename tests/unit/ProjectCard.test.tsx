@@ -30,7 +30,7 @@ describe('ProjectCard (active view)', () => {
 
   it('renders the domain badge using DOMAINS[project.domain] (TS-183)', () => {
     const project = baseSummary({ domain: 'fintech' });
-    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />);
 
     const badge = screen.getByText(DOMAINS.fintech.label);
     expect(badge).toBeInTheDocument();
@@ -45,7 +45,7 @@ describe('ProjectCard (active view)', () => {
     ['error', 'Error', '#ef4444'],
   ])('renders status "%s" with label "%s" and color %s (TS-184)', (status, label, color) => {
     const project = baseSummary({ status: status as ProjectSummary['status'] });
-    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />);
 
     const labelEl = screen.getByText(label);
     expect(labelEl).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('ProjectCard (active view)', () => {
   it('falls back to the raw status string and default color for an unrecognized status (TS-185)', () => {
     const project = baseSummary({ status: 'unknown' as unknown as ProjectSummary['status'] });
     expect(() =>
-      render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />),
+      render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />),
     ).not.toThrow();
 
     const labelEl = screen.getByText('unknown');
@@ -65,7 +65,7 @@ describe('ProjectCard (active view)', () => {
 
   it('renders progress as Math.round(completed/total * 100)% for non-zero totalAgents (TS-186)', () => {
     const project = baseSummary({ completedAgents: 3, totalAgents: 8 });
-    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />);
 
     // 3/8 = 37.5 -> rounds to 38
     expect(screen.getByText('3/8 agents')).toBeInTheDocument();
@@ -77,7 +77,7 @@ describe('ProjectCard (active view)', () => {
   it('renders 0% and "0/0 agents" without dividing by zero when totalAgents is 0 (TS-187)', () => {
     const project = baseSummary({ completedAgents: 0, totalAgents: 0 });
     expect(() =>
-      render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />),
+      render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />),
     ).not.toThrow();
 
     expect(screen.getByText('0/0 agents')).toBeInTheDocument();
@@ -91,40 +91,37 @@ describe('ProjectCard (active view)', () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();
     const project = baseSummary();
-    render(<ProjectCard project={project} onOpen={onOpen} onDelete={vi.fn()} />);
+    render(<ProjectCard project={project} onOpen={onOpen} onDelete={vi.fn()} onDetails={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: new RegExp(project.name) }));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  it('clicking delete confirms via window.confirm and calls onDelete without onOpen (TS-189)', async () => {
+  it('clicking delete calls onDelete directly, without onOpen (TS-189)', async () => {
+    // Confirmation + required remarks now live in the caller's ConfirmDialog
+    // (Dashboard.tsx) — ProjectCard no longer calls window.confirm() itself,
+    // it just forwards the click to onDelete.
     const user = userEvent.setup();
     const onOpen = vi.fn();
     const onDelete = vi.fn();
     const project = baseSummary();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    render(<ProjectCard project={project} onOpen={onOpen} onDelete={onDelete} />);
+    render(<ProjectCard project={project} onOpen={onOpen} onDelete={onDelete} onDetails={vi.fn()} />);
 
     await user.click(screen.getByRole('button', { name: 'Delete project' }));
 
-    expect(window.confirm).toHaveBeenCalledWith(`Delete "${project.name}"? This cannot be undone.`);
     expect(onDelete).toHaveBeenCalledTimes(1);
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it('clicking delete and cancelling the confirm dialog does not call onDelete (TS-190)', async () => {
-    const user = userEvent.setup();
-    const onDelete = vi.fn();
+  it('does not render a Delete button when onDelete is not provided (TS-190)', () => {
+    // onDelete is only passed by Dashboard.tsx when the current user is an
+    // app admin (see checkIsAppAdmin) — non-admins should see no control.
     const project = baseSummary();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDetails={vi.fn()} />);
 
-    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={onDelete} />);
-
-    await user.click(screen.getByRole('button', { name: 'Delete project' }));
-
-    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Delete project' })).not.toBeInTheDocument();
   });
 
   it('renders no Restore button or archived metadata when onRestore is not provided (TS-191)', () => {
@@ -133,7 +130,7 @@ describe('ProjectCard (active view)', () => {
       archivedBy: 'Alice',
       archivedAt: Date.now(),
     });
-    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} />);
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDelete={vi.fn()} onDetails={vi.fn()} />);
 
     expect(screen.queryByRole('button', { name: 'Restore project' })).not.toBeInTheDocument();
     expect(screen.queryByText(/no longer needed/i)).not.toBeInTheDocument();

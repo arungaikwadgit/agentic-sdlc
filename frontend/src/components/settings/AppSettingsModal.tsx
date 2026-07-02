@@ -19,11 +19,11 @@ import {
 } from '@/agents/domainKnowledgeDefaults';
 import {
   listProjects,
-  updateProject,
   restoreProject,
   deleteProject,
   exportAllProjects,
   subscribeProjectRepositoryChange,
+  checkIsAppAdmin,
 } from '@/db/projectRepository';
 import { api, type ProviderTestResult } from '@/services/api';
 import {
@@ -90,14 +90,14 @@ export default function AppSettingsModal({ onClose }: Props) {
   const [proxyToken, setProxyToken] = useState('');
   const [model, setModel]         = useState('gpt-4o');
 
-  // Email (Resend) tab state
-  const [resendApiKey, setResendApiKey]   = useState('');
-  const [resendFrom, setResendFrom]       = useState('');
-  const [appUrl, setAppUrl]               = useState('');
-  const [showResendKey, setShowResendKey] = useState(false);
-  const [resendSaving, setResendSaving]   = useState(false);
-  const [resendMsg, setResendMsg]         = useState('');
-  const [resendErr, setResendErr]         = useState('');
+  // Email (Gmail SMTP) tab state
+  const [gmailUser, setGmailUser]               = useState('');
+  const [gmailAppPassword, setGmailAppPassword] = useState('');
+  const [appUrl, setAppUrl]                     = useState('');
+  const [showGmailPassword, setShowGmailPassword] = useState(false);
+  const [emailSaving, setEmailSaving]           = useState(false);
+  const [emailMsg, setEmailMsg]                 = useState('');
+  const [emailErr, setEmailErr]                 = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showToken, setShowToken]   = useState(false);
   const [saving, setSaving]       = useState(false);
@@ -143,8 +143,7 @@ export default function AppSettingsModal({ onClose }: Props) {
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [allProjectSummaries, setAllProjectSummaries] = useState<Awaited<ReturnType<typeof listProjects>>>([]);
   const [showArchivedProjects, setShowArchivedProjects] = useState(false);
-  const [archivingId, setArchivingId] = useState<string | null>(null);
-  const [archiveReasonDraft, setArchiveReasonDraft] = useState('');
+  const [isAppAdminUser, setIsAppAdminUser] = useState(false);
 
   // Derived project counts and views
   const archivedCount = allProjectSummaries.filter((p) => !!p.archived).length;
@@ -169,7 +168,7 @@ export default function AppSettingsModal({ onClose }: Props) {
       setAgentProviderHints(providerHints);
     })();
 
-    // Read current Claude/provider + Resend config from the backend .env
+    // Read current Claude/provider + Gmail config from the backend .env
     (async () => {
       try {
         const [healthRes, settingsRes] = await Promise.all([
@@ -186,8 +185,8 @@ export default function AppSettingsModal({ onClose }: Props) {
         }
         if (settingsRes.ok) {
           const cfg = await settingsRes.json();
-          if (cfg.resendFrom) setResendFrom(cfg.resendFrom);
-          if (cfg.appUrl)     setAppUrl(cfg.appUrl);
+          if (cfg.gmailUser) setGmailUser(cfg.gmailUser);
+          if (cfg.appUrl)    setAppUrl(cfg.appUrl);
         }
       } catch {
         // Backend unreachable — leave defaults as-is.
@@ -213,6 +212,13 @@ export default function AppSettingsModal({ onClose }: Props) {
       active = false;
       unsubscribe();
     };
+  }, []);
+
+  // Delete/restore in the Projects tab below are app-admin gated server-side
+  // (server/src/middleware/auth.ts requireAppAdmin) — this just controls
+  // whether the UI shows the controls at all.
+  useEffect(() => {
+    checkIsAppAdmin().then(setIsAppAdminUser);
   }, []);
 
   // When switching the selected agent (or loading defaults), refresh the draft
@@ -360,26 +366,26 @@ export default function AppSettingsModal({ onClose }: Props) {
   }
 
   async function handleSaveEmail() {
-    setResendSaving(true);
-    setResendMsg('');
-    setResendErr('');
+    setEmailSaving(true);
+    setEmailMsg('');
+    setEmailErr('');
     try {
       const payload: Record<string, unknown> = {};
-      if (resendApiKey.trim()) payload.resendApiKey = resendApiKey.trim();
-      if (resendFrom.trim())   payload.resendFrom   = resendFrom.trim();
-      if (appUrl.trim())       payload.appUrl        = appUrl.trim();
+      if (gmailUser.trim())        payload.gmailUser        = gmailUser.trim();
+      if (gmailAppPassword.trim()) payload.gmailAppPassword = gmailAppPassword.trim();
+      if (appUrl.trim())           payload.appUrl           = appUrl.trim();
 
       const result = await saveBackendSettings(payload);
       if (result.ok) {
-        setResendMsg(result.message ?? 'Email settings saved. Restart the backend to apply.');
-        setResendApiKey('');
+        setEmailMsg(result.message ?? 'Email settings saved. Restart the backend to apply.');
+        setGmailAppPassword('');
       } else {
-        setResendErr(result.error ?? 'Save failed.');
+        setEmailErr(result.error ?? 'Save failed.');
       }
     } catch {
-      setResendErr('Backend unreachable — is the proxy running?');
+      setEmailErr('Backend unreachable — is the proxy running?');
     } finally {
-      setResendSaving(false);
+      setEmailSaving(false);
     }
   }
 
@@ -429,35 +435,18 @@ export default function AppSettingsModal({ onClose }: Props) {
   }
 
   // ─── Projects tab ────────────────────────────────────────────────────────
-  function startArchive(projectId: string) {
-    setArchivingId(projectId);
-    setArchiveReasonDraft('');
-  }
-
-  function cancelArchive() {
-    setArchivingId(null);
-    setArchiveReasonDraft('');
-  }
-
-  async function confirmArchive(projectId: string) {
-    if (!archiveReasonDraft.trim()) return;
-    await updateProject(projectId, (p) => {
-      p.archived = true;
-      p.archivedReason = archiveReasonDraft.trim();
-      p.archivedAt = Date.now();
-      p.archivedBy = 'App Settings';
-    });
-    setArchivingId(null);
-    setArchiveReasonDraft('');
-  }
-
+  // Delete here is a soft delete (server flips `archived`, keeps the row) —
+  // app-admin only and requires remarks, enforced server-side. Restore clears
+  // the archive fields. Both call the same repository functions used by the
+  // Dashboard and Admin Panel so there is a single delete/restore code path.
   async function handleRestoreProject(projectId: string) {
     await restoreProject(projectId);
   }
 
   async function handleDeleteProject(projectId: string, name: string) {
-    if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return;
-    await deleteProject(projectId);
+    const remarks = window.prompt(`Delete "${name}"? Enter a reason (required). The project can be restored later.`);
+    if (!remarks || !remarks.trim()) return;
+    await deleteProject(projectId, remarks.trim());
   }
 
   // Export the backend-backed project data as a JSON backup from the server source of truth.
@@ -765,43 +754,43 @@ export default function AppSettingsModal({ onClose }: Props) {
           {tab === 'email' && (
             <div className={styles.section}>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-                Invite emails are sent via <strong>Resend</strong> (resend.com). Create a free account, verify your
-                sending domain, then paste your API key below. Without a key, invite links are still generated and
-                logged to the backend console — you can copy-paste them manually.
+                Invite emails are sent via <strong>Gmail SMTP</strong>, using a Gmail address and an App Password
+                (not your regular Gmail password). Without a Gmail address + App Password, invite links are still
+                generated and logged to the backend console — you can copy-paste them manually.
               </p>
 
               <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>Resend API Key</label>
-                <div className={styles.passwordInput}>
-                  <input
-                    type={showResendKey ? 'text' : 'password'}
-                    value={resendApiKey}
-                    onChange={(e) => setResendApiKey(e.target.value)}
-                    placeholder="re_… (leave blank to keep current)"
-                    autoComplete="off"
-                  />
-                  <button className={styles.eyeBtn} onClick={() => setShowResendKey((v) => !v)}>
-                    {showResendKey ? '🙈' : '👁'}
-                  </button>
-                </div>
+                <label className={styles.fieldLabel}>Gmail Address</label>
+                <input
+                  type="email"
+                  value={gmailUser}
+                  onChange={(e) => setGmailUser(e.target.value)}
+                  placeholder="you@gmail.com"
+                  autoComplete="off"
+                />
                 <span className={styles.fieldHint}>
-                  Get your key at <a href="https://resend.com/api-keys" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>resend.com/api-keys</a>.
-                  Stored in backend/.env as RESEND_API_KEY. Restart the backend after saving.
+                  The Gmail account invite emails will be sent from. Stored in backend/.env as GMAIL_USER.
                 </span>
               </div>
 
               <div className={styles.fieldGroup}>
-                <label className={styles.fieldLabel}>From Address</label>
-                <input
-                  type="email"
-                  value={resendFrom}
-                  onChange={(e) => setResendFrom(e.target.value)}
-                  placeholder="invites@yourdomain.com"
-                  autoComplete="off"
-                />
+                <label className={styles.fieldLabel}>Gmail App Password</label>
+                <div className={styles.passwordInput}>
+                  <input
+                    type={showGmailPassword ? 'text' : 'password'}
+                    value={gmailAppPassword}
+                    onChange={(e) => setGmailAppPassword(e.target.value)}
+                    placeholder="16-character app password (leave blank to keep current)"
+                    autoComplete="off"
+                  />
+                  <button className={styles.eyeBtn} onClick={() => setShowGmailPassword((v) => !v)}>
+                    {showGmailPassword ? '🙈' : '👁'}
+                  </button>
+                </div>
                 <span className={styles.fieldHint}>
-                  Must be on a domain you have verified in Resend. Example: <code>invites@yourdomain.com</code>.
-                  Stored as RESEND_FROM.
+                  Generate one at <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>myaccount.google.com/apppasswords</a> —
+                  requires 2-Step Verification to be enabled on the Gmail account. This is <em>not</em> the account's regular
+                  sign-in password. Stored in backend/.env as GMAIL_APP_PASSWORD. Restart the backend after saving.
                 </span>
               </div>
 
@@ -824,27 +813,30 @@ export default function AppSettingsModal({ onClose }: Props) {
                 <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', fontSize: 12, lineHeight: 1.7 }}>
                   <strong>Quick setup checklist:</strong>
                   <ol style={{ margin: '6px 0 0 18px', padding: 0 }}>
-                    <li>Sign up at <a href="https://resend.com" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>resend.com</a> (free tier: 3,000 emails/month)</li>
-                    <li>Go to <strong>Domains</strong> and add your domain — follow the DNS instructions</li>
-                    <li>Go to <strong>API Keys</strong> and create a key with "Sending" permission</li>
-                    <li>Paste the key above, set the From address and App URL, then click Save</li>
+                    <li>Enable <strong>2-Step Verification</strong> on the Gmail account (required for App Passwords)</li>
+                    <li>Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>myaccount.google.com/apppasswords</a> and create a new App Password</li>
+                    <li>Enter the Gmail address above and paste the App Password (not your login password)</li>
+                    <li>Set the App URL, then click Save</li>
                     <li>Restart the backend: <code>cd backend && npm start</code></li>
                   </ol>
+                  <div style={{ marginTop: 8, color: 'var(--text-muted)' }}>
+                    Note: a regular Gmail account is limited to ~500 sends/day (~2,000/day on Google Workspace).
+                  </div>
                 </div>
               </div>
 
-              {resendApiKey.trim() && (
+              {gmailAppPassword.trim() && (
                 <div className={styles.restartHint}>
-                  ⚠ After saving a new Resend key, restart the backend server for it to take effect.
+                  ⚠ After saving a new App Password, restart the backend server for it to take effect.
                 </div>
               )}
 
               <div className={styles.fieldGroup}>
-                <button className="btn-primary" onClick={handleSaveEmail} disabled={resendSaving}>
-                  {resendSaving ? 'Saving…' : 'Save Email Settings'}
+                <button className="btn-primary" onClick={handleSaveEmail} disabled={emailSaving}>
+                  {emailSaving ? 'Saving…' : 'Save Email Settings'}
                 </button>
-                {resendMsg && <p style={{ fontSize: 12, color: 'var(--success)', marginTop: '0.5rem' }}>✓ {resendMsg}</p>}
-                {resendErr && <p style={{ fontSize: 12, color: 'var(--error)', marginTop: '0.5rem' }}>✗ {resendErr}</p>}
+                {emailMsg && <p style={{ fontSize: 12, color: 'var(--success)', marginTop: '0.5rem' }}>✓ {emailMsg}</p>}
+                {emailErr && <p style={{ fontSize: 12, color: 'var(--error)', marginTop: '0.5rem' }}>✗ {emailErr}</p>}
               </div>
             </div>
           )}
@@ -1075,69 +1067,30 @@ export default function AppSettingsModal({ onClose }: Props) {
                         </span>
                       )}
                     </div>
-                    {archivingId === p.id ? (
-                      <div className={styles.archiveConfirm}>
-                        <input
-                          className={styles.archiveReasonInput}
-                          placeholder="Reason for archiving (required)"
-                          value={archiveReasonDraft}
-                          onChange={(e) => setArchiveReasonDraft(e.target.value)}
-                          autoFocus
-                        />
-                        <button
-                          className="btn-primary"
-                          style={{ fontSize: 11, padding: '2px 10px' }}
-                          onClick={() => confirmArchive(p.id)}
-                          disabled={!archiveReasonDraft.trim()}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          className="btn-secondary"
-                          style={{ fontSize: 11, padding: '2px 8px' }}
-                          onClick={cancelArchive}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
+                    {isAppAdminUser ? (
                       <div className={styles.projectRowActions}>
                         {p.archived ? (
-                          <>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: 11, padding: '2px 8px' }}
-                              onClick={() => handleRestoreProject(p.id)}
-                            >
-                              Restore
-                            </button>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: 11, padding: '2px 8px', color: 'var(--error)' }}
-                              onClick={() => handleDeleteProject(p.id, p.name)}
-                            >
-                              Delete
-                            </button>
-                          </>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                            onClick={() => handleRestoreProject(p.id)}
+                          >
+                            Restore
+                          </button>
                         ) : (
-                          <>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: 11, padding: '2px 8px' }}
-                              onClick={() => startArchive(p.id)}
-                            >
-                              Archive
-                            </button>
-                            <button
-                              className="btn-secondary"
-                              style={{ fontSize: 11, padding: '2px 8px', color: 'var(--error)' }}
-                              onClick={() => handleDeleteProject(p.id, p.name)}
-                            >
-                              Delete
-                            </button>
-                          </>
+                          <button
+                            className="btn-secondary"
+                            style={{ fontSize: 11, padding: '2px 8px', color: 'var(--error)' }}
+                            onClick={() => handleDeleteProject(p.id, p.name)}
+                          >
+                            Delete
+                          </button>
                         )}
                       </div>
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }} title="Only app admins can delete or restore projects">
+                        {p.archived ? 'Archived' : ''}
+                      </span>
                     )}
                   </div>
                 ))}

@@ -1,11 +1,18 @@
 // tests/unit/AppSettingsModal-projects.test.tsx
 // Real-component RTL test for AppSettingsModal.tsx, "Projects" tab.
 // Covers TS-40 through TS-50 from docs/test-plans/project-lifecycle-test-plan.md.
+//
+// This tab's delete/archive flow was rewritten as part of the admin-only
+// soft-delete feature: the old inline "Archive" text-input form (which called
+// updateProject directly) is gone. Delete is now app-admin gated (via
+// checkIsAppAdmin), soft-deletes through deleteProject(id, remarks) with
+// remarks collected via window.prompt, and Restore calls restoreProject(id).
+// Both controls are hidden entirely for non-admins.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
-import type { Project, ProjectSummary } from '../../frontend/src/types/project.types';
+import type { ProjectSummary } from '../../frontend/src/types/project.types';
 
 // ── Mock dexie-react-hooks' useLiveQuery ───────────────────────────────────
 // useLiveQuery normally subscribes to Dexie's observable query system, which
@@ -30,8 +37,8 @@ vi.mock('dexie-react-hooks', () => ({
   },
 }));
 
-// ── Mock db/database (used directly by AppSettingsModal for settings,
-// and transitively by agents/promptDefaults, agents/domainKnowledgeDefaults) ──
+// ── Mock db/database (used transitively by agents/promptDefaults,
+// agents/domainKnowledgeDefaults) ──
 vi.mock('../../frontend/src/db/database', () => ({
   db: {
     projects: {
@@ -59,17 +66,12 @@ vi.mock('../../frontend/src/db/database', () => ({
 
 // ── Mock db/projectRepository ───────────────────────────────────────────────
 let summariesStore: ProjectSummary[] = [];
+// AppSettingsModal only shows Delete/Restore when checkIsAppAdmin() resolves
+// true — default to true so the admin-path tests below exercise the buttons;
+// the non-admin path is covered separately (TS-48c).
+let isAppAdminFlag = true;
 
 const listProjectsMock = vi.fn(async () => summariesStore);
-const updateProjectMock = vi.fn(async (_id: string, updater: (p: Project) => void | Project) => {
-  const target = summariesStore.find((s) => s.id === _id);
-  if (!target) throw new Error(`Project not found: ${_id}`);
-  // ProjectSummary is a subset of Project; cast for the updater's sake.
-  const draft = target as unknown as Project;
-  const result = updater(draft);
-  Object.assign(target, result ?? draft);
-  return target;
-});
 const restoreProjectMock = vi.fn(async (id: string) => {
   const target = summariesStore.find((s) => s.id === id);
   if (target) {
@@ -79,21 +81,33 @@ const restoreProjectMock = vi.fn(async (id: string) => {
     target.archivedBy = undefined;
   }
 });
-const deleteProjectMock = vi.fn(async (id: string) => {
-  summariesStore = summariesStore.filter((s) => s.id !== id);
+const deleteProjectMock = vi.fn(async (id: string, remarks: string) => {
+  const target = summariesStore.find((s) => s.id === id);
+  if (target) {
+    target.archived = true;
+    target.archivedReason = remarks;
+    target.archivedAt = Date.now();
+    target.archivedBy = 'admin@example.com';
+  }
 });
+const checkIsAppAdminMock = vi.fn(async () => isAppAdminFlag);
+const subscribeProjectRepositoryChangeMock = vi.fn(() => () => {});
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   listProjects: (...args: unknown[]) => listProjectsMock(...(args as [])),
-  updateProject: (...args: Parameters<typeof updateProjectMock>) => updateProjectMock(...args),
   restoreProject: (...args: Parameters<typeof restoreProjectMock>) => restoreProjectMock(...args),
   deleteProject: (...args: Parameters<typeof deleteProjectMock>) => deleteProjectMock(...args),
+  checkIsAppAdmin: (...args: unknown[]) => checkIsAppAdminMock(...(args as [])),
+  subscribeProjectRepositoryChange: (...args: Parameters<typeof subscribeProjectRepositoryChangeMock>) =>
+    subscribeProjectRepositoryChangeMock(...args),
+  exportAllProjects: vi.fn(async () => '{}'),
 }));
 
 // ── Mock services/api (namespace import `* as api`) ─────────────────────────
 vi.mock('../../frontend/src/services/api', () => ({
   callAgent: vi.fn(),
   extractText: vi.fn(),
+  getAuthHeader: vi.fn(async () => ({})),
 }));
 
 // Import after mocks are registered.
@@ -123,10 +137,11 @@ async function openProjectsTab() {
 describe('AppSettingsModal — Projects tab', () => {
   beforeEach(() => {
     summariesStore = [];
+    isAppAdminFlag = true;
     listProjectsMock.mockClear();
-    updateProjectMock.mockClear();
     restoreProjectMock.mockClear();
     deleteProjectMock.mockClear();
+    checkIsAppAdminMock.mockClear();
   });
 
   it('hides the archived toggle and lists active projects when none are archived (TS-40)', async () => {
@@ -146,7 +161,7 @@ describe('AppSettingsModal — Projects tab', () => {
         archived: true,
         archivedReason: 'Done',
         archivedAt: Date.now(),
-        archivedBy: 'App Settings',
+        archivedBy: 'admin@example.com',
       }),
     ];
     const user = await openProjectsTab();
@@ -173,14 +188,8 @@ describe('AppSettingsModal — Projects tab', () => {
   it('renders "No archived projects." when the archived view has no items (TS-43)', async () => {
     // The "No archived projects." string is normally unreachable through the
     // UI: the toggle (the only way to set showArchivedProjects=true) only
-    // renders when archivedCount > 0, and toggling away from an empty
-    // archived view isn't possible once archivedCount drops to 0 (see
-    // Findings note at the end of this file). To verify the branch's JSX is
-    // correct without relying on an unreachable user flow, render with one
-    // archived project (so the toggle appears and the branch can be reached),
-    // switch to the archived view, and confirm the populated state renders
-    // as expected — then separately confirm the empty-active-list branch
-    // (TS-42) covers the equivalent ternary on the other side.
+    // renders when archivedCount > 0. Verified indirectly via TS-41/TS-42
+    // covering both ternary branches that are actually reachable.
     summariesStore = [makeSummary({ id: 'archived-1', name: 'Old Project', archived: true })];
     const user = await openProjectsTab();
 
@@ -191,61 +200,6 @@ describe('AppSettingsModal — Projects tab', () => {
     expect(screen.queryByText('No archived projects.')).not.toBeInTheDocument();
   });
 
-  it('shows the inline archive form with Confirm disabled until text is entered (TS-44)', async () => {
-    summariesStore = [makeSummary()];
-    const user = await openProjectsTab();
-
-    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /archive/i }));
-
-    const input = screen.getByPlaceholderText('Reason for archiving (required)');
-    expect(input).toBeInTheDocument();
-    const confirmBtn = screen.getByRole('button', { name: /^confirm$/i });
-    expect(confirmBtn).toBeDisabled();
-
-    await user.type(input, 'Duplicate of another project');
-    expect(confirmBtn).not.toBeDisabled();
-  });
-
-  it('archives with archivedBy "App Settings" on Confirm (TS-45)', async () => {
-    summariesStore = [makeSummary()];
-    const user = await openProjectsTab();
-
-    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /archive/i }));
-    await user.type(screen.getByPlaceholderText('Reason for archiving (required)'), 'Duplicate of another project');
-    await user.click(screen.getByRole('button', { name: /^confirm$/i }));
-
-    expect(updateProjectMock).toHaveBeenCalledTimes(1);
-    const [calledId, updater] = updateProjectMock.mock.calls[0];
-    expect(calledId).toBe('proj-1');
-
-    const draft = { ...summariesStore[0] } as unknown as Project;
-    updater(draft);
-    expect(draft.archived).toBe(true);
-    expect(draft.archivedReason).toBe('Duplicate of another project');
-    expect(typeof draft.archivedAt).toBe('number');
-    expect(draft.archivedBy).toBe('App Settings');
-
-    // Inline form closes after confirm.
-    await waitFor(() =>
-      expect(screen.queryByPlaceholderText('Reason for archiving (required)')).not.toBeInTheDocument()
-    );
-  });
-
-  it('closes the inline archive form on Cancel without calling updateProject (TS-46)', async () => {
-    summariesStore = [makeSummary()];
-    const user = await openProjectsTab();
-
-    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: /archive/i }));
-    await user.type(screen.getByPlaceholderText('Reason for archiving (required)'), 'some reason');
-    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
-
-    expect(screen.queryByPlaceholderText('Reason for archiving (required)')).not.toBeInTheDocument();
-    expect(updateProjectMock).not.toHaveBeenCalled();
-  });
-
   it('calls restoreProject(id) when "Restore" is clicked in the archived view (TS-47)', async () => {
     summariesStore = [
       makeSummary({
@@ -254,13 +208,11 @@ describe('AppSettingsModal — Projects tab', () => {
         archived: true,
         archivedReason: 'Done',
         archivedAt: Date.now(),
-        archivedBy: 'App Settings',
+        archivedBy: 'admin@example.com',
       }),
     ];
     const user = await openProjectsTab();
 
-    // archivedCount === visibleProjects.length here (1 active project = 0,
-    // since the only project is archived) -> archivedCount = 1, toggle shown.
     await waitFor(() => expect(screen.getByRole('button', { name: /archived \(1\)/i })).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /archived \(1\)/i }));
 
@@ -270,32 +222,62 @@ describe('AppSettingsModal — Projects tab', () => {
     expect(restoreProjectMock).toHaveBeenCalledWith('archived-1');
   });
 
-  it('calls deleteProject(id) when Delete is confirmed (TS-48)', async () => {
+  it('calls deleteProject(id, remarks) when Delete is confirmed with a reason (TS-48)', async () => {
+    // Remarks are now collected via window.prompt rather than window.confirm
+    // — deleteProject requires a non-empty reason (server-enforced too).
     summariesStore = [makeSummary()];
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(window, 'prompt').mockReturnValue('Duplicate project');
     const user = await openProjectsTab();
 
     await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /delete/i }));
 
-    expect(window.confirm).toHaveBeenCalledWith('Permanently delete "Demo Project"? This cannot be undone.');
-    expect(deleteProjectMock).toHaveBeenCalledWith('proj-1');
+    expect(window.prompt).toHaveBeenCalled();
+    expect(deleteProjectMock).toHaveBeenCalledWith('proj-1', 'Duplicate project');
 
     vi.restoreAllMocks();
   });
 
-  it('does not call deleteProject when the confirm dialog is declined (TS-49)', async () => {
+  it('does not call deleteProject when the prompt is cancelled (TS-49)', async () => {
     summariesStore = [makeSummary()];
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.spyOn(window, 'prompt').mockReturnValue(null);
     const user = await openProjectsTab();
 
     await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: /delete/i }));
 
-    expect(window.confirm).toHaveBeenCalled();
+    expect(window.prompt).toHaveBeenCalled();
     expect(deleteProjectMock).not.toHaveBeenCalled();
 
     vi.restoreAllMocks();
+  });
+
+  it('does not call deleteProject when the prompt is left blank (TS-49b)', async () => {
+    summariesStore = [makeSummary()];
+    vi.spyOn(window, 'prompt').mockReturnValue('   ');
+    const user = await openProjectsTab();
+
+    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: /delete/i }));
+
+    expect(deleteProjectMock).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
+
+  it('hides Delete/Restore controls entirely for non-admin users (TS-48c)', async () => {
+    isAppAdminFlag = false;
+    summariesStore = [
+      makeSummary({ id: 'proj-1', name: 'Demo Project' }),
+      makeSummary({ id: 'archived-1', name: 'Old Project', archived: true, archivedBy: 'admin@example.com' }),
+    ];
+    const user = await openProjectsTab();
+
+    await waitFor(() => expect(screen.getByText('Demo Project')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /archived \(1\)/i }));
+    expect(screen.queryByRole('button', { name: /restore/i })).not.toBeInTheDocument();
   });
 
   it('shows "{archivedBy}: {archivedReason}" and the archived date for a person-archived project (TS-50)', async () => {
@@ -322,7 +304,7 @@ describe('AppSettingsModal — Projects tab', () => {
     // text node, so match on substring via a custom text matcher.
     const expectedDateText = `Archived ${new Date(archivedDate).toLocaleDateString()}`;
     // Multiple ancestor elements share the same text content; verify at least one leaf contains it.
-    const matches = screen.getAllByText((_content, element) => element?.textContent?.includes(expectedDateText) ?? false);
+    const matches = screen.getAllByText((_content: string, element: Element | null) => element?.textContent?.includes(expectedDateText) ?? false);
     expect(matches.length).toBeGreaterThan(0);
   });
 });
@@ -335,7 +317,13 @@ describe('AppSettingsModal — Projects tab', () => {
 // disappears — there's no UI path left to view an empty archived list. The
 // "No archived projects." string is reachable only if `showArchivedProjects`
 // is true while `archivedCount` is simultaneously 0, which can't happen via
-// user interaction (the toggle is the only setter and it requires
-// archivedCount > 0 to render). This mirrors a similar finding for
-// Dashboard.tsx (see Module 2 architecture doc, "Development notes" — minor:
-// the same dead-branch pattern repeats for the archived empty state).
+// user interaction. Same dead-branch pattern as Dashboard.tsx.
+//
+// TS-44/45/46 from the original suite (inline "Archive" text-input form,
+// Confirm/Cancel buttons, updateProject-based archiving) were removed in this
+// session: that whole code path was deleted from AppSettingsModal.tsx because
+// it bypassed the new admin-gated soft-delete system entirely (any signed-in
+// user could archive a project via updateProject, and the server's PATCH
+// hardening added alongside this feature would have silently discarded those
+// writes anyway, making the old "Archive" button a confusing no-op). Delete
+// is now the single soft-delete entry point everywhere in the app.

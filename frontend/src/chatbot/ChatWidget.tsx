@@ -22,7 +22,7 @@ const DEPLOYMENT_CONTEXT = `
 - Backend: Node/Express (server/), deployed to Railway (Docker container, Dockerfile at /server/Dockerfile)
 - Local dev backend: backend/ (lightweight Express proxy, PROXY_TOKEN auth, port 3001)
 - Database & Auth: Supabase (PostgreSQL + GoTrue auth + Row Level Security)
-- Emails: Resend (project invites via magic links)
+- Emails: Gmail SMTP via nodemailer (project invites via magic links)
 
 ### Railway Backend (server/)
 - Service: agentic-sdlc-server

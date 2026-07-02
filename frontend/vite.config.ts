@@ -47,7 +47,7 @@ export default defineConfig({
             if (!srvRes.headersSent) {
               srvRes.writeHead(503, { 'Content-Type': 'application/json' });
               srvRes.end(JSON.stringify({
-                error: `Backend server not reachable at localhost:3001 (${code}). Run: cd server && npm run dev`,
+                error: `Backend server not reachable at localhost:3001 (${code}). Run: cd backend && npm run dev`,
               }));
             }
           });

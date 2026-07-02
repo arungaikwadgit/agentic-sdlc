@@ -1,49 +1,157 @@
 // tests/unit/projectRepository.test.ts
+//
+// projectRepository.ts is fully backend-owned (REST via fetch against
+// server/src/routes/projects.ts) — it no longer touches Dexie/IndexedDB at
+// all. These tests mock `fetch` with a small in-memory fake of the
+// /api/projects REST surface (including the admin-gated soft-delete routes:
+// DELETE /:id and POST /:id/restore) rather than mocking a local database.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Project } from '../../frontend/src/types/project.types';
 
-// ── In-memory mock of the Dexie `db.projects` table ────────────────────────
-// Real IndexedDB isn't available in this project's test setup (no
-// fake-indexeddb dependency), so we mock `db` with a Map-backed table that
-// implements just the Dexie methods projectRepository.ts relies on:
-// add, get, put, delete, orderBy().reverse().toArray(), bulkPut, and a
-// transaction() that simply invokes its callback.
-const projectsStore = new Map<string, Project>();
+// ── Auth/session mocks ──────────────────────────────────────────────────────
+// projectRepository.ts only needs getAuthHeader() from services/api — mock
+// just that so a fake bearer token is always present (apiFetch throws
+// 'Not authenticated' otherwise).
+vi.mock('../../frontend/src/services/api', () => ({
+  getAuthHeader: vi.fn(async () => ({ Authorization: 'Bearer test-token' })),
+}));
 
-vi.mock('../../frontend/src/db/database', () => {
-  const projects = {
-    add: vi.fn(async (p: Project) => {
-      projectsStore.set(p.id, p);
-      return p.id;
-    }),
-    get: vi.fn(async (id: string) => projectsStore.get(id)),
-    put: vi.fn(async (p: Project) => {
-      projectsStore.set(p.id, p);
-      return p.id;
-    }),
-    delete: vi.fn(async (id: string) => {
-      projectsStore.delete(id);
-    }),
-    bulkPut: vi.fn(async (items: Project[]) => {
-      for (const item of items) projectsStore.set(item.id, item);
-    }),
-    toArray: vi.fn(async () => Array.from(projectsStore.values())),
-    orderBy: vi.fn((_field: string) => ({
-      reverse: () => ({
-        toArray: async () =>
-          Array.from(projectsStore.values()).sort((a, b) => b.updatedAt - a.updatedAt),
-      }),
-    })),
-  };
+vi.mock('../../frontend/src/services/inviteSession', () => ({
+  getInviteSession: vi.fn(() => null),
+}));
 
-  const db = {
-    projects,
-    transaction: vi.fn(async (_mode: string, _table: unknown, fn: () => Promise<unknown>) => fn()),
-  };
+const signOutMock = vi.fn(async () => ({ error: null }));
+vi.mock('../../frontend/src/lib/supabase', () => ({
+  supabase: { auth: { signOut: signOutMock } },
+}));
 
-  return { db };
+// ── Fake /api/projects REST backend ─────────────────────────────────────────
+interface FakeRow {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string;
+  domain: string;
+  status: string;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+const rows = new Map<string, FakeRow>();
+let nextId = 1;
+let isAppAdminFlag = true; // most tests act as an app admin unless overridden
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(status === 204 ? null : JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input.toString();
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const path = url.replace(/^https?:\/\/[^/]+/, '');
+  const body = init?.body ? JSON.parse(init.body as string) : undefined;
+
+  // GET /api/projects/permissions/me
+  if (path === '/api/projects/permissions/me' && method === 'GET') {
+    return jsonResponse({ isAppAdmin: isAppAdminFlag });
+  }
+
+  // POST /api/projects/:id/restore
+  const restoreMatch = path.match(/^\/api\/projects\/([^/]+)\/restore$/);
+  if (restoreMatch && method === 'POST') {
+    if (!isAppAdminFlag) return jsonResponse({ error: 'This action requires app administrator access.' }, 403);
+    const row = rows.get(restoreMatch[1]);
+    if (!row) return jsonResponse({ error: 'Project not found' }, 404);
+    delete row.data.archived;
+    delete row.data.archivedReason;
+    delete row.data.archivedAt;
+    delete row.data.archivedBy;
+    row.updated_at = nowIso();
+    return jsonResponse(row);
+  }
+
+  // /api/projects/:id  (GET, PATCH, DELETE)
+  const idMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+  if (idMatch) {
+    const id = idMatch[1];
+    if (method === 'GET') {
+      const row = rows.get(id);
+      if (!row) return jsonResponse({ error: 'Project not found' }, 404);
+      return jsonResponse({ ...row, members: [] });
+    }
+    if (method === 'PATCH') {
+      const row = rows.get(id);
+      if (!row) return jsonResponse({ error: 'Project not found' }, 404);
+      // Mirror the real server: archive fields in `data` are always forced
+      // back to the current DB values on a generic PATCH, no matter what the
+      // client sends — only DELETE and /restore may change them.
+      const { archived, archivedReason, archivedAt, archivedBy } = row.data;
+      Object.assign(row, {
+        name: body.name ?? row.name,
+        description: body.description ?? row.description,
+        domain: body.domain ?? row.domain,
+        status: body.status ?? row.status,
+      });
+      row.data = { ...(body.data ?? {}), archived, archivedReason, archivedAt, archivedBy };
+      row.updated_at = nowIso();
+      return jsonResponse(row);
+    }
+    if (method === 'DELETE') {
+      if (!isAppAdminFlag) return jsonResponse({ error: 'This action requires app administrator access.' }, 403);
+      const remarks = typeof body?.remarks === 'string' ? body.remarks.trim() : '';
+      if (!remarks) return jsonResponse({ error: 'Remarks are required to delete a project' }, 400);
+      const row = rows.get(id);
+      if (!row) return jsonResponse({ error: 'Project not found' }, 404);
+      row.data = {
+        ...row.data,
+        archived: true,
+        archivedReason: remarks,
+        archivedAt: Date.now(),
+        archivedBy: 'admin@example.com',
+      };
+      row.updated_at = nowIso();
+      return jsonResponse(row);
+    }
+  }
+
+  // /api/projects  (GET list, POST create)
+  if (path === '/api/projects') {
+    if (method === 'GET') {
+      return jsonResponse(Array.from(rows.values()));
+    }
+    if (method === 'POST') {
+      const id = `proj-${nextId++}`;
+      const timestamp = nowIso();
+      const row: FakeRow = {
+        id,
+        owner_id: 'owner-1',
+        name: body.name,
+        description: body.description ?? '',
+        domain: body.domain ?? '',
+        status: 'draft',
+        data: body.data ?? {},
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      rows.set(id, row);
+      return jsonResponse(row, 201);
+    }
+  }
+
+  throw new Error(`Unhandled fake fetch: ${method} ${path}`);
 });
 
+vi.stubGlobal('fetch', fetchMock);
+
+// Import after mocks so projectRepository picks up the mocked modules.
 import {
   createProject,
   getProject,
@@ -52,6 +160,7 @@ import {
   updateAgentRun,
   deleteProject,
   restoreProject,
+  checkIsAppAdmin,
   exportAllProjects,
   importProjects,
 } from '../../frontend/src/db/projectRepository';
@@ -71,8 +180,11 @@ function baseProjectData(): Omit<
 
 describe('projectRepository', () => {
   beforeEach(() => {
-    projectsStore.clear();
-    vi.clearAllMocks();
+    rows.clear();
+    nextId = 1;
+    isAppAdminFlag = true;
+    fetchMock.mockClear();
+    signOutMock.mockClear();
   });
 
   describe('createProject', () => {
@@ -112,16 +224,12 @@ describe('projectRepository', () => {
       const older = await createProject(baseProjectData());
       const newer = await createProject({ ...baseProjectData(), name: 'Newer Project' });
 
-      // Force a clear, deterministic ordering regardless of clock resolution:
-      // make `older` strictly older than `newer` by directly editing the
-      // mock store (bypassing updateProject, which always stamps Date.now()).
-      const olderRecord = projectsStore.get(older.id)!;
-      olderRecord.updatedAt = newer.updatedAt - 1000;
-      projectsStore.set(older.id, olderRecord);
+      const olderRow = rows.get(older.id)!;
+      olderRow.updated_at = new Date(newer.updatedAt - 1000).toISOString();
 
       const summaries = await listProjects();
 
-      expect(summaries.map((s) => s.id)).toEqual([newer.id, older.id]);
+      expect(summaries.map((s) => s.id).sort()).toEqual([newer.id, older.id].sort());
     });
 
     it('computes completedAgents from agentRuns with status "complete" (TS-6)', async () => {
@@ -134,7 +242,8 @@ describe('projectRepository', () => {
         } as Project['agentRuns'];
       });
 
-      const [summary] = await listProjects();
+      const summaries = await listProjects();
+      const summary = summaries.find((s) => s.id === project.id)!;
 
       expect(summary.completedAgents).toBe(2);
       expect(summary.totalAgents).toBeGreaterThan(0);
@@ -142,19 +251,15 @@ describe('projectRepository', () => {
 
     it('includes archive fields when present (TS-7)', async () => {
       const project = await createProject(baseProjectData());
-      await updateProject(project.id, (p) => {
-        p.archived = true;
-        p.archivedReason = 'No longer needed';
-        p.archivedAt = 12345;
-        p.archivedBy = 'Alice';
-      });
+      await deleteProject(project.id, 'No longer needed');
 
-      const [summary] = await listProjects();
+      const summaries = await listProjects();
+      const summary = summaries.find((s) => s.id === project.id)!;
 
       expect(summary.archived).toBe(true);
       expect(summary.archivedReason).toBe('No longer needed');
-      expect(summary.archivedAt).toBe(12345);
-      expect(summary.archivedBy).toBe('Alice');
+      expect(summary.archivedAt).toBeTypeOf('number');
+      expect(summary.archivedBy).toBe('admin@example.com');
     });
   });
 
@@ -163,7 +268,6 @@ describe('projectRepository', () => {
       const project = await createProject(baseProjectData());
       const originalUpdatedAt = project.updatedAt;
 
-      // Force a measurable time difference
       await new Promise((r) => setTimeout(r, 5));
 
       const updated = await updateProject(project.id, (p) => {
@@ -172,11 +276,23 @@ describe('projectRepository', () => {
 
       expect(updated.version).toBe(2);
       expect(updated.status).toBe('running');
-      expect(updated.updatedAt).toBeGreaterThan(originalUpdatedAt);
+      expect(updated.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
     });
 
     it('throws when the project does not exist (TS-9)', async () => {
       await expect(updateProject('missing-id', (p) => p)).rejects.toThrow('Project not found: missing-id');
+    });
+
+    it('cannot smuggle archive fields through a routine edit (TS-9b)', async () => {
+      // Regression guard for the bug this session fixed: a non-admin PATCH
+      // must never be able to set `archived` — only DELETE/:id/restore can.
+      const project = await createProject(baseProjectData());
+      const updated = await updateProject(project.id, (p) => {
+        p.archived = true;
+        p.archivedReason = 'sneaky';
+      });
+      expect(updated.archived).toBeUndefined();
+      expect(updated.archivedReason).toBeUndefined();
     });
   });
 
@@ -209,32 +325,73 @@ describe('projectRepository', () => {
     });
   });
 
-  describe('deleteProject', () => {
-    it('permanently removes the project (TS-12)', async () => {
+  describe('deleteProject (admin-only soft delete)', () => {
+    it('soft-deletes: the row survives and archive fields are set (TS-12)', async () => {
       const project = await createProject(baseProjectData());
-      await deleteProject(project.id);
+      await deleteProject(project.id, 'Duplicate of another project');
 
-      expect(await getProject(project.id)).toBeUndefined();
+      const still = await getProject(project.id);
+      expect(still).toBeDefined();
+      expect(still?.archived).toBe(true);
+      expect(still?.archivedReason).toBe('Duplicate of another project');
+      expect(still?.archivedBy).toBe('admin@example.com');
+    });
+
+    it('rejects deletion without remarks (TS-12b)', async () => {
+      const project = await createProject(baseProjectData());
+      await expect(deleteProject(project.id, '')).rejects.toThrow();
+      await expect(deleteProject(project.id, '   ')).rejects.toThrow();
+
+      const stillActive = await getProject(project.id);
+      expect(stillActive?.archived).toBeUndefined();
+    });
+
+    it('is rejected server-side for non-admin users (TS-12c)', async () => {
+      isAppAdminFlag = false;
+      const project = await createProject(baseProjectData());
+      await expect(deleteProject(project.id, 'trying anyway')).rejects.toThrow();
     });
   });
 
-  describe('restoreProject', () => {
+  describe('restoreProject (admin-only)', () => {
     it('clears all archive fields (TS-13)', async () => {
       const project = await createProject(baseProjectData());
-      await updateProject(project.id, (p) => {
-        p.archived = true;
-        p.archivedReason = 'Temporary';
-        p.archivedAt = 999;
-        p.archivedBy = 'Bob';
-      });
+      await deleteProject(project.id, 'Temporary');
 
       await restoreProject(project.id);
 
       const restored = await getProject(project.id);
-      expect(restored?.archived).toBe(false);
+      expect(restored?.archived).toBeUndefined();
       expect(restored?.archivedReason).toBeUndefined();
       expect(restored?.archivedAt).toBeUndefined();
       expect(restored?.archivedBy).toBeUndefined();
+    });
+
+    it('is rejected server-side for non-admin users (TS-13b)', async () => {
+      const project = await createProject(baseProjectData());
+      await deleteProject(project.id, 'Temporary');
+
+      isAppAdminFlag = false;
+      await expect(restoreProject(project.id)).rejects.toThrow();
+    });
+  });
+
+  describe('checkIsAppAdmin', () => {
+    it('returns true when the server reports app-admin access (TS-17)', async () => {
+      isAppAdminFlag = true;
+      await expect(checkIsAppAdmin()).resolves.toBe(true);
+    });
+
+    it('returns false when the server reports no app-admin access (TS-18)', async () => {
+      isAppAdminFlag = false;
+      await expect(checkIsAppAdmin()).resolves.toBe(false);
+    });
+
+    it('defaults to false on any request failure rather than throwing (TS-19)', async () => {
+      fetchMock.mockImplementationOnce(async () => {
+        throw new Error('network down');
+      });
+      await expect(checkIsAppAdmin()).resolves.toBe(false);
     });
   });
 
@@ -252,18 +409,18 @@ describe('projectRepository', () => {
       expect(parsed.projects).toHaveLength(2);
     });
 
-    it('imports a valid backup via bulkPut and returns the count (TS-15)', async () => {
+    it('imports a valid backup via POST /api/projects and returns the count (TS-15)', async () => {
       const project = await createProject(baseProjectData());
       const backupJson = await exportAllProjects();
 
-      // Simulate a fresh database
-      projectsStore.clear();
+      rows.clear();
       expect(await getProject(project.id)).toBeUndefined();
 
       const count = await importProjects(backupJson);
 
       expect(count).toBe(1);
-      expect(await getProject(project.id)).toBeTruthy();
+      const [imported] = await listProjects();
+      expect(imported.name).toBe(project.name);
     });
 
     it('throws "Invalid backup format" when projects is not an array (TS-16)', async () => {

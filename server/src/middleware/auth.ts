@@ -54,6 +54,34 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
+ * App-wide system administrators — distinct from `project_members.role`
+ * (which is per-project) and from the frontend's local-dev-only `isAdminMode()`
+ * bypass. Configure via the ADMIN_EMAIL_ALLOWLIST env var (comma-separated,
+ * case-insensitive) on this service in Railway. If unset, no user is treated
+ * as an app admin and admin-gated routes (e.g. project delete/restore) will
+ * 403 for everyone until it's configured.
+ */
+const ADMIN_EMAIL_ALLOWLIST = new Set(
+  (process.env.ADMIN_EMAIL_ALLOWLIST ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+export function isAppAdmin(email: string | null | undefined): boolean {
+  return !!email && ADMIN_EMAIL_ALLOWLIST.has(email.toLowerCase());
+}
+
+/** Requires the authenticated user's email to be in ADMIN_EMAIL_ALLOWLIST. */
+export function requireAppAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (isAppAdmin(req.user?.email)) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'This action requires app administrator access.' });
+}
+
+/**
  * Check that the current user has one of the allowed roles on a project.
  * Usage: requireProjectRole('owner', 'admin')
  */

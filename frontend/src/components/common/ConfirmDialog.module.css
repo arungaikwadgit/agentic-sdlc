@@ -52,6 +52,34 @@
   gap: 10px;
 }
 
+.inputLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg, transparent);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 8px 10px;
+  margin: 0 0 20px;
+}
+
+.input:focus {
+  outline: 2px solid var(--accent, #6366f1);
+  outline-offset: -1px;
+}
+
 .dangerBtn {
   background: var(--error, #ef4444);
   color: #fff;

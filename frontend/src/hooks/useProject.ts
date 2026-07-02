@@ -42,8 +42,10 @@ export function useProject(projectId: string) {
     await updateProject(projectId, updater);
   }
 
-  async function remove() {
-    await deleteProject(projectId);
+  /** Soft-deletes the project. Requires remarks and app-admin access
+   * (enforced server-side) — see db/projectRepository.ts deleteProject(). */
+  async function remove(remarks: string) {
+    await deleteProject(projectId, remarks);
   }
 
   return { project, loading, error, refresh, save, remove };

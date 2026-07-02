@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { createProject } from '@/db/projectRepository';
 import { DOMAINS } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
+import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import type { DomainId } from '@/types/domain.types';
 import type { ProjectPriority, ProjectType } from '@/types/project.types';
 import styles from './NewProjectModal.module.css';
@@ -157,16 +158,28 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     setDomain(preset.domain);
   }
 
+  // Fetches the app-level domain knowledge default; falls back to the hardcoded
+  // template on any failure (network, auth, backend unreachable, etc.) so a
+  // config-fetch error never blocks project creation.
+  async function safeGetDomainKnowledgeDefault(domainId: DomainId): Promise<string> {
+    try {
+      return await getEffectiveDomainKnowledgeDefault(domainId);
+    } catch (err) {
+      console.warn('Failed to load app-level domain knowledge default, using built-in template.', err);
+      return DOMAIN_KNOWLEDGE_TEMPLATES[domainId] ?? '';
+    }
+  }
+
   async function handleDomainChange(newDomain: DomainId) {
     setDomain(newDomain);
     // Reset domain knowledge to the app-level default for the new domain (falls back to built-in template)
-    setDomainKnowledge(await getEffectiveDomainKnowledgeDefault(newDomain));
+    setDomainKnowledge(await safeGetDomainKnowledgeDefault(newDomain));
   }
 
   async function goToKnowledge() {
     if (!name.trim() || !description.trim() || !owner.trim() || dateError) return;
     // Pre-fill from the app-level default (or built-in template) if not yet customized
-    if (!domainKnowledge) setDomainKnowledge(await getEffectiveDomainKnowledgeDefault(domain));
+    if (!domainKnowledge) setDomainKnowledge(await safeGetDomainKnowledgeDefault(domain));
     setStep('domain-knowledge');
   }
 
@@ -525,7 +538,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
               <div className={styles.knowledgeActions}>
                 <button
-                  onClick={async () => setDomainKnowledge(await getEffectiveDomainKnowledgeDefault(domain))}
+                  onClick={async () => setDomainKnowledge(await safeGetDomainKnowledgeDefault(domain))}
                   style={{ fontSize: 12 }}
                 >
                   ↺ Reset to template

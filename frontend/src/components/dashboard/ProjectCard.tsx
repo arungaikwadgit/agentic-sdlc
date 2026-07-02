@@ -25,10 +25,11 @@ const STATUS_COLORS: Record<string, string> = {
 interface Props {
   project: ProjectSummary;
   onOpen: () => void;
-  onDelete: () => void;
+  /** Only passed when the current user is an app admin — see Dashboard.tsx. */
+  onDelete?: () => void;
   onDetails: () => void;
   onEdit?: () => void;
-  /** If provided, the card is in "archived" view: shows archive details and a Restore button instead of delete. */
+  /** Only passed when the current user is an app admin and the project is archived. */
   onRestore?: () => void;
 }
 
@@ -41,9 +42,9 @@ export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEd
 
   function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
-    if (confirm(`Delete "${project.name}"? This cannot be undone.`)) {
-      onDelete();
-    }
+    // Confirmation + required remarks are handled by the caller (Dashboard's
+    // ConfirmDialog) before onDelete is ever invoked — no confirm() here.
+    onDelete?.();
   }
 
   function handleRestore(e: React.MouseEvent) {
@@ -83,7 +84,7 @@ export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEd
         <span className={styles.progressLabel}>{project.completedAgents}/{project.totalAgents} agents</span>
       </div>
 
-      {onRestore && project.archivedReason && (
+      {project.archived && project.archivedReason && (
         <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0', fontStyle: 'italic' }}>
           {project.archivedBy ? `${project.archivedBy}: ` : ''}"{project.archivedReason}"
         </p>
@@ -91,21 +92,25 @@ export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEd
 
       <div className={styles.footer}>
         <span className={styles.date}>
-          {onRestore && project.archivedAt
-            ? `Archived ${new Date(project.archivedAt).toLocaleDateString()}`
+          {project.archived && project.archivedAt
+            ? `Deleted ${new Date(project.archivedAt).toLocaleDateString()}`
             : new Date(project.updatedAt).toLocaleDateString()}
         </span>
         <div style={{ display: 'flex', gap: 4 }}>
           <button className={styles.infoBtn} onClick={handleDetails} aria-label="View project details" title="Project details">ℹ</button>
-          {onEdit && !onRestore && (
+          {onEdit && !project.archived && (
             <button className={styles.infoBtn} onClick={handleEdit} aria-label="Edit project" title="Edit project">✏</button>
           )}
-          {onRestore ? (
-            <button className="btn-secondary" onClick={handleRestore} aria-label="Restore project" style={{ padding: '4px 10px', fontSize: 12 }}>
-              ↩ Restore
-            </button>
+          {project.archived ? (
+            onRestore && (
+              <button className="btn-secondary" onClick={handleRestore} aria-label="Restore project" style={{ padding: '4px 10px', fontSize: 12 }}>
+                ↩ Restore
+              </button>
+            )
           ) : (
-            <button className={styles.deleteBtn} onClick={handleDelete} aria-label="Delete project">✕</button>
+            onDelete && (
+              <button className={styles.deleteBtn} onClick={handleDelete} aria-label="Delete project">✕</button>
+            )
           )}
         </div>
       </div>

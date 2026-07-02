@@ -3,7 +3,7 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
-import { updateProject } from '@/db/projectRepository';
+import { updateProject, deleteProject, restoreProject as restoreProjectApi, checkIsAppAdmin } from '@/db/projectRepository';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { ROLE_TEMPLATES } from '@/data/roleTemplates';
@@ -175,6 +175,16 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const isAdmin = !!adminMode || !!currentMember?.isAdmin;
+
+  // App-wide admin (ADMIN_EMAIL_ALLOWLIST on the server) — separate from the
+  // per-project `isAdmin` above. Only app admins may soft-delete or restore a
+  // project; `isAdmin` here still governs regular team-management actions.
+  const [isAppAdminUser, setIsAppAdminUser] = useState(false);
+  useEffect(() => {
+    let active = true;
+    checkIsAppAdmin().then((result) => { if (active) setIsAppAdminUser(result); });
+    return () => { active = false; };
+  }, []);
 
   // ── Team tab state ──
   const [newName, setNewName] = useState('');
@@ -444,25 +454,23 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
     }
   }
 
-  async function archiveProject() {
-    if (!isAdmin) return;
+  async function handleDeleteProject() {
+    if (!isAppAdminUser) return;
     if (!archiveReason.trim()) { setArchiveError('A reason is required to delete this project.'); return; }
     setArchiveError(null);
-    const archivedByMember = members.find((m) => m.id === adminSessionId);
-    await updateProject(project.id, (p) => {
-      p.archived = true;
-      p.archivedReason = archiveReason.trim();
-      p.archivedAt = Date.now();
-      p.archivedBy = archivedByMember?.name ?? adminSessionId;
-    });
-    onClose();
+    try {
+      // Soft delete — enforced server-side (app-admin + remarks required).
+      // See db/projectRepository.ts deleteProject() and server/src/routes/projects.ts.
+      await deleteProject(project.id, archiveReason.trim());
+      onClose();
+    } catch (err) {
+      setArchiveError(String(err));
+    }
   }
 
-  async function restoreProject() {
-    if (!isAdmin) return;
-    await updateProject(project.id, (p) => {
-      p.archived = false; p.archivedReason = undefined; p.archivedAt = undefined; p.archivedBy = undefined;
-    });
+  async function handleRestoreProject() {
+    if (!isAppAdminUser) return;
+    await restoreProjectApi(project.id);
   }
 
   useEffect(() => {
@@ -937,23 +945,23 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
                   )}
                 </div>
 
-                {isAdmin && (
+                {isAppAdminUser && (
                   <div className={styles.dangerZone}>
                     <p className={styles.sectionTitle}>Danger Zone</p>
                     {project.archived ? (
                       <>
                         <p className={styles.fieldHint}>
-                          This project is archived{project.archivedBy ? ` by ${project.archivedBy}` : ''}
+                          This project is deleted{project.archivedBy ? ` by ${project.archivedBy}` : ''}
                           {project.archivedAt ? ` on ${new Date(project.archivedAt).toLocaleDateString()}` : ''}.
                           {project.archivedReason ? ` Reason: "${project.archivedReason}"` : ''}
                           {' '}Restore it to make it active and visible again.
                         </p>
-                        <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={restoreProject} style={{ alignSelf: 'flex-start' }}>↩ Restore Project</button>
+                        <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={handleRestoreProject} style={{ alignSelf: 'flex-start' }}>↩ Restore Project</button>
                       </>
                     ) : !showArchiveConfirm ? (
                       <>
                         <p className={styles.fieldHint}>
-                          Archiving hides this project from the dashboard. An admin can restore it later.
+                          Deleting soft-deletes this project (it's hidden from the dashboard, never permanently removed). An admin can restore it later.
                         </p>
                         <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={() => setShowArchiveConfirm(true)} style={{ alignSelf: 'flex-start' }}>Delete Project…</button>
                       </>
@@ -966,7 +974,7 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
                         </div>
                         {archiveError && <p className={styles.error}>{archiveError}</p>}
                         <div className={styles.addRow}>
-                          <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={archiveProject}>Confirm Delete</button>
+                          <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={handleDeleteProject}>Confirm Delete</button>
                           <button className={styles.actionBtn} onClick={() => { setShowArchiveConfirm(false); setArchiveReason(''); setArchiveError(null); }}>Cancel</button>
                         </div>
                       </>

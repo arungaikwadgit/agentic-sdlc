@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabase';
-import { requireAuth, requireProjectRole } from '../middleware/auth';
+import { requireAuth, requireProjectRole, requireAppAdmin, isAppAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -25,7 +25,33 @@ const UpdateProjectSchema = CreateProjectSchema.partial().extend({
   data: z.record(z.unknown()).optional(),
 });
 
+const DeleteProjectSchema = z.object({
+  remarks: z.string().trim().min(1, 'Remarks are required to delete a project').max(500),
+});
+
+/** Fields inside the `data` JSONB blob that only the dedicated delete/restore
+ * routes below are allowed to set. The generic PATCH route below always
+ * overwrites these with the current DB values, regardless of what a client
+ * sends, so a non-admin edit can never sneak a delete or restore through. */
+const ARCHIVE_FIELDS = ['archived', 'archivedReason', 'archivedAt', 'archivedBy'] as const;
+
+function pickArchiveFields(data: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of ARCHIVE_FIELDS) {
+    if (data && key in data) out[key] = data[key];
+  }
+  return out;
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
+
+/** GET /api/projects/permissions/me — lets the frontend know whether the
+ * current user is an app-wide admin, so it can show/hide delete & restore
+ * controls without guessing from 403s. Placed before /:id so "permissions"
+ * is never matched as a project id. */
+router.get('/permissions/me', requireAuth, (req, res) => {
+  res.json({ isAppAdmin: isAppAdmin(req.user?.email) });
+});
 
 /** GET /api/projects — list all projects the authenticated user has access to */
 router.get('/', requireAuth, async (req, res) => {
@@ -138,14 +164,33 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
-/** PATCH /api/projects/:id — update project (admin/owner only) */
+/** PATCH /api/projects/:id — update project (admin/owner only).
+ * Archive-state fields (archived, archivedReason, archivedAt, archivedBy) are
+ * always forced back to whatever is currently in the DB, no matter what the
+ * client sends — only the dedicated DELETE and /restore routes below (both
+ * app-admin gated) may change them. This closes off a path where any project
+ * owner/admin could otherwise silently un-delete or delete-without-remarks a
+ * project through a routine edit. */
 router.patch('/:id', requireAuth, requireProjectRole('owner', 'admin'), async (req, res) => {
   try {
     const body = UpdateProjectSchema.parse(req.body);
 
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('projects')
+      .select('data')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError || !existing) return res.status(404).json({ error: 'Project not found' });
+
+    const mergedData = {
+      ...(body.data ?? {}),
+      ...pickArchiveFields(existing.data as Record<string, unknown> | null),
+    };
+
     const { data, error } = await supabaseAdmin
       .from('projects')
-      .update({ ...body, updated_at: new Date().toISOString() })
+      .update({ ...body, data: mergedData, updated_at: new Date().toISOString() })
       .eq('id', req.params.id)
       .select()
       .single();
@@ -160,20 +205,82 @@ router.patch('/:id', requireAuth, requireProjectRole('owner', 'admin'), async (r
   }
 });
 
-/** DELETE /api/projects/:id — owner only */
-router.delete('/:id', requireAuth, requireProjectRole('owner'), async (req, res) => {
+/** DELETE /api/projects/:id — app admin only, requires remarks.
+ * This is a SOFT delete: the row is never removed from Postgres. It flips
+ * `data.archived = true` and records the remarks, timestamp, and admin email,
+ * so it can be restored later via POST /:id/restore. (Previously this route
+ * did a real `.delete()` — a permanent, unrecoverable removal — even though
+ * the Dashboard's own confirm dialog already claimed the project "will be
+ * archived and can be restored later". This route now actually matches that
+ * promise.) */
+router.delete('/:id', requireAuth, requireAppAdmin, async (req, res) => {
   try {
-    const { error } = await supabaseAdmin
+    const body = DeleteProjectSchema.parse(req.body ?? {});
+
+    const { data: existing, error: fetchError } = await supabaseAdmin
       .from('projects')
-      .delete()
-      .eq('id', req.params.id);
+      .select('data')
+      .eq('id', req.params.id)
+      .single();
 
-    if (error) throw error;
+    if (fetchError || !existing) return res.status(404).json({ error: 'Project not found' });
 
-    res.status(204).send();
+    const mergedData = {
+      ...(existing.data as Record<string, unknown> ?? {}),
+      archived: true,
+      archivedReason: body.remarks,
+      archivedAt: Date.now(),
+      archivedBy: req.user!.email,
+    };
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .update({ data: mergedData, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error || !data) throw error ?? new Error('Soft delete failed');
+
+    res.status(200).json(data);
   } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors[0]?.message ?? 'Remarks are required' });
     console.error('[DELETE /projects/:id]', err);
     res.status(500).json({ error: 'Failed to delete project' });
+  }
+});
+
+/** POST /api/projects/:id/restore — app admin only.
+ * Un-deletes a soft-deleted project by clearing the archive fields. */
+router.post('/:id/restore', requireAuth, requireAppAdmin, async (req, res) => {
+  try {
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('projects')
+      .select('data')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError || !existing) return res.status(404).json({ error: 'Project not found' });
+
+    const mergedData = { ...(existing.data as Record<string, unknown> ?? {}) };
+    delete mergedData.archived;
+    delete mergedData.archivedReason;
+    delete mergedData.archivedAt;
+    delete mergedData.archivedBy;
+
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .update({ data: mergedData, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error || !data) throw error ?? new Error('Restore failed');
+
+    res.status(200).json(data);
+  } catch (err) {
+    console.error('[POST /projects/:id/restore]', err);
+    res.status(500).json({ error: 'Failed to restore project' });
   }
 });
 

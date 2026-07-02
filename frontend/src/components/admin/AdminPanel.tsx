@@ -1,4 +1,4 @@
-﻿/**
+/**
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
@@ -335,8 +335,12 @@ function ProjectsTab() {
   };
 
   const deleteRemote = async (id: string) => {
-    if (!confirm('Delete this project from the backend repository?')) return;
-    await deleteProject(id);
+    // Soft-delete only (app-admin + remarks enforced server-side in
+    // server/src/routes/projects.ts). Use prompt() here since this is an
+    // internal debug panel, not the main Dashboard delete flow.
+    const remarks = prompt('Reason for deleting this project (required):');
+    if (!remarks?.trim()) return;
+    await deleteProject(id, remarks.trim());
     setSelected(null);
     setMessage('Project deleted');
     await reload();
@@ -821,7 +825,7 @@ const SDLC_ENHANCEMENTS = [
   },
 ] as const;
 
-// ── Settings Tab ───────────�
+// ── Settings Tab ───────────────────────────────────────────────────────────────
 function SettingsTab() {
   const [message, setMessage] = useState('');
 

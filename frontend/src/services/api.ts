@@ -9,6 +9,10 @@
 
 const API_URL = import.meta.env.VITE_API_URL ?? '/api';
 const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+// Local-dev-only shared secret fallback (mirrors services/masterDataCatalog.ts).
+// VITE_PROXY_TOKEN must never be set in production (Vercel) env — see docs/DEVELOPMENT.md —
+// so in production this is always '' and the fallback below is a no-op.
+const PROXY_TOKEN = (import.meta.env.VITE_PROXY_TOKEN ?? '').trim();
 
 /** Returns the best available auth header for the current session. */
 export async function getAuthHeader(): Promise<Record<string, string>> {
@@ -108,11 +112,18 @@ function parseErrorDetail(status: number, raw: string): string {
 }
 
 async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse> {
+  const authHeaders = await getAuthHeader();
   const res = await fetch(`${API_URL}/agents/call`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(await getAuthHeader()),
+      ...authHeaders,
+      // Local-dev fallback: when there's no Supabase session / admin-mode / invite
+      // session (so getAuthHeader() returned {}), attach the shared PROXY_TOKEN the
+      // same way fetchMasterCatalog() already does. Without this, every /api/agents/call
+      // in that state hits the proxy's checkToken 401 path, which the UI reports as
+      // "Authentication failed" even when the OpenAI/Anthropic key itself is fine.
+      ...(!authHeaders.Authorization && PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {}),
     },
     body: JSON.stringify(req),
     // H-06 fix: thread through caller-supplied AbortSignal for timeout/cancel support

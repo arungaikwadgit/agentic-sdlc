@@ -10,6 +10,7 @@ const https   = require('https');
 const http    = require('http');
 const tls     = require('tls');
 const rateLimit = require('express-rate-limit');
+const nodemailer = require('nodemailer');
 
 const app   = express();
 const PORT  = process.env.PORT ?? 3001;
@@ -973,7 +974,8 @@ app.get('/api/settings', checkToken, requireAdmin, (req, res) => {
     const anthropicEnabled = readKey('ANTHROPIC_ENABLED');
     const defaultLlmProvider = readKey('DEFAULT_LLM_PROVIDER');
     const agentProviderMapRaw = readKey('AGENT_PROVIDER_MAP');
-    const resendFrom       = readKey('RESEND_FROM');
+    const gmailUser        = readKey('GMAIL_USER');
+    const gmailAppPassword = readKey('GMAIL_APP_PASSWORD');
     const appUrl           = readKey('APP_URL');
 
     let agentProviderMap = {};
@@ -991,7 +993,8 @@ app.get('/api/settings', checkToken, requireAdmin, (req, res) => {
       hasOpenaiKey:      !!openaiApiKey,
       hasAnthropicKey:   !!anthropicApiKey,
       hasProxyToken:     !!proxyToken,
-      resendFrom,
+      hasGmailAppPassword: !!gmailAppPassword,               // never expose raw app password
+      gmailUser,
       appUrl,
     });
   } catch (err) {
@@ -1016,7 +1019,7 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
     openaiApiKey, proxyToken, openaiModel,
     anthropicApiKey, anthropicModel, anthropicEnabled,
     defaultLlmProvider, agentProviderMap,
-    resendApiKey, resendFrom, appUrl,
+    gmailUser, gmailAppPassword, appUrl,
   } = req.body ?? {};
   const fs   = require('fs');
   const path = require('path');
@@ -1025,7 +1028,7 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
   const stringFields = {
     openaiApiKey, proxyToken, openaiModel,
     anthropicApiKey, anthropicModel,
-    defaultLlmProvider, resendApiKey, resendFrom, appUrl,
+    defaultLlmProvider, gmailUser, gmailAppPassword, appUrl,
   };
   for (const [field, value] of Object.entries(stringFields)) {
     if (rejectsEnvInjection(value)) {
@@ -1072,9 +1075,9 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
     if (agentProviderMap)           upsertFlag(lines, 'AGENT_PROVIDER_MAP', JSON.stringify(agentProviderMap));
 
     // Email / invite settings
-    if (resendApiKey) upsert(lines, 'RESEND_API_KEY', resendApiKey);
-    if (resendFrom)   upsert(lines, 'RESEND_FROM',    resendFrom);
-    if (appUrl)       upsert(lines, 'APP_URL',         appUrl);
+    if (gmailUser)         upsert(lines, 'GMAIL_USER', gmailUser);
+    if (gmailAppPassword)  upsert(lines, 'GMAIL_APP_PASSWORD', gmailAppPassword);
+    if (appUrl)            upsert(lines, 'APP_URL', appUrl);
 
     fs.writeFileSync(envPath, lines.filter((l) => l.trim()).join('\n') + '\n', 'utf8');
     // Lock the file to owner read/write only — it holds plaintext API keys.
@@ -1088,7 +1091,12 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
   }
 });
 
-app.get('/api/app-state/config', checkToken, requireAdmin, async (req, res) => {
+// NOTE: reads are intentionally admin-agnostic (checkToken only, no requireAdmin).
+// App-level config here includes values meant to be read by any authenticated user
+// during normal flows (e.g. app:domainKnowledgeDefaults, read by every user in
+// NewProjectModal when creating a project) — only *writing* config is an admin
+// action (see PUT/POST /batch/DELETE below, which still require requireAdmin).
+app.get('/api/app-state/config', checkToken, async (req, res) => {
   if (!await requireAppStateDb(res)) return;
   const keys = typeof req.query.keys === 'string'
     ? req.query.keys.split(',').map((key) => normalizeConfigKey(key)).filter(Boolean)
@@ -1097,7 +1105,7 @@ app.get('/api/app-state/config', checkToken, requireAdmin, async (req, res) => {
   return res.json({ values });
 });
 
-app.get('/api/app-state/config/:key', checkToken, requireAdmin, async (req, res) => {
+app.get('/api/app-state/config/:key', checkToken, async (req, res) => {
   if (!await requireAppStateDb(res)) return;
   const key = normalizeConfigKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'key is required' });
@@ -1223,9 +1231,23 @@ app.get('/api/master-data/catalog', async (_req, res) => {
 const { Pool } = require('pg');
 const { randomUUID } = require('crypto');
 
-// Resend email client (optional — set RESEND_API_KEY to enable real emails)
-const RESEND_API_KEY   = process.env.RESEND_API_KEY ?? '';
-const RESEND_FROM      = process.env.RESEND_FROM ?? 'noreply@yourdomain.com';
+// Gmail SMTP client (optional — set GMAIL_USER + GMAIL_APP_PASSWORD to enable real emails)
+// GMAIL_APP_PASSWORD is a 16-character Google App Password, not the account password —
+// generate one at https://myaccount.google.com/apppasswords (requires 2-Step Verification).
+const GMAIL_USER         = process.env.GMAIL_USER ?? '';
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD ?? '';
+
+let _gmailTransporter = null;
+function getGmailTransporter() {
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) return null;
+  if (!_gmailTransporter) {
+    _gmailTransporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+    });
+  }
+  return _gmailTransporter;
+}
 const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
 const INVITABLE_APP_ROLES = ['editor', 'reviewer', 'viewer'];
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1816,11 +1838,12 @@ async function dbGetInviteSession(token) {
   return row;
 }
 
-// ── Email sender (Resend) ─────────────────────────────────────────────────────
+// ── Email sender (Gmail SMTP) ─────────────────────────────────────────────────
 async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
-  if (!RESEND_API_KEY) {
+  const transporter = getGmailTransporter();
+  if (!transporter) {
     // Dev mode — log to console
-    console.log(`\n[INVITE LINK - no RESEND_API_KEY set]\nTo: ${to}\nLink: ${inviteLink}\n`);
+    console.log(`\n[INVITE LINK - no GMAIL_USER/GMAIL_APP_PASSWORD set]\nTo: ${to}\nLink: ${inviteLink}\n`);
     return { ok: true, dev: true };
   }
 
@@ -1852,17 +1875,21 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
     </div>
   `;
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: RESEND_FROM, to, subject: `You're invited to ${projectName}`, html }),
-  });
-  const data = await res.json().catch(() => ({}));
-  return {
-    ok: res.ok,
-    data,
-    error: !res.ok ? (data?.message || data?.error || 'Resend rejected the invite email.') : null,
-  };
+  try {
+    const info = await transporter.sendMail({
+      from: `"Agentic SDLC" <${GMAIL_USER}>`,
+      to,
+      subject: `You're invited to ${projectName}`,
+      html,
+    });
+    return { ok: true, data: { messageId: info?.messageId }, error: null };
+  } catch (err) {
+    return {
+      ok: false,
+      data: null,
+      error: err?.message || 'Gmail rejected the invite email.',
+    };
+  }
 }
 
 // ── POST /api/invite/send ─────────────────────────────────────────────────────
@@ -1909,7 +1936,7 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     token,
     dev: emailResult.dev ?? false,
     message: emailResult.dev
-      ? 'Invite link generated (no email sent — RESEND_API_KEY not set). Copy the link to share manually.'
+      ? 'Invite link generated (no email sent — GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
       : 'Invite email sent.',
   });
 });
@@ -2199,7 +2226,14 @@ app.get('/api/invite/team/:projectId', checkToken, async (req, res) => {
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
-app.listen(PORT, () => {
-  console.log(`Agentic SDLC proxy  http://localhost:${PORT}  model=${OPENAI_MODEL}`);
-  console.log(CORP_PROXY ? `Corporate proxy: ${CORP_PROXY}` : 'Direct connection (no proxy configured)');
-});
+// Only bind a real port when this file is run directly (`node src/proxy.js`),
+// not when it's `require()`d — e.g. from a test file that wants to exercise
+// individual functions without starting a live server.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Agentic SDLC proxy  http://localhost:${PORT}  model=${OPENAI_MODEL}`);
+    console.log(CORP_PROXY ? `Corporate proxy: ${CORP_PROXY}` : 'Direct connection (no proxy configured)');
+  });
+}
+
+module.exports = { app, sendInviteEmail, getGmailTransporter };
