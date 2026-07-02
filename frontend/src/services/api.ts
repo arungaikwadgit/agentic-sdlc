@@ -10,9 +10,20 @@
 const API_URL = import.meta.env.VITE_API_URL ?? '/api';
 const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
 // Local-dev-only shared secret fallback (mirrors services/masterDataCatalog.ts).
-// VITE_PROXY_TOKEN must never be set in production (Vercel) env — see docs/DEVELOPMENT.md —
-// so in production this is always '' and the fallback below is a no-op.
-const PROXY_TOKEN = (import.meta.env.VITE_PROXY_TOKEN ?? '').trim();
+// Read it dynamically per request so Vite env values supplied at runtime are
+// honored consistently and the proxy token still works after hot reloads.
+export function getProxyToken(): string {
+  const proxyToken = (import.meta.env.VITE_PROXY_TOKEN ?? '').trim();
+  if (!proxyToken) return '';
+
+  const hostname = typeof globalThis.location?.hostname === 'string'
+    ? globalThis.location.hostname
+    : (typeof window !== 'undefined' ? window.location.hostname : '');
+  const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname.endsWith('.local');
+  const isLocalDevBuild = Boolean(import.meta.env.DEV);
+
+  return isLocalDevBuild && isLocalHost ? proxyToken : '';
+}
 
 /** Returns the best available auth header for the current session. */
 export async function getAuthHeader(): Promise<Record<string, string>> {
@@ -113,6 +124,7 @@ function parseErrorDetail(status: number, raw: string): string {
 
 async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse> {
   const authHeaders = await getAuthHeader();
+  const proxyToken = getProxyToken();
   const res = await fetch(`${API_URL}/agents/call`, {
     method: 'POST',
     headers: {
@@ -123,7 +135,7 @@ async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse>
       // same way fetchMasterCatalog() already does. Without this, every /api/agents/call
       // in that state hits the proxy's checkToken 401 path, which the UI reports as
       // "Authentication failed" even when the OpenAI/Anthropic key itself is fine.
-      ...(!authHeaders.Authorization && PROXY_TOKEN ? { 'X-API-Token': PROXY_TOKEN } : {}),
+      ...(!authHeaders.Authorization && proxyToken ? { 'X-API-Token': proxyToken } : {}),
     },
     body: JSON.stringify(req),
     // H-06 fix: thread through caller-supplied AbortSignal for timeout/cancel support

@@ -25,7 +25,7 @@ import {
   subscribeProjectRepositoryChange,
   checkIsAppAdmin,
 } from '@/db/projectRepository';
-import { api, type ProviderTestResult } from '@/services/api';
+import { api, getAuthHeader, getProxyToken, type ProviderTestResult } from '@/services/api';
 import {
   getAppConfigValue,
   setAppConfigValue,
@@ -65,14 +65,16 @@ const PROVIDER_HINT_OPTIONS: { value: ProviderHint; label: string }[] = [
 ];
 
 const API_URL  = (import.meta as any).env?.VITE_API_URL ?? '/api';
-// C-NEW-01 fix: getAuthHeader() uses Supabase JWT (no bundled secret)
-import { getAuthHeader } from '@/services/api';
-
 async function saveBackendSettings(payload: Record<string, unknown>): Promise<{ ok: boolean; message?: string; error?: string }> {
   const authHeader = await getAuthHeader();
+  const proxyToken = getProxyToken();
   const res = await fetch(`${API_URL}/settings`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeader,
+      ...(!authHeader.Authorization && proxyToken ? { 'X-API-Token': proxyToken } : {}),
+    },
     body: JSON.stringify(payload),
   });
   return res.json();

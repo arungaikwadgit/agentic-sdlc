@@ -49,4 +49,46 @@ describe('api.callAgent', () => {
 
     await expect(api.callAgent({ systemPrompt: '', userPrompt: '' })).rejects.toThrow('401: Unauthorized');
   });
+
+  it('uses the proxy token from the current environment when present on localhost', async () => {
+    vi.stubEnv('VITE_PROXY_TOKEN', 'token-123');
+    vi.stubGlobal('location', new URL('http://localhost/'));
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+      }),
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    await api.callAgent({ systemPrompt: 'test', userPrompt: 'test' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-API-Token': 'token-123' }),
+      }),
+    );
+  });
+
+  it('does not send the proxy token on non-local production hosts', async () => {
+    vi.stubEnv('VITE_PROXY_TOKEN', 'token-123');
+    vi.stubGlobal('location', new URL('https://example.com/'));
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+      }),
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    await api.callAgent({ systemPrompt: 'test', userPrompt: 'test' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.not.objectContaining({ 'X-API-Token': 'token-123' }),
+      }),
+    );
+  });
 });
