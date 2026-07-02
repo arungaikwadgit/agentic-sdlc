@@ -11,6 +11,8 @@ const http    = require('http');
 const tls     = require('tls');
 const rateLimit = require('express-rate-limit');
 const nodemailer = require('nodemailer');
+const { createLocalProjectStore } = require('./localProjectStore');
+const { createInMemoryAppStateStore } = require('./appStateStore');
 
 const app   = express();
 const PORT  = process.env.PORT ?? 3001;
@@ -71,6 +73,8 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 const ANTHROPIC_MODEL   = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 const ANTHROPIC_ENABLED = String(process.env.ANTHROPIC_ENABLED ?? '').toLowerCase() === 'true' && !!ANTHROPIC_API_KEY;
 const DEFAULT_LLM_PROVIDER = (process.env.DEFAULT_LLM_PROVIDER ?? 'openai').toLowerCase() === 'claude' ? 'claude' : 'openai';
+const localProjectStore = createLocalProjectStore();
+const appStateStore = createInMemoryAppStateStore();
 
 // Per-agent provider routing hints (agentId -> 'openai' | 'claude').
 // Falls back to DEFAULT_LLM_PROVIDER for any agent not listed here.
@@ -157,7 +161,14 @@ app.use((req, _res, next) => {
 });
 
 app.use(express.json({ limit: '10mb' }));
-app.use('/api', rateLimit({ windowMs: 60_000, max: 120 }));
+const isLocalDev = process.env.NODE_ENV !== 'production' && !process.env.RAILWAY_ENVIRONMENT_NAME;
+app.use('/api', rateLimit({
+  windowMs: 60_000,
+  max: isLocalDev ? 1000 : 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Please retry shortly.' },
+}));
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 async function checkToken(req, res, next) {
@@ -314,6 +325,32 @@ app.get('/api/health', (_req, res) => {
 // still allowing project/invite/admin routes to live on their dedicated API.
 async function forwardToServer(req, res) {
   if (!SERVER_API_URL) {
+    if (req.path === '/' && req.method === 'POST') {
+      const created = localProjectStore.create(req.body ?? {}, req.authUser?.email || 'local-dev-user');
+      return res.status(201).json(created);
+    }
+    if (req.path === '/' && req.method === 'GET') {
+      return res.json(localProjectStore.list());
+    }
+    if (req.path === '/permissions/me' && req.method === 'GET') {
+      return res.json({ isAppAdmin: isConfiguredAdminEmail(req.authUser?.email ?? null) });
+    }
+    if (req.path.match(/^\/[^/]+$/) && req.method === 'GET') {
+      const project = localProjectStore.get(req.path.slice(1));
+      return project ? res.json(project) : res.status(404).json({ error: 'Project not found' });
+    }
+    if (req.path.match(/^\/[^/]+$/) && req.method === 'PATCH') {
+      const project = localProjectStore.update(req.path.slice(1), req.body ?? {});
+      return project ? res.json(project) : res.status(404).json({ error: 'Project not found' });
+    }
+    if (req.path.match(/^\/[^/]+$/) && req.method === 'DELETE') {
+      const project = localProjectStore.remove(req.path.slice(1));
+      return project ? res.status(200).json(project) : res.status(404).json({ error: 'Project not found' });
+    }
+    if (req.path.match(/^\/[^/]+\/restore$/) && req.method === 'POST') {
+      const project = localProjectStore.restore(req.path.split('/')[1]);
+      return project ? res.status(200).json(project) : res.status(404).json({ error: 'Project not found' });
+    }
     return res.status(503).json({ error: 'SERVER_API_URL is not configured' });
   }
 
@@ -1256,14 +1293,23 @@ const INVITE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 // In-memory fallback when Postgres is unavailable
 const inviteStore = new Map();
 
+function resolveDbConnectionString() {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.POSTGRES_URL_PRODUCTION || process.env.POSTGRES_URL || null;
+  }
+  return process.env.POSTGRES_URL_LOCAL || process.env.POSTGRES_URL || null;
+}
+
+const dbConnectionString = resolveDbConnectionString();
+
 // M-NEW-03 fix: warn loudly at startup if invite tokens will not be persisted.
 // A Railway restart (deploy, OOM, health-check failure) will silently drop all
 // pending invites when running without a database.
-if (!process.env.POSTGRES_URL) {
+if (!dbConnectionString) {
   console.warn(
-    '[WARN] POSTGRES_URL is not set — invite tokens are stored in-memory only.\n' +
+    '[WARN] No Postgres connection string is configured — invite tokens are stored in-memory only.\n' +
     '       All pending invites will be lost if the backend process restarts.\n' +
-    '       Add POSTGRES_URL to your Railway environment to enable persistence.'
+    '       Set POSTGRES_URL_LOCAL for local development and POSTGRES_URL_PRODUCTION for production.'
   );
 } // token -> { projectId, projectName, email, name, appRole, invitedBy, invitedAt, acceptedAt }
 
@@ -1279,13 +1325,13 @@ const inviteSendRateLimit = rateLimit({
   message: { error: 'Too many invite requests from this IP. Please try again in a few minutes.' },
 });
 
-// ── DB helpers (no-op if POSTGRES_URL not set) ────────────────────────────────
+// ── DB helpers (no-op if no Postgres connection string is set) ─────────────
 let dbPool = null;
 let appStateReady = null;
 let inviteSessionReady = null;
-if (process.env.POSTGRES_URL) {
+if (dbConnectionString) {
   try {
-    dbPool = new Pool({ connectionString: process.env.POSTGRES_URL });
+    dbPool = new Pool({ connectionString: dbConnectionString });
     dbPool.query('SELECT 1').then(async () => {
       console.log('Invite system: DB connected');
       await ensureAppStateTables().catch((err) => {
@@ -1389,8 +1435,7 @@ async function ensureInviteSessionTable() {
 
 async function requireAppStateDb(res) {
   if (!dbPool) {
-    res.status(503).json({ error: 'Postgres is not configured for app state.' });
-    return false;
+    return true;
   }
   try {
     await ensureAppStateTables();
@@ -1407,7 +1452,9 @@ function normalizeConfigKey(key) {
 }
 
 async function dbGetAppConfigMap(keys = null) {
-  if (!dbPool) return {};
+  if (!dbPool) {
+    return await appStateStore.getAppConfigMap(keys);
+  }
   const query = keys?.length
     ? {
         text: `SELECT key, value FROM app_config WHERE key = ANY($1::text[])`,
@@ -1424,7 +1471,10 @@ async function dbGetAppConfigMap(keys = null) {
 }
 
 async function dbSetAppConfigValue(key, value) {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.setAppConfigValue(key, value);
+    return;
+  }
   await dbPool.query(`
     INSERT INTO app_config (key, value, updated_at)
     VALUES ($1, $2::jsonb, NOW())
@@ -1435,12 +1485,15 @@ async function dbSetAppConfigValue(key, value) {
 }
 
 async function dbDeleteAllAppConfig() {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.deleteAllAppConfig();
+    return;
+  }
   await dbPool.query(`DELETE FROM app_config`);
 }
 
 async function dbListIntegrations() {
-  if (!dbPool) return [];
+  if (!dbPool) return await appStateStore.listIntegrations();
   const { rows } = await dbPool.query(`
     SELECT id, provider, label, encrypted_data, iv, created_at
     FROM app_integrations
@@ -1457,7 +1510,7 @@ async function dbListIntegrations() {
 }
 
 async function dbGetIntegration(id) {
-  if (!dbPool) return null;
+  if (!dbPool) return await appStateStore.getIntegration(id);
   const { rows } = await dbPool.query(`
     SELECT id, provider, label, encrypted_data, iv, created_at
     FROM app_integrations
@@ -1477,7 +1530,10 @@ async function dbGetIntegration(id) {
 }
 
 async function dbSaveIntegration(record) {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.saveIntegration(record);
+    return;
+  }
   await dbPool.query(`
     INSERT INTO app_integrations (id, provider, label, encrypted_data, iv, created_at, updated_at)
     VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -1500,12 +1556,15 @@ async function dbSaveIntegration(record) {
 }
 
 async function dbDeleteIntegration(id) {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.deleteIntegration(id);
+    return;
+  }
   await dbPool.query(`DELETE FROM app_integrations WHERE id = $1`, [id]);
 }
 
 async function dbListBacklogItems() {
-  if (!dbPool) return [];
+  if (!dbPool) return await appStateStore.listBacklogItems();
   const { rows } = await dbPool.query(`
     SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
     FROM admin_backlog_items
@@ -1526,7 +1585,10 @@ async function dbListBacklogItems() {
 }
 
 async function dbCreateBacklogItem(item) {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.createBacklogItem(item);
+    return;
+  }
   await dbPool.query(`
     INSERT INTO admin_backlog_items (
       id, title, description, category, priority, status, source, notes, created_at, updated_at
@@ -1547,7 +1609,7 @@ async function dbCreateBacklogItem(item) {
 }
 
 async function dbUpdateBacklogItem(id, patch) {
-  if (!dbPool) return null;
+  if (!dbPool) return await appStateStore.updateBacklogItem(id, patch);
   const current = await dbPool.query(`
     SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
     FROM admin_backlog_items
@@ -1593,7 +1655,10 @@ async function dbUpdateBacklogItem(id, patch) {
 }
 
 async function dbDeleteBacklogItem(id) {
-  if (!dbPool) return;
+  if (!dbPool) {
+    await appStateStore.deleteBacklogItem(id);
+    return;
+  }
   await dbPool.query(`DELETE FROM admin_backlog_items WHERE id = $1`, [id]);
 }
 
