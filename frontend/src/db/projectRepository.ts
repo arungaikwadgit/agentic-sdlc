@@ -14,7 +14,24 @@ import { supabase } from '@/lib/supabase';
 import { getInviteSession } from '@/services/inviteSession';
 import { getAuthHeader } from '@/services/api';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001';
+function getApiBase(raw: string | undefined): string {
+  const base = (raw ?? 'http://localhost:3001').replace(/\/$/, '');
+  if (!base || base === '/') return '/api';
+  if (base === '/api' || base.endsWith('/api')) return base;
+  return `${base}/api`;
+}
+
+export function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const base = getApiBase(import.meta.env.VITE_API_URL as string | undefined);
+
+  if (base === '/api') {
+    return normalizedPath.startsWith('/api') ? normalizedPath : `/api${normalizedPath}`;
+  }
+
+  return `${base}${normalizedPath.startsWith('/api') ? normalizedPath : `/api${normalizedPath}`}`;
+}
+
 const PROJECT_REPOSITORY_EVENT = 'sdlc:project-repository-change';
 
 function emitProjectRepositoryChange(projectId?: string): void {
@@ -46,7 +63,7 @@ function hasInviteSession(): boolean {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = await authHeaders();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(buildApiUrl(path), {
     ...init,
     headers: { ...headers, ...(init?.headers ?? {}) },
   });

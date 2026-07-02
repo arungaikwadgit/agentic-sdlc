@@ -948,11 +948,20 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                     : [];
                   const isClickable = !isPhaseGateLocked && teamReady;
                   return (
-                    <button
+                    <div
                       key={agentId}
                       className={styles.agentRow + (isSelected ? ' ' + styles.agentSelected : '') + (isPhaseGateLocked ? ' ' + styles.agentLocked : '')}
+                      role="button"
+                      tabIndex={isPhaseGateLocked ? -1 : 0}
+                      aria-disabled={isPhaseGateLocked || !isClickable}
                       onClick={() => isClickable && setSelectedAgent(agentId)}
-                      disabled={isPhaseGateLocked}
+                      onKeyDown={(e) => {
+                        if (isPhaseGateLocked || !isClickable) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedAgent(agentId);
+                        }
+                      }}
                       title={
                         isPhaseGateLocked ? 'Approve preceding gate to unlock' :
                         assignedMembers.length > 0 ? ('Assigned: ' + (assignedMembers as any[]).map((m: any) => m.name).join(', ')) : undefined
@@ -994,7 +1003,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                         ))}
                         {assignedMembers.length > 3 && <span className={styles.agentAvatarMore}>+{assignedMembers.length - 3}</span>}
                       </span>
-                    </button>
+                    </div>
                   );
                 })}
 

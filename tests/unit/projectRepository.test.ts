@@ -20,7 +20,7 @@ vi.mock('../../frontend/src/services/inviteSession', () => ({
   getInviteSession: vi.fn(() => null),
 }));
 
-const signOutMock = vi.fn(async () => ({ error: null }));
+const signOutMock = vi.hoisted(() => vi.fn(async () => ({ error: null })));
 vi.mock('../../frontend/src/lib/supabase', () => ({
   supabase: { auth: { signOut: signOutMock } },
 }));
@@ -153,6 +153,7 @@ vi.stubGlobal('fetch', fetchMock);
 
 // Import after mocks so projectRepository picks up the mocked modules.
 import {
+  buildApiUrl,
   createProject,
   getProject,
   listProjects,
@@ -185,6 +186,13 @@ describe('projectRepository', () => {
     isAppAdminFlag = true;
     fetchMock.mockClear();
     signOutMock.mockClear();
+  });
+
+  it('builds a single /api prefix when VITE_API_URL is set to /api', () => {
+    vi.stubEnv('VITE_API_URL', '/api');
+
+    expect(buildApiUrl('/api/projects')).toBe('/api/projects');
+    expect(buildApiUrl('/projects')).toBe('/api/projects');
   });
 
   describe('createProject', () => {

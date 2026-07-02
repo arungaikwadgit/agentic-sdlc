@@ -574,8 +574,9 @@
 
 .memberActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .actionBtn {

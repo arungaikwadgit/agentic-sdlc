@@ -60,8 +60,15 @@ app.use(rateLimit({
 app.use(express.json({ limit: '1mb' }));
 
 // ── DB connection pool ──────────────────────────────────────────────────────
+function resolveDbConnectionString(): string {
+  if (process.env.NODE_ENV === 'production') {
+    return process.env.POSTGRES_URL_PRODUCTION || process.env.POSTGRES_URL || '';
+  }
+  return process.env.POSTGRES_URL_LOCAL || process.env.POSTGRES_URL || '';
+}
+
 export const db = new Pool({
-  connectionString: process.env.POSTGRES_URL,
+  connectionString: resolveDbConnectionString(),
   max: parseInt(process.env.DB_POOL_MAX ?? '10', 10),
 });
 

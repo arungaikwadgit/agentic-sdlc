@@ -1112,8 +1112,11 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
     if (agentProviderMap)           upsertFlag(lines, 'AGENT_PROVIDER_MAP', JSON.stringify(agentProviderMap));
 
     // Email / invite settings
-    if (gmailUser)         upsert(lines, 'GMAIL_USER', gmailUser);
-    if (gmailAppPassword)  upsert(lines, 'GMAIL_APP_PASSWORD', gmailAppPassword);
+    // Google's UI displays the app password as space-separated groups; strip
+    // whitespace on save so a direct copy-paste of that format still works
+    // (SMTP auth fails on the literal spaces otherwise — 535-5.7.8 BadCredentials).
+    if (gmailUser)         upsert(lines, 'GMAIL_USER', gmailUser.trim());
+    if (gmailAppPassword)  upsert(lines, 'GMAIL_APP_PASSWORD', gmailAppPassword.replace(/\s+/g, ''));
     if (appUrl)            upsert(lines, 'APP_URL', appUrl);
 
     fs.writeFileSync(envPath, lines.filter((l) => l.trim()).join('\n') + '\n', 'utf8');
@@ -1271,8 +1274,11 @@ const { randomUUID } = require('crypto');
 // Gmail SMTP client (optional — set GMAIL_USER + GMAIL_APP_PASSWORD to enable real emails)
 // GMAIL_APP_PASSWORD is a 16-character Google App Password, not the account password —
 // generate one at https://myaccount.google.com/apppasswords (requires 2-Step Verification).
-const GMAIL_USER         = process.env.GMAIL_USER ?? '';
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD ?? '';
+// Google displays it as 4 space-separated groups (e.g. "abcd efgh ijkl mnop") for
+// readability, but the actual credential is those 16 characters with no spaces —
+// stripping whitespace here means a copy-paste of the on-screen format still works.
+const GMAIL_USER         = (process.env.GMAIL_USER ?? '').trim();
+const GMAIL_APP_PASSWORD = (process.env.GMAIL_APP_PASSWORD ?? '').replace(/\s+/g, '');
 
 let _gmailTransporter = null;
 function getGmailTransporter() {
