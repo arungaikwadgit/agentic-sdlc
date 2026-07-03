@@ -26,7 +26,7 @@
  */
 import { useEffect, useState } from 'react';
 import styles from './InviteAcceptPage.module.css';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { setInviteSession } from '@/services/inviteSession';
 import { getProject } from '@/db/projectRepository';
 import AppLogo from '@/components/common/AppLogo';
@@ -71,6 +71,22 @@ export default function InviteAcceptPage() {
   useEffect(() => {
     if (!token) {
       setState({ status: 'error', message: 'No invite token found in this link.' });
+      return;
+    }
+    // Everything past this point (signUp, signInWithPassword, verifyOtp, resend) needs a
+    // real Supabase client. Without VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY set for this
+    // build, @/lib/supabase falls back to a placeholder URL and every one of those calls
+    // fails as an opaque "Failed to fetch" — so check this up front and fail with a message
+    // that actually says what's wrong, the same way SignUpPage already does.
+    if (!isSupabaseConfigured) {
+      console.error(
+        '[InviteAcceptPage] Supabase is not configured for this build (missing VITE_SUPABASE_URL ' +
+        'and/or VITE_SUPABASE_ANON_KEY). The invite form cannot verify an email without it.'
+      );
+      setState({
+        status: 'error',
+        message: 'Email verification is not configured for this deployment yet. Please contact the project owner.',
+      });
       return;
     }
     fetch(`${API_URL}/invite/validate?token=${encodeURIComponent(token)}`)
@@ -146,7 +162,24 @@ export default function InviteAcceptPage() {
       }
 
       setState({ status: 'submitting', invite, mode: 'signup' });
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      let data: Awaited<ReturnType<typeof supabase.auth.signUp>>['data'];
+      let error: Awaited<ReturnType<typeof supabase.auth.signUp>>['error'];
+      try {
+        ({ data, error } = await supabase.auth.signUp({ email, password }));
+      } catch (err) {
+        // A thrown (not returned) error here means the request never completed at the
+        // network layer — CSP blocking the Supabase domain, the Supabase project being
+        // paused, or connectivity issues. Surface it instead of leaving the button stuck
+        // on "Sending code..." forever.
+        console.error('[InviteAcceptPage] signUp() network failure:', err);
+        setState({
+          status: 'form',
+          invite,
+          mode: 'signup',
+          error: 'Could not reach the authentication service. Check your connection and try again, or contact the project owner if this keeps happening.',
+        });
+        return;
+      }
 
       if (error) {
         setState({ status: 'form', invite, mode: 'signup', error: error.message });
@@ -182,9 +215,20 @@ export default function InviteAcceptPage() {
         return;
       }
       setState({ status: 'submitting', invite, mode: 'signin' });
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) {
-        setState({ status: 'form', invite, mode: 'signin', error: error.message });
+      try {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+          setState({ status: 'form', invite, mode: 'signin', error: error.message });
+          return;
+        }
+      } catch (err) {
+        console.error('[InviteAcceptPage] signInWithPassword() network failure:', err);
+        setState({
+          status: 'form',
+          invite,
+          mode: 'signin',
+          error: 'Could not reach the authentication service. Check your connection and try again.',
+        });
         return;
       }
       void finishAccepting(invite);
@@ -202,14 +246,24 @@ export default function InviteAcceptPage() {
     }
 
     setState({ status: 'verifying-code', invite });
-    const { error } = await supabase.auth.verifyOtp({
-      email: invite.invitedEmail ?? '',
-      token: trimmed,
-      type: 'signup',
-    });
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        email: invite.invitedEmail ?? '',
+        token: trimmed,
+        type: 'signup',
+      });
 
-    if (error) {
-      setState({ status: 'verify-code', invite, error: error.message || 'That code is incorrect or has expired.' });
+      if (error) {
+        setState({ status: 'verify-code', invite, error: error.message || 'That code is incorrect or has expired.' });
+        return;
+      }
+    } catch (err) {
+      console.error('[InviteAcceptPage] verifyOtp() network failure:', err);
+      setState({
+        status: 'verify-code',
+        invite,
+        error: 'Could not reach the authentication service. Check your connection and try again.',
+      });
       return;
     }
 
@@ -219,8 +273,13 @@ export default function InviteAcceptPage() {
   async function resendCode() {
     if (state.status !== 'verify-code') return;
     setResendMsg('Sending…');
-    const { error } = await supabase.auth.resend({ type: 'signup', email: state.invite.invitedEmail ?? '' });
-    setResendMsg(error ? (error.message || 'Could not resend the code.') : 'A new code is on its way.');
+    try {
+      const { error } = await supabase.auth.resend({ type: 'signup', email: state.invite.invitedEmail ?? '' });
+      setResendMsg(error ? (error.message || 'Could not resend the code.') : 'A new code is on its way.');
+    } catch (err) {
+      console.error('[InviteAcceptPage] resend() network failure:', err);
+      setResendMsg('Could not reach the authentication service. Check your connection and try again.');
+    }
   }
 
   function switchMode(mode: FormMode) {
