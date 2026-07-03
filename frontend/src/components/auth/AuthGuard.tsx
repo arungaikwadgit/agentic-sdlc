@@ -6,6 +6,7 @@
  */
 import { useState, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { isInviteRoute } from '@/lib/inviteRoute';
 import LoginPage  from './LoginPage';
 import SignUpPage from './SignUpPage';
 
@@ -15,6 +16,16 @@ type AuthView = 'login' | 'signup';
 export default function AuthGuard({ children }: Props) {
   const { user, loading } = useAuth();
   const [view, setView] = useState<AuthView>('login');
+
+  // Invite links must work for unauthenticated invitees — don't gate this route behind
+  // login. InviteAcceptPage handles its own auth (Supabase signUp/signIn + 6-digit OTP)
+  // and the backend independently re-verifies the invitee's email (requireVerifiedInviteeEmail
+  // in backend/src/proxy.js) before granting access to the single invited project. Bypassing
+  // the login wall here does not weaken that — it's what lets the invitee reach the page
+  // that does the real verification.
+  if (isInviteRoute()) {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return (

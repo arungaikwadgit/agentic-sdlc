@@ -15,6 +15,7 @@ import InviteAcceptPage from './components/invite/InviteAcceptPage';
 import AdminPanel from './components/admin/AdminPanel';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { isAdminMode } from './lib/adminMode';
+import { isInviteRoute } from './lib/inviteRoute';
 import { initializeMasterDataCatalog } from './services/masterDataCatalog';
 
 export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
@@ -27,7 +28,7 @@ function useThemeInit() {
 }
 
 function detectInitialView(): View {
-  if (window.location.pathname === '/invite' || window.location.search.includes('token=')) {
+  if (isInviteRoute()) {
     return { page: 'invite' };
   }
   const projectId = new URLSearchParams(window.location.search).get('project');
