@@ -967,7 +967,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                         assignedMembers.length > 0 ? ('Assigned: ' + (assignedMembers as any[]).map((m: any) => m.name).join(', ')) : undefined
                       }
                     >
-                      <span style={{ color: isPhaseGateLocked ? 'var(--text-muted)' : STATUS_COLOR[status], fontFamily: 'monospace', fontSize: 13 }}>
+                      <span
+                        className={status === 'running' && !isPhaseGateLocked ? styles.spinIcon : undefined}
+                        style={{ color: isPhaseGateLocked ? 'var(--text-muted)' : STATUS_COLOR[status], fontFamily: 'monospace', fontSize: 13 }}
+                      >
                         {isPhaseGateLocked ? '🔒' : status === 'running' ? '⟳' : STATUS_ICON[status]}
                       </span>
                       <span className={styles.agentName}>{def?.name ?? agentId}</span>
@@ -1321,6 +1324,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           ) : selectedRun?.status === 'running' || rerunning ? (
             <div className={styles.skeletonWrap} aria-busy="true" aria-label={(selectedDef?.name ?? selectedAgent ?? '') + ' is generating…'}>
               <div className={styles.skeletonHeader}>
+                <span className={styles.agentSpinner} aria-hidden="true" />
                 <div className={styles.skeletonLine} style={{ width: '60%', height: 22 }} />
                 <div className={styles.skeletonBadge} />
               </div>
@@ -1332,6 +1336,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 <div key={i + 5} className={styles.skeletonLine} style={{ width: w + '%', animationDelay: ((i + 5) * 0.1) + 's' }} />
               ))}
               <p className={styles.skeletonLabel}>
+                <span className={styles.agentSpinner} aria-hidden="true" />
                 {rerunning ? ('Re-running ' + (selectedDef?.name ?? selectedAgent)) : ((selectedDef?.name ?? selectedAgent) + ' is generating')}
                 {'…'}&nbsp;
                 <span style={{ opacity: 0.6, fontWeight: 400 }}>

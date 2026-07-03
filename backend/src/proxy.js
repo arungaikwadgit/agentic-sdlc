@@ -1963,6 +1963,19 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
   }
 }
 
+// Resolves the frontend's own base URL for building invite links. The
+// frontend and this API are deployed on separate domains (e.g. Vercel +
+// Railway), so the Origin header of the browser's own "send invite" request
+// is the only reliable signal for the frontend's real URL per environment —
+// req.headers.host would give this API's domain instead, which is wrong.
+// Falls back to the configured APP_URL only when no Origin header is present
+// (e.g. a non-browser/server-to-server caller).
+function resolveInviteBaseUrl(req) {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : '';
+  if (origin) return origin.replace(/\/$/, '');
+  return APP_URL.replace(/\/$/, '');
+}
+
 // ── POST /api/invite/send ─────────────────────────────────────────────────────
 app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) => {
   const { projectId, projectName, name, email, appRole, invitedBy } = req.body ?? {};
@@ -1979,7 +1992,8 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   }
 
   const token = randomUUID();
-  const inviteLink = `${APP_URL}/invite?token=${token}&projectId=${encodeURIComponent(projectId)}&email=${encodeURIComponent(normalizedEmail)}`;
+  const baseUrl = resolveInviteBaseUrl(req);
+  const inviteLink = `${baseUrl}/invite?token=${token}&projectId=${encodeURIComponent(projectId)}&email=${encodeURIComponent(normalizedEmail)}`;
 
   // Store in memory
   inviteStore.set(token, {
@@ -2012,15 +2026,50 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   });
 });
 
+// Verifies the caller sent a valid, email-confirmed Supabase session and
+// returns the verified (lowercased) email — or sends an error response and
+// returns null. Invite acceptance requires this so a client can no longer
+// "accept" an invite by simply POSTing an email string it doesn't control;
+// the requester must actually own and have confirmed that mailbox first.
+async function requireVerifiedInviteeEmail(req, res) {
+  const authHeader = req.headers['authorization'] ?? '';
+  if (!authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Please sign in and confirm your email before accepting this invite.' });
+    return null;
+  }
+  const supabaseClient = getSupabase();
+  if (!supabaseClient) {
+    res.status(503).json({ error: 'Account verification is not configured on this server.' });
+    return null;
+  }
+  const jwt = authHeader.slice(7);
+  const { data, error } = await supabaseClient.auth.getUser(jwt);
+  if (error || !data?.user) {
+    res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
+    return null;
+  }
+  if (!data.user.email_confirmed_at) {
+    res.status(403).json({ error: 'Please confirm your email before accepting this invite — check your inbox for the confirmation link.' });
+    return null;
+  }
+  const email = (data.user.email ?? '').trim().toLowerCase();
+  if (!email) {
+    res.status(400).json({ error: 'Your account has no confirmed email address.' });
+    return null;
+  }
+  return email;
+}
+
 // ── POST /api/invite/accept ───────────────────────────────────────────────────
-// Accept an invite after the user signs in. Uses the authenticated user's email
-// when available so the invite link can open directly inside the app flow.
+// Accept an invite. Requires a valid, email-confirmed Supabase session — the
+// invited email must match the session's verified email exactly, so access is
+// tied to a real, confirmed account rather than a client-supplied string.
 app.post('/api/invite/accept', async (req, res) => {
   const token = req.body?.token ?? req.query?.token;
-  const bodyEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : null;
-  const queryEmail = typeof req.query?.email === 'string' ? String(req.query.email).trim().toLowerCase() : null;
-
   if (!token) return res.status(400).json({ error: 'token is required' });
+
+  const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
+  if (!verifiedEmail) return; // response already sent
 
   if (dbPool) {
     const { rows } = await dbPool.query(`
@@ -2036,14 +2085,10 @@ app.post('/api/invite/accept', async (req, res) => {
       if (existing.invite_status === 'revoked') {
         return res.status(410).json({ error: 'This invite is no longer valid.' });
       }
-      const resolvedEmail = (bodyEmail || queryEmail || existing.email || '').toLowerCase();
-      if (!resolvedEmail) {
-        return res.status(400).json({ error: 'Invite email is missing for this token.' });
+      if (existing.email && existing.email.toLowerCase() !== verifiedEmail) {
+        return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
       }
-      if (existing.email && existing.email.toLowerCase() !== resolvedEmail) {
-        return res.status(403).json({ error: 'Email does not match this invite.' });
-      }
-      const dbRow = await dbAcceptInvite(token, resolvedEmail).catch(() => null);
+      const dbRow = await dbAcceptInvite(token, verifiedEmail).catch(() => null);
       if (dbRow) {
         await dbSyncAcceptedMemberInProjectData(dbRow.project_id, dbRow.email, Date.now());
         inviteStore.delete(token);
@@ -2061,12 +2106,9 @@ app.post('/api/invite/accept', async (req, res) => {
     }
   }
 
-  const email = (bodyEmail ?? queryEmail ?? '').toLowerCase();
-  if (!email) return res.status(400).json({ error: 'Invite email is required to accept this link.' });
-
   const invite = inviteStore.get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
-  if (invite.email !== email) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.email !== verifiedEmail) return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
 
   if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
@@ -2090,13 +2132,17 @@ app.post('/api/invite/accept', async (req, res) => {
 });
 
 // ── GET /api/invite/accept ────────────────────────────────────────────────────
-// Called by the frontend InviteAccept page when the invitee clicks "Accept".
+// Legacy variant of the accept endpoint — same verified-session requirement
+// as POST /api/invite/accept applies here (see requireVerifiedInviteeEmail).
 app.get('/api/invite/accept', async (req, res) => {
-  const { token, email } = req.query;
-  if (!token || !email) return res.status(400).json({ error: 'token and email are required' });
+  const { token } = req.query;
+  if (!token) return res.status(400).json({ error: 'token is required' });
+
+  const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
+  if (!verifiedEmail) return; // response already sent
 
   // Try DB first
-  const dbRow = await dbAcceptInvite(token, email.toLowerCase()).catch(() => null);
+  const dbRow = await dbAcceptInvite(token, verifiedEmail).catch(() => null);
   if (dbRow) {
     inviteStore.delete(token);
     return res.json({
@@ -2114,7 +2160,7 @@ app.get('/api/invite/accept', async (req, res) => {
   // Fallback to in-memory
   const invite = inviteStore.get(token);
   if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
-  if (invite.email !== email.toLowerCase()) return res.status(403).json({ error: 'Email does not match this invite.' });
+  if (invite.email !== verifiedEmail) return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
 
   if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {

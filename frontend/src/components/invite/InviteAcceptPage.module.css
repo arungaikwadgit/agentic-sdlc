@@ -104,6 +104,72 @@
   text-decoration: none;
 }
 
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  margin: 20px 0 4px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted, #94a3b8);
+  margin-top: 10px;
+}
+.fieldLabel:first-child { margin-top: 0; }
+
+.fieldInput {
+  background: var(--background, #0f172a);
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text, #f1f5f9);
+}
+.fieldInput:focus {
+  outline: none;
+  border-color: var(--accent, #4f46e5);
+}
+.fieldInput:read-only {
+  color: var(--text-muted, #94a3b8);
+  cursor: default;
+}
+.fieldInput:disabled {
+  opacity: 0.6;
+}
+
+.form .acceptBtn {
+  margin-top: 16px;
+  width: 100%;
+  text-align: center;
+}
+
+.switchModeText {
+  font-size: 13px;
+  color: var(--text-muted, #94a3b8);
+  margin: 16px 0 0;
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent, #4f46e5);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.codeInput {
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 8px;
+}
+
 .successIcon {
   font-size: 52px;
   color: #10b981;
