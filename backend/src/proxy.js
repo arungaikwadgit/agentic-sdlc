@@ -2356,6 +2356,18 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Agentic SDLC proxy  http://localhost:${PORT}  model=${OPENAI_MODEL}`);
     console.log(CORP_PROXY ? `Corporate proxy: ${CORP_PROXY}` : 'Direct connection (no proxy configured)');
+    // Diagnostic only — never logs the actual key/secret values, just whether
+    // checkToken() will be able to validate Supabase JWTs on this process.
+    // Added to debug a persistent 401 where the Railway dashboard showed
+    // SUPABASE_URL/SUPABASE_ANON_KEY as present but checkToken() kept falling
+    // through as if Supabase were unconfigured. Safe to remove once resolved.
+    const supabaseClientOk = !!getSupabase();
+    console.log(
+      `Supabase auth check: SUPABASE_URL=${SUPABASE_URL ? 'set' : 'MISSING'} ` +
+      `SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY ? 'set' : 'MISSING'} ` +
+      `client=${supabaseClientOk ? 'OK' : 'FAILED TO INITIALIZE'} ` +
+      `PROXY_TOKEN=${PROXY_TOKEN ? 'set' : 'not set'}`
+    );
   });
 }
 
