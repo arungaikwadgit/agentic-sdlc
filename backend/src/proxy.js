@@ -47,7 +47,18 @@ function getSupabase() {
     const { createClient } = require('@supabase/supabase-js');
     _supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     return _supabaseClient;
-  } catch { return null; }
+  } catch (err) {
+    // Diagnostic logging (temporary): this catch was previously silent
+    // (`catch { return null; }`), which is exactly why checkToken()'s 401s
+    // were untraceable — createClient() was throwing but nothing logged why.
+    // Logs the error message/name only, never SUPABASE_URL/SUPABASE_ANON_KEY
+    // themselves. Safe to remove once the investigation is closed.
+    console.error(
+      `getSupabase(): createClient() threw during initialization — ` +
+      `name=${err?.name ?? 'Unknown'} message=${err?.message ?? String(err)}`
+    );
+    return null;
+  }
 }
 
 async function fetchSupabaseTable(path) {
