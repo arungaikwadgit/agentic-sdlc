@@ -33,13 +33,23 @@ export function initials(name: string) {
 
 const INVITE_ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
-type Tab = 'general' | 'team' | 'assignments' | 'knowledge';
+export type Tab = 'general' | 'team' | 'assignments' | 'knowledge';
 
 interface Props {
   project: Project;
   onClose: () => void;
   /** Called after domain/techStack is saved — triggers full pipeline restart from Phase 0 */
   onRestartPipeline?: () => void;
+  /**
+   * Which tab to open on. Lets the parent remember the last-active tab across
+   * remounts of this component (e.g. ProjectWorkspace remounts this panel via
+   * a `key` bump each time it's reopened) so saving on one tab — e.g. "Save
+   * Domain Knowledge" — never silently kicks the user back to Team Members.
+   * Defaults to 'team' to preserve existing behavior when not provided.
+   */
+  initialTab?: Tab;
+  /** Called whenever the active tab changes, so the parent can persist it. */
+  onTabChange?: (tab: Tab) => void;
 }
 
 /** Parse a legacy "A + B + C" or "A, B, C" tech stack string into individual tags. */
@@ -158,9 +168,13 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function ProjectSettings({ project, onClose, onRestartPipeline }: Props) {
+export default function ProjectSettings({ project, onClose, onRestartPipeline, initialTab, onTabChange }: Props) {
   const { user, adminMode } = useAuth();
-  const [tab, setTab] = useState<Tab>('team');
+  const [tab, setTabState] = useState<Tab>(initialTab ?? 'team');
+  function setTab(t: Tab) {
+    setTabState(t);
+    onTabChange?.(t);
+  }
 
   const [adminSessionId, setAdminSessionId] = useState<string>(
     project.activeAdminId ?? project.teamMembers?.find((m) => m.isAdmin)?.id ?? ''

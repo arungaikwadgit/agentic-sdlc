@@ -8,6 +8,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
+import { AlertProvider } from './contexts/AlertContext';
 import AuthGuard from './components/auth/AuthGuard';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import './index.css';
@@ -17,9 +18,11 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          <AuthGuard>
-            <App />
-          </AuthGuard>
+          <AlertProvider>
+            <AuthGuard>
+              <App />
+            </AuthGuard>
+          </AlertProvider>
         </ToastProvider>
       </AuthProvider>
     </ErrorBoundary>

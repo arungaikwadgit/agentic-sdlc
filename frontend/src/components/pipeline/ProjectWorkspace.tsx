@@ -13,6 +13,7 @@ import DocumentViewer from '../documents/DocumentViewer';
 import ReviewGateModal from '../reviewGate/ReviewGateModal';
 import ProjectSettings from '../settings/ProjectSettings';
 import { initials } from '../settings/ProjectSettings';
+import type { Tab as ProjectSettingsTab } from '../settings/ProjectSettings';
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';
 import AgentThinkingPanel from './AgentThinkingPanel';
@@ -186,6 +187,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [teamPanelKey, setTeamPanelKey] = useState(0);
+  // Persists the last-active Project Settings tab across remounts of
+  // <ProjectSettings> (its `key={teamPanelKey}` below forces a fresh mount
+  // each time the panel is (re)opened). Without this, saving anything inside
+  // e.g. the Domain Knowledge tab and having the panel remount for any reason
+  // would silently reset the view back to the Team Members tab.
+  const [settingsTab, setSettingsTab] = useState<ProjectSettingsTab>('team');
   const [downloadingArtifacts, setDownloadingArtifacts] = useState(false);
   const [showGithubPush, setShowGithubPush] = useState(false);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
@@ -1421,6 +1428,8 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           project={project}
           onClose={() => setShowTeamPanel(false)}
           onRestartPipeline={() => setShouldAutoStart(true)}
+          initialTab={settingsTab}
+          onTabChange={setSettingsTab}
         />
       )}
     </div>

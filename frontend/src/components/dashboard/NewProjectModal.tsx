@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import { createProject } from '@/db/projectRepository';
+import { api } from '@/services/api';
 import { DOMAINS } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
@@ -25,6 +26,19 @@ const PRIORITIES: { value: ProjectPriority; label: string }[] = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
   { value: 'critical', label: 'Critical' },
+];
+
+// Suggestions shown while typing in the Tech Stack field (native <datalist>).
+// Purely advisory — the field accepts any free-text value, listed or not.
+const TECH_STACK_SUGGESTIONS = [
+  'React', 'Next.js', 'Vue', 'Angular', 'Svelte', 'TypeScript', 'JavaScript',
+  'Node.js', 'Express', 'NestJS', 'Python', 'Django', 'FastAPI', 'Flask',
+  'Java', 'Spring Boot', 'Go', 'Ruby on Rails', '.NET / C#', 'PHP / Laravel',
+  'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'SQLite', 'Supabase', 'Firebase',
+  'GraphQL', 'REST API', 'gRPC', 'Docker', 'Kubernetes', 'AWS', 'Azure',
+  'Google Cloud Platform', 'Vercel', 'Railway', 'Terraform', 'Kafka',
+  'RabbitMQ', 'Elasticsearch', 'Tailwind CSS', 'React Native', 'Flutter',
+  'Swift / SwiftUI', 'Kotlin', 'GitHub Actions', 'Stripe',
 ];
 
 const PRESETS = [
@@ -71,6 +85,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [domainKnowledge, setDomainKnowledge] = useState('');
   const [brandingGuidelines, setBrandingGuidelines] = useState('');
   const [loading, setLoading] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
+  const [enhanceError, setEnhanceError] = useState<string | null>(null);
   // Figma pull state
   const [showFigmaPull, setShowFigmaPull] = useState(false);
   const [figmaUrl, setFigmaUrl] = useState('');
@@ -176,8 +192,26 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     setDomainKnowledge(await safeGetDomainKnowledgeDefault(newDomain));
   }
 
+  // All Step 1 fields are mandatory except Branding Guidelines (explicitly
+  // optional — it can be pulled from Figma or added later in Project Settings).
+  function detailsValid(): boolean {
+    return !!(
+      name.trim() &&
+      owner.trim() &&
+      team.trim() &&
+      description.trim() &&
+      projectType &&
+      startDate &&
+      targetEndDate &&
+      !dateError &&
+      techTags.length > 0 &&
+      targetUsers.trim() &&
+      initialRisks.trim()
+    );
+  }
+
   async function goToKnowledge() {
-    if (!name.trim() || !description.trim() || !owner.trim() || dateError) return;
+    if (!detailsValid()) return;
     // Pre-fill from the app-level default (or built-in template) if not yet customized
     if (!domainKnowledge) setDomainKnowledge(await safeGetDomainKnowledgeDefault(domain));
     setStep('domain-knowledge');
@@ -202,31 +236,79 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     }
   }
 
+  // Shared payload builder so "Save for the project" and "Enhance the prompt
+  // and Run" can't drift apart on which fields get sent to createProject().
+  function buildProjectPayload(finalDomainKnowledge: string) {
+    return {
+      name: name.trim(),
+      description: description.trim(),
+      domain,
+      status: 'draft' as const,
+      mode,
+      domainKnowledge: finalDomainKnowledge.trim() || undefined,
+      brandingGuidelines: brandingGuidelines.trim() || undefined,
+      owner: owner.trim(),
+      team: team.trim() || undefined,
+      projectType: projectType || undefined,
+      priority,
+      startDate: startDate || undefined,
+      targetEndDate: targetEndDate || undefined,
+      techStack: techTags.join(', ') || undefined,
+      targetUsers: targetUsers.trim() || undefined,
+      initialRisks: initialRisks.trim() || undefined,
+    };
+  }
+
+  /** "Save for the project" — creates the project as-is: no AI enhancement,
+   *  no auto-run. Same behavior in both Simple and Expert mode. */
   async function handleCreate() {
-    if (!name.trim() || !description.trim() || !owner.trim()) return;
-    if (dateError) return;
+    if (!detailsValid()) return;
     setLoading(true);
     try {
-      const project = await createProject({
-        name: name.trim(),
-        description: description.trim(),
-        domain,
-        status: 'draft',
-        mode,
-        domainKnowledge: domainKnowledge.trim() || undefined,
-        brandingGuidelines: brandingGuidelines.trim() || undefined,
-        owner: owner.trim(),
-        team: team.trim() || undefined,
-        projectType: projectType || undefined,
-        priority,
-        startDate: startDate || undefined,
-        targetEndDate: targetEndDate || undefined,
-        techStack: techTags.join(', ') || undefined,
-        targetUsers: targetUsers.trim() || undefined,
-        initialRisks: initialRisks.trim() || undefined,
-      });
+      const project = await createProject(buildProjectPayload(domainKnowledge));
       onCreated(project.id);
     } finally {
+      setLoading(false);
+    }
+  }
+
+  /** "Enhance the prompt and Run" (Simple mode only) — asks the AI to improve
+   *  the domain knowledge brief using the same generator ProjectSettings uses,
+   *  saves the improved version into the new project, then flags it to
+   *  auto-start the full pipeline on first load (same sessionStorage signal
+   *  EditProjectModal's "Save & Restart Pipeline" uses) so Simple-mode users
+   *  land directly in a running pipeline instead of an idle draft. */
+  async function handleEnhanceAndRun() {
+    if (!detailsValid()) return;
+    setEnhancing(true);
+    setEnhanceError(null);
+    try {
+      let finalKnowledge = domainKnowledge;
+      try {
+        const generated = await api.generateDomainKnowledge({
+          domainLabel: DOMAINS[domain].label,
+          domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[domain],
+          projectName: name,
+          projectDescription: description,
+          currentInput: domainKnowledge,
+        });
+        if (generated) {
+          finalKnowledge = generated;
+          setDomainKnowledge(generated);
+        }
+      } catch (err) {
+        // Enhancement failing shouldn't block project creation — fall back to
+        // the brief as the user wrote it and surface a non-blocking notice.
+        setEnhanceError(
+          `Couldn't enhance the brief (${err instanceof Error ? err.message : 'unknown error'}) — creating with your text as written.`
+        );
+      }
+      setLoading(true);
+      const project = await createProject(buildProjectPayload(finalKnowledge));
+      sessionStorage.setItem(`sdlc_autostart_${project.id}`, '1');
+      onCreated(project.id);
+    } finally {
+      setEnhancing(false);
       setLoading(false);
     }
   }
@@ -286,7 +368,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   />
                 </div>
                 <div>
-                  <label className={styles.label}>Team</label>
+                  <label className={styles.label}>Team *</label>
                   <input
                     value={team}
                     onChange={(e) => setTeam(e.target.value)}
@@ -298,25 +380,26 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
               <label className={styles.label}>Problem Statement *</label>
               <textarea
+                className={styles.formTextarea}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Describe the project goals, target users, and key capabilities..."
-                rows={5}
-                style={{ resize: 'vertical' }}
+                placeholder="Describe the project goals, target users, and key capabilities... (at least a few sentences)"
+                rows={10}
+                style={{ resize: 'vertical', minHeight: 160, height: 160 }}
               />
 
               <div className={styles.grid2}>
                 <div>
-                  <label className={styles.label}>Project Type</label>
+                  <label className={styles.label}>Project Type *</label>
                   <select value={projectType} onChange={(e) => setProjectType(e.target.value as ProjectType | '')}>
-                    <option value="">Not specified</option>
+                    <option value="">Select a project type…</option>
                     {PROJECT_TYPES.map((t) => (
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className={styles.label}>Priority</label>
+                  <label className={styles.label}>Priority *</label>
                   <select value={priority} onChange={(e) => setPriority(e.target.value as ProjectPriority)}>
                     {PRIORITIES.map((p) => (
                       <option key={p.value} value={p.value}>{p.label}</option>
@@ -327,7 +410,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
               <div className={styles.grid2}>
                 <div>
-                  <label className={styles.label}>Start Date</label>
+                  <label className={styles.label}>Start Date *</label>
                   <input
                     type="date"
                     value={startDate}
@@ -335,7 +418,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   />
                 </div>
                 <div>
-                  <label className={styles.label}>Target End Date</label>
+                  <label className={styles.label}>Target End Date *</label>
                   <input
                     type="date"
                     value={targetEndDate}
@@ -345,7 +428,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 </div>
               </div>
 
-              <label className={styles.label}>Domain</label>
+              <label className={styles.label}>Domain *</label>
               <select value={domain} onChange={(e) => handleDomainChange(e.target.value as DomainId)}>
                 {Object.values(DOMAINS).map((d) => (
                   <option key={d.id} value={d.id}>{d.label}</option>
@@ -355,7 +438,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 <strong>{DOMAINS[domain].label}</strong> — confirm domain-specific obligations during discovery.
               </p>
 
-              <label className={styles.label}>Tech Stack</label>
+              <label className={styles.label}>Tech Stack *</label>
               {techTags.length > 0 && (
                 <div className={styles.techTagList}>
                   {techTags.map((tag) => (
@@ -375,6 +458,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 <input
                   className={styles.techInput}
                   value={techInput}
+                  list="tech-stack-suggestions"
                   onChange={(e) => setTechInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -386,6 +470,11 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   }}
                   placeholder="e.g. React, Node.js, PostgreSQL, Docker… (Enter to add)"
                 />
+                <datalist id="tech-stack-suggestions">
+                  {TECH_STACK_SUGGESTIONS.filter((t) => !techTags.includes(t)).map((t) => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
                 <button
                   type="button"
                   className={styles.techAddBtn}
@@ -398,7 +487,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 >Add</button>
               </div>
 
-              <label className={styles.label}>Target Users</label>
+              <label className={styles.label}>Target Users *</label>
               <textarea
                 className={styles.formTextarea}
                 value={targetUsers}
@@ -407,7 +496,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 rows={3}
               />
 
-              <label className={styles.label}>Initial Risks</label>
+              <label className={styles.label}>Initial Risks *</label>
               <textarea
                 className={styles.formTextarea}
                 value={initialRisks}
@@ -503,7 +592,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <button
                 className="btn-primary"
                 onClick={goToKnowledge}
-                disabled={!name.trim() || !description.trim() || !owner.trim() || !!dateError}
+                disabled={!detailsValid()}
+                title={!detailsValid() ? 'Fill in all required fields (marked *) to continue.' : undefined}
               >
                 Next: Domain Knowledge →
               </button>
@@ -555,17 +645,39 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <p className={styles.hint}>
                 You can edit the domain knowledge later in the project's Settings tab.
               </p>
+              {enhanceError && (
+                <p className={styles.fieldError} style={{ marginTop: -4 }}>{enhanceError}</p>
+              )}
             </div>
 
             <div className={styles.footer}>
               <button className="btn-secondary" onClick={() => setStep('details')}>← Back</button>
-              <button
-                className="btn-primary"
-                onClick={handleCreate}
-                disabled={loading}
-              >
-                {loading ? 'Creating...' : 'Create Project'}
-              </button>
+              {mode === 'simple' ? (
+                <>
+                  <button
+                    className="btn-secondary"
+                    onClick={handleCreate}
+                    disabled={loading || enhancing}
+                  >
+                    {loading && !enhancing ? 'Saving...' : '💾 Save for the project'}
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={handleEnhanceAndRun}
+                    disabled={loading || enhancing}
+                  >
+                    {enhancing ? '✨ Enhancing…' : loading ? 'Starting…' : '✨ Enhance the prompt and Run'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="btn-primary"
+                  onClick={handleCreate}
+                  disabled={loading}
+                >
+                  {loading ? 'Creating...' : 'Create Project'}
+                </button>
+              )}
             </div>
           </>
         )}

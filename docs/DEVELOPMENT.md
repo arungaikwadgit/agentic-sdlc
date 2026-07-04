@@ -68,6 +68,84 @@ PORT=3001
 
 > **Security:** `SUPABASE_SERVICE_KEY` is the service_role (secret) key. It must never appear in frontend env files or be exposed in the browser.
 
+## Local Postgres (master data, team/invite persistence)
+
+This section documents infrastructure that already exists in the repo
+(`docker-compose.yml`, `backend/migrations/*.sql`, `backend/scripts/seed*.js`)
+but was never written up here — this closes that gap. It replaces the
+ephemeral, dev-only fallback stores in `backend/src/proxy.js`
+(`localProjectStore`, `inviteStore`) with a real local Postgres so invited
+team members, invite tokens, and app-wide master data (phases, agents,
+domains, role templates) survive a `nodemon` restart instead of being wiped
+every time a backend source file is saved.
+
+**1. Start local Postgres via Docker** (root `docker-compose.yml`, `db`
+service only — do not confuse with `docker/docker-compose.yml`, which
+containerizes the whole app and is for a different workflow):
+
+```bash
+docker compose up -d db
+```
+
+Default credentials (override via env vars if you want different ones):
+`agentuser` / `agentpass` / db `agentdb`, exposed on `localhost:5432` —
+these already match `backend/.env.example`'s `POSTGRES_URL_LOCAL` default,
+so no changes are needed for the common case.
+
+**2. Create the schema.** The files in `backend/migrations/` are plain,
+idempotent SQL (safe to re-run) — despite `backend/package.json` having
+`migrate:up`/`migrate:down` scripts that invoke `node-pg-migrate`, these
+particular files are **not** written in `node-pg-migrate`'s format (they're
+named/structured for direct `psql` execution, per each file's own header
+comment) — running them via `npm run migrate:up` will not work as expected.
+Use `psql` directly instead:
+
+```bash
+psql postgresql://agentuser:agentpass@localhost:5432/agentdb -f backend/migrations/000_full_schema.sql
+psql postgresql://agentuser:agentpass@localhost:5432/agentdb -f backend/migrations/004_master_data_catalog.sql
+```
+
+(`000_full_schema.sql` already supersedes `001_initial_schema.sql` +
+`002_invite_roles.sql` combined — see its own header comment. Run
+`003_rls_policies.sql` too only if you want Supabase-style Row Level Security
+policies locally; it's optional for local dev since `backend/proxy.js`
+connects with a superuser-equivalent role.)
+
+**3. Seed master data** (phases, the 26 agents, domains, role templates —
+generated from the real `frontend/src/agents/*` and `frontend/src/data/roleTemplates.ts`
+source, not hand-entered, so it can't drift from what the app actually ships):
+
+```bash
+cd backend
+POSTGRES_URL=postgresql://agentuser:agentpass@localhost:5432/agentdb npm run seed:master-data
+```
+
+Optionally, seed sample/demo projects too:
+
+```bash
+POSTGRES_URL=postgresql://agentuser:agentpass@localhost:5432/agentdb npm run seed:sample-data
+```
+
+**4. Point `backend/.env` at it.** Set (or confirm) in `backend/.env`:
+
+```
+POSTGRES_URL_LOCAL=postgresql://agentuser:agentpass@localhost:5432/agentdb
+```
+
+Restart `npm run dev:backend` after this — `backend/src/proxy.js` reads this
+once at process startup (see `resolveDbConnectionString()`), so saving the
+`.env` file alone doesn't take effect until the process restarts.
+
+**Without this setup**, local dev still works — `backend/proxy.js` and the
+frontend's `masterDataCatalog.ts` both have explicit, documented fallbacks to
+in-memory storage / built-in frontend defaults (see the `import.meta.env.DEV`
+branch in `frontend/src/services/masterDataCatalog.ts`). The tradeoff without
+a local Postgres: invited team members, invite links, and any app-state
+config you change locally are lost on every backend restart. This was the
+root cause of the `GET /api/projects/:id 404` bug where a bookmarked project
+ID stopped resolving after a `nodemon` auto-restart wiped the in-memory
+project store.
+
 ## Running Locally
 
 ```bash

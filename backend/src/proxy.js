@@ -1965,14 +1965,45 @@ async function dbGetInviteSession(token) {
 }
 
 // ── Email sender (Gmail SMTP) ─────────────────────────────────────────────────
-async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
-  const transporter = getGmailTransporter();
-  if (!transporter) {
-    // Dev mode — log to console
-    console.log(`\n[INVITE LINK - no GMAIL_USER/GMAIL_APP_PASSWORD set]\nTo: ${to}\nLink: ${inviteLink}\n`);
-    return { ok: true, dev: true };
-  }
+// Resend (https://resend.com) — an HTTPS email API, not SMTP. Preferred over
+// Gmail because Railway blocks outbound SMTP (ports 465/587) on Free/Trial/
+// Hobby plans (only Pro+ has it unblocked), which is exactly what produced
+// the "Connection timeout" errors nodemailer/Gmail was hitting in production.
+// An HTTPS POST to api.resend.com goes out over normal outbound HTTP, which
+// Railway never blocks, so this works on any plan.
+// Returns null (not an error) when RESEND_API_KEY isn't set, so the caller
+// can fall through to the next option; returns {ok, error?} once it actually
+// attempts a send.
+async function sendViaResend({ to, subject, html }) {
+  const apiKey = (process.env.RESEND_API_KEY ?? '').trim();
+  if (!apiKey) return null;
 
+  // resend.dev's shared sending domain works for any recipient without
+  // verifying your own domain first — good enough until a custom domain is
+  // verified in the Resend dashboard. Override with RESEND_FROM_EMAIL once
+  // you've verified your own domain there.
+  const from = (process.env.RESEND_FROM_EMAIL ?? '').trim() || 'Agentic SDLC <onboarding@resend.dev>';
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to, subject, html }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, data: null, error: body?.message || `Resend API returned ${res.status}` };
+    }
+    return { ok: true, data: { messageId: body?.id }, error: null };
+  } catch (err) {
+    return { ok: false, data: null, error: err?.message || 'Resend request failed.' };
+  }
+}
+
+async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
   const roleLabel = {
     project_owner: 'Project Owner',
     editor: 'Editor',
@@ -2000,12 +2031,29 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
       <p style="color:#999;font-size:12px;">This link is valid for 7 days. If you were not expecting this invite, you can safely ignore this email.</p>
     </div>
   `;
+  const subject = `You're invited to ${projectName}`;
+
+  // 1. Resend (preferred — HTTPS API, works on any Railway plan)
+  const resendResult = await sendViaResend({ to, subject, html });
+  if (resendResult) {
+    console.log(`[sendInviteEmail] sent via Resend ok=${resendResult.ok}${resendResult.error ? ` error=${resendResult.error}` : ''}`);
+    return resendResult;
+  }
+
+  // 2. Gmail SMTP (fallback — only works if this Railway service is on a
+  // Pro+ plan; Free/Trial/Hobby block outbound SMTP entirely)
+  const transporter = getGmailTransporter();
+  if (!transporter) {
+    // Dev mode — log to console
+    console.log(`\n[INVITE LINK - no RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD set]\nTo: ${to}\nLink: ${inviteLink}\n`);
+    return { ok: true, dev: true };
+  }
 
   try {
     const info = await transporter.sendMail({
       from: `"Agentic SDLC" <${GMAIL_USER}>`,
       to,
-      subject: `You're invited to ${projectName}`,
+      subject,
       html,
     });
     return { ok: true, data: { messageId: info?.messageId }, error: null };
@@ -2050,17 +2098,31 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   const baseUrl = resolveInviteBaseUrl(req);
   const inviteLink = `${baseUrl}/invite?token=${token}&projectId=${encodeURIComponent(projectId)}&email=${encodeURIComponent(normalizedEmail)}`;
 
+  console.log(
+    `[invite/send] request received projectId=${projectId} appRole=${appRole} ` +
+    `emailDomain=${normalizedEmail.split('@')[1] ?? '?'} gmailConfigured=${!!(GMAIL_USER && GMAIL_APP_PASSWORD)}`
+  );
+
   // Store in memory
   inviteStore.set(token, {
     projectId, projectName, email: normalizedEmail, name, appRole,
     invitedBy, invitedAt: Date.now(), acceptedAt: null,
   });
 
-  // Persist to DB if available
-  await dbUpsertMember({ projectId, name, email: normalizedEmail, appRole, inviteToken: token }).catch(() => {});
+  // Persist to DB if available. Previously swallowed silently — now logged,
+  // since a DB write failure here (e.g. no Postgres connection string
+  // configured on this service) was indistinguishable from a healthy no-op
+  // and made this flow much harder to debug from Railway logs alone.
+  await dbUpsertMember({ projectId, name, email: normalizedEmail, appRole, inviteToken: token }).catch((err) => {
+    console.error(`[invite/send] dbUpsertMember failed (non-fatal, invite email still attempted): ${err?.message ?? err}`);
+  });
 
   // Send email
   const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy });
+  console.log(
+    `[invite/send] sendInviteEmail result ok=${emailResult.ok} dev=${!!emailResult.dev}` +
+    (emailResult.error ? ` error=${emailResult.error}` : '')
+  );
 
   if (!emailResult.ok && !emailResult.dev) {
     return res.status(502).json({
@@ -2076,7 +2138,7 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     token,
     dev: emailResult.dev ?? false,
     message: emailResult.dev
-      ? 'Invite link generated (no email sent — GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
+      ? 'Invite link generated (no email sent — RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
       : 'Invite email sent.',
   });
 });
