@@ -3,6 +3,9 @@
   "version": "2.0.0",
   "description": "Autonomous Agent Runtime — backend API + legacy LLM proxy",
   "main": "src/proxy.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/proxy.js",
     "dev": "nodemon src/proxy.js",
