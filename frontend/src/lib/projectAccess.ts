@@ -3,6 +3,7 @@ import type { AppRole, Project, TeamMember } from '@/types/project.types';
 export interface ProjectAccessContext {
   adminMode?: boolean;
   userEmail?: string | null;
+  userId?: string | null;
   fallbackMemberId?: string | null;
 }
 
@@ -17,6 +18,28 @@ function norm(value?: string | null): string {
   return (value ?? '').trim().toLowerCase();
 }
 
+/**
+ * Synthesizes a virtual project_owner TeamMember for the Postgres row owner
+ * (project.ownerId, set once at creation and immutable) when data.teamMembers
+ * has no matching entry for them. This is a safety net for projects created
+ * before creator-seeding existed (or any partial write) — the person who
+ * created the project should never be locked out of their own Settings tab.
+ */
+function ownerFallbackMember(project: Project, ctx: ProjectAccessContext): TeamMember | null {
+  if (!ctx.userId || !project.ownerId) return null;
+  if (project.ownerId !== ctx.userId) return null;
+  return {
+    id: `owner:${project.ownerId}`,
+    name: ctx.userEmail ? ctx.userEmail.split('@')[0] : 'Owner',
+    email: ctx.userEmail ?? '',
+    role: 'Owner',
+    appRole: 'project_owner',
+    avatarColor: '#6366F1',
+    isAdmin: true,
+    inviteStatus: 'accepted',
+  };
+}
+
 export function getProjectMember(project: Project, ctx: ProjectAccessContext): TeamMember | null {
   const members = project.teamMembers ?? [];
   const byEmail = norm(ctx.userEmail);
@@ -25,9 +48,10 @@ export function getProjectMember(project: Project, ctx: ProjectAccessContext): T
     if (found) return found;
   }
   if (ctx.fallbackMemberId) {
-    return members.find((m) => m.id === ctx.fallbackMemberId) ?? null;
+    const found = members.find((m) => m.id === ctx.fallbackMemberId);
+    if (found) return found;
   }
-  return null;
+  return ownerFallbackMember(project, ctx);
 }
 
 export function isProjectAdminUser(project: Project, ctx: ProjectAccessContext): boolean {

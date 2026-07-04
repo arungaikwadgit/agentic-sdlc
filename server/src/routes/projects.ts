@@ -5,6 +5,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
+import { v4 as uuidv4 } from 'uuid';
 import { supabaseAdmin } from '../lib/supabase';
 import { requireAuth, requireProjectRole, requireAppAdmin, isAppAdmin } from '../middleware/auth';
 
@@ -125,6 +126,31 @@ router.post('/', requireAuth, async (req, res) => {
   try {
     const body = CreateProjectSchema.parse(req.body);
     const userId = req.user!.id;
+    const userEmail = req.user!.email || '';
+
+    // Seed the creator as project_owner/admin directly in `data.teamMembers`.
+    // The frontend's Settings-button gate (getProjectMember -> ROLE_PERMISSIONS)
+    // reads project.data.teamMembers, NOT the project_members table below — so
+    // without this, the creator would have `owner_id` + a 'admin' project_members
+    // row but still show no team member, leaving Settings disabled for them.
+    const existingData = (body.data ?? {}) as Record<string, unknown>;
+    const existingTeamMembers = Array.isArray(existingData.teamMembers) ? existingData.teamMembers : [];
+    const ownerMember = {
+      id: uuidv4(),
+      name: userEmail ? userEmail.split('@')[0] : 'Owner',
+      email: userEmail,
+      role: 'Owner',
+      appRole: 'project_owner' as const,
+      avatarColor: '#6366F1',
+      isAdmin: true,
+      inviteStatus: 'accepted' as const,
+      acceptedAt: Date.now(),
+    };
+    const projectData = {
+      ...existingData,
+      teamMembers: [ownerMember, ...existingTeamMembers],
+      activeAdminId: ownerMember.id,
+    };
 
     const { data, error } = await supabaseAdmin
       .from('projects')
@@ -134,7 +160,7 @@ router.post('/', requireAuth, async (req, res) => {
         domain: body.domain ?? '',
         status: 'draft',
         owner_id: userId,
-        data: body.data ?? {},
+        data: projectData,
       })
       .select()
       .single();

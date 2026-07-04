@@ -172,6 +172,7 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline }:
   const currentMember = getProjectMember(project, {
     adminMode,
     userEmail: user?.email ?? inviteSession?.email ?? null,
+    userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const isAdmin = !!adminMode || !!currentMember?.isAdmin;

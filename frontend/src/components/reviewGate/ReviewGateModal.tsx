@@ -76,6 +76,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   const exportPermission = getProjectExportPermission(project, {
     adminMode,
     userEmail: user?.email ?? null,
+    userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
 

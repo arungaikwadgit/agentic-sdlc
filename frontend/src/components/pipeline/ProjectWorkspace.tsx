@@ -699,12 +699,14 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const currentMember = getProjectMember(project, {
     adminMode,
     userEmail: user?.email ?? inviteSession?.email ?? null,
+    userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const currentPermissions = currentMember ? ROLE_PERMISSIONS[currentMember.appRole] : null;
   const isAdmin = isProjectAdminUser(project, {
     adminMode,
     userEmail: user?.email ?? inviteSession?.email ?? null,
+    userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const canRunProjectAgents = !!(adminMode || currentPermissions?.canRunAgents);
@@ -712,6 +714,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const exportPermission = getProjectExportPermission(project, {
     adminMode,
     userEmail: user?.email ?? inviteSession?.email ?? null,
+    userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const canExportArtifacts = exportPermission.canExport;
