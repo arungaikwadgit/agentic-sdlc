@@ -23,7 +23,10 @@ import { requireApiToken } from './middleware/requireApiToken';
 dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.RUNTIME_PORT ?? '4000', 10);
+// Railway typically injects PORT automatically for the exposed service socket.
+// Prefer it in production, while still supporting the explicit runtime port
+// used by local development and existing env files.
+const PORT = parseInt(process.env.PORT ?? process.env.RUNTIME_PORT ?? '4000', 10);
 
 // ── Middleware ──────────────────────────────────────────────────────────────
 // C-03 fix: restrict CORS to an explicit allowlist and add rate limiting.
