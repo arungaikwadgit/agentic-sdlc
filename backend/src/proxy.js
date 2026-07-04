@@ -179,42 +179,66 @@ app.use('/api', rateLimit({
 // ── Auth ──────────────────────────────────────────────────────────────────────
 async function checkToken(req, res, next) {
   const authHeader = req.headers['authorization'] ?? '';
+  // Diagnostic logging (temporary): traces every auth decision branch for
+  // every request, to debug a persistent 401 pattern where the browser is
+  // logged in but backend calls are rejected. Never logs the JWT/token
+  // value itself, only presence and Supabase's own (safe) error messages.
+  // Safe to remove once the investigation is closed.
+  const authTag = `[auth ${req.method} ${req.originalUrl}]`;
 
   // Admin-bypass bearer token — used by the frontend's local admin mode when
   // Supabase auth is intentionally bypassed. This mirrors the existing
   // admin-local session model and avoids requiring a public VITE_PROXY_TOKEN
   // in production for that one flow.
   if (process.env.NODE_ENV !== 'production' && authHeader === `Bearer ${ADMIN_BYPASS_BEARER}`) {
+    console.log(`${authTag} admin-bypass token accepted (non-production only)`);
     req.authUser = { email: null, adminBypass: true };
     return next();
   }
 
   // Path 1: Supabase JWT (preferred — frontend sends session token, not a bundled secret)
   if (authHeader.startsWith('Bearer ')) {
+    console.log(`${authTag} Bearer token present — attempting Supabase JWT validation`);
     const jwt = authHeader.slice(7);
     const supabase = getSupabase();
     if (supabase) {
       const { data, error } = await supabase.auth.getUser(jwt);
       if (!error && data?.user) {
+        console.log(`${authTag} Supabase JWT valid — user=${data.user.email?.toLowerCase?.() ?? '(no email)'}`);
         req.authUser = { email: data.user.email?.toLowerCase?.() ?? null, user: data.user };
         return next();
       }
       // JWT present but invalid — reject immediately, don't fall through
+      console.log(`${authTag} Supabase JWT validation FAILED: ${error?.message ?? 'no user returned in response'}`);
       return res.status(401).json({ error: 'Invalid or expired session. Please sign in again.' });
     }
+    console.log(`${authTag} getSupabase() returned null (SUPABASE_URL/SUPABASE_ANON_KEY missing or client init failed) — falling through to Path 2`);
     // Supabase not configured — treat as admin-mode JWT-less call, fall through
+  } else {
+    console.log(`${authTag} no Bearer Authorization header (raw value: ${authHeader ? 'non-empty, non-Bearer' : 'empty'})`);
   }
 
   // Path 2: Shared secret (PROXY_TOKEN) — used by admin-mode and server-to-server calls.
   // If neither SUPABASE_URL nor PROXY_TOKEN is set, allow (local dev with no auth configured).
-  if (!PROXY_TOKEN && !SUPABASE_URL) return next();
-  if (PROXY_TOKEN && req.headers['x-api-token'] === PROXY_TOKEN) return next();
+  if (!PROXY_TOKEN && !SUPABASE_URL) {
+    console.log(`${authTag} no PROXY_TOKEN and no SUPABASE_URL configured — allowing (open/local mode)`);
+    return next();
+  }
+  if (PROXY_TOKEN && req.headers['x-api-token'] === PROXY_TOKEN) {
+    console.log(`${authTag} valid X-API-Token header — allowing`);
+    return next();
+  }
   // If we have Supabase configured but no valid JWT arrived, reject
   if (SUPABASE_URL && !req.headers['authorization']) {
+    console.log(`${authTag} SUPABASE_URL configured but no Authorization header at all — rejecting (Authentication required)`);
     return res.status(401).json({ error: 'Authentication required. Please sign in.' });
   }
   // PROXY_TOKEN set but header missing or wrong
-  if (PROXY_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (PROXY_TOKEN) {
+    console.log(`${authTag} reached final PROXY_TOKEN check with no valid JWT and no/mismatched X-API-Token — rejecting (bare Unauthorized)`);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  console.log(`${authTag} no auth mechanism matched but none required — allowing`);
   next();
 }
 
@@ -604,6 +628,15 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
   // Delegate to /api/agent handler by reusing the same logic inline
   const { systemPrompt, userPrompt, testMode, agentId, provider: requestedProvider } = req.body ?? {};
 
+  // Diagnostic logging (temporary) — see checkToken() above. Traces the full
+  // Test Connection / agent-call lifecycle on the backend, from authenticated
+  // user through provider resolution to the actual LLM call result.
+  const callTag = `[agents/call]`;
+  console.log(
+    `${callTag} authenticated as user=${req.authUser?.email ?? (req.authUser?.adminBypass ? '(admin-bypass)' : '(unknown)')} ` +
+    `agentId=${agentId ?? '(none)'} requestedProvider=${requestedProvider ?? '(default)'} testMode=${!!testMode}`
+  );
+
   if (!systemPrompt || !userPrompt)
     return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
 
@@ -621,8 +654,10 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
 
   const provider = resolveProvider(requestedProvider, agentId);
   const model = provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL;
+  console.log(`${callTag} resolved provider=${provider} model=${model}`);
 
   if (testMode) {
+    console.log(`${callTag} testMode=true — returning stub response without calling the LLM`);
     return res.json({
       choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -632,14 +667,17 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
   }
 
   try {
+    console.log(`${callTag} calling ${provider} API...`);
+    const started = Date.now();
     const result = await withRetry(() =>
       provider === 'claude'
         ? callClaude(systemPrompt, userPrompt)
         : callOpenAi(systemPrompt, userPrompt)
     );
+    console.log(`${callTag} ${provider} call succeeded in ${Date.now() - started}ms`);
     return res.json({ ...result, provider, model });
   } catch (err) {
-    console.error('Proxy error:', err.message);
+    console.error(`${callTag} ${provider} call FAILED — status=${err.status ?? 502} message=${err.message}`);
     const status = err.status ?? 502;
     return res.status(status).json({ error: err.message, raw: err.raw });
   }

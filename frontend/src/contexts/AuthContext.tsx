@@ -58,7 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [adminMode, setAdminModeState] = useState(false);
 
   useEffect(() => {
+    // Diagnostic logging (temporary): traces session state on load, to debug
+    // a persistent 401 pattern where the app appears logged in but backend
+    // calls are rejected. Never logs the JWT itself, only presence/expiry.
     if (isAdminMode()) {
+      console.log('[auth] AuthProvider init: admin-bypass mode active (dev-mode only)');
       const mockSession = makeMockSession();
       setUser(mockSession.user);
       setSession(mockSession);
@@ -68,12 +72,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     supabase.auth.getSession().then(({ data }) => {
+      console.log(
+        `[auth] AuthProvider init: supabase.auth.getSession() -> ${data.session ? 'SESSION FOUND' : 'NO SESSION'}` +
+        (data.session?.expires_at ? `, user=${data.session.user?.email ?? '(no email)'}, expires_at=${new Date(data.session.expires_at * 1000).toISOString()}` : '')
+      );
       setSession(data.session);
       setUser(data.session?.user ?? null);
       setLoading(false);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      console.log(`[auth] onAuthStateChange: event=${_event} session=${nextSession ? 'present' : 'null'}`);
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
     });
@@ -83,11 +92,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({ email, password });
+    console.log(`[auth] signUp(${email}) -> ${error ? `error: ${error.message}` : 'success'}`);
     return { error };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
     if (ADMIN_BYPASS_ENABLED && email.trim() === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      console.log('[auth] signIn: admin-bypass credentials matched (dev-mode only, inert in production builds)');
       const mockSession = makeMockSession();
       setAdminMode(true);
       setAdminModeState(true);
@@ -96,7 +107,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     }
 
+    console.log(`[auth] signIn: attempting supabase.auth.signInWithPassword(${email})`);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    console.log(`[auth] signIn(${email}) -> ${error ? `error: ${error.message}` : 'success, session established'}`);
     return { error };
   }, []);
 

@@ -27,30 +27,46 @@ export function getProxyToken(): string {
 
 /** Returns the best available auth header for the current session. */
 export async function getAuthHeader(): Promise<Record<string, string>> {
+  // Diagnostic logging (temporary): traces exactly which auth mechanism is
+  // used for each request, to debug a persistent 401 pattern in production
+  // where the browser appears logged in but backend calls are rejected.
+  // Never logs the actual token/JWT value, only presence/expiry metadata.
+  // Safe to remove once the 401 investigation is closed.
   try {
     const { isAdminMode } = await import('@/lib/adminMode');
     if (isAdminMode()) {
+      console.log('[auth] getAuthHeader: using admin-bypass bearer token (dev-mode only)');
       return { Authorization: `Bearer ${ADMIN_BYPASS_BEARER}` };
     }
   } catch { /* admin-mode helper unavailable â€” continue */ }
 
   try {
     const { supabase, isSupabaseConfigured } = await import('@/lib/supabase');
+    console.log(`[auth] getAuthHeader: isSupabaseConfigured=${isSupabaseConfigured}`);
     if (isSupabaseConfigured) {
       const { data } = await supabase.auth.getSession();
       const jwt = data?.session?.access_token;
+      const expiresAt = data?.session?.expires_at;
+      console.log(
+        `[auth] getAuthHeader: supabase session ${jwt ? 'FOUND' : 'NOT FOUND'}` +
+        (expiresAt ? `, expires_at=${new Date(expiresAt * 1000).toISOString()}` : '')
+      );
       if (jwt) return { Authorization: `Bearer ${jwt}` };
     }
-  } catch { /* supabase unavailable â€” fall through */ }
+  } catch (e) {
+    console.log('[auth] getAuthHeader: supabase session lookup threw:', e instanceof Error ? e.message : e);
+  }
 
   try {
     const { getInviteSession } = await import('@/services/inviteSession');
     const inviteSession = getInviteSession();
     if (inviteSession?.token) {
+      console.log('[auth] getAuthHeader: using invite session token');
       return { Authorization: `Bearer invite:${inviteSession.token}` };
     }
   } catch { /* invite session unavailable â€” fall through */ }
 
+  console.log('[auth] getAuthHeader: no auth mechanism available â€” returning empty headers (unauthenticated request)');
   return {};
 }
 
@@ -123,8 +139,16 @@ function parseErrorDetail(status: number, raw: string): string {
 }
 
 async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse> {
+  // Diagnostic logging (temporary) â€” see getAuthHeader() above. Traces the
+  // full request lifecycle for Test Connection / agent calls without ever
+  // logging secret values (API keys, JWTs).
+  console.log(`[callAgent] attempt=${attempt} provider=${req.provider ?? '(default)'} agentId=${req.agentId ?? '(none)'} testMode=${!!req.testMode}`);
   const authHeaders = await getAuthHeader();
   const proxyToken = getProxyToken();
+  console.log(
+    `[callAgent] Authorization header ${authHeaders.Authorization ? 'PRESENT' : 'ABSENT'}; ` +
+    `X-API-Token fallback ${(!authHeaders.Authorization && proxyToken) ? 'will be used' : 'not used'}`
+  );
   const res = await fetch(`${API_URL}/agents/call`, {
     method: 'POST',
     headers: {
@@ -141,6 +165,7 @@ async function callAgent(req: AgentRequest, attempt = 1): Promise<AgentResponse>
     // H-06 fix: thread through caller-supplied AbortSignal for timeout/cancel support
     signal: req.signal,
   });
+  console.log(`[callAgent] response status=${res.status}`);
 
   // 429 Too Many Requests â€” back off and retry up to 4 times
   if (res.status === 429 && attempt <= 4) {
