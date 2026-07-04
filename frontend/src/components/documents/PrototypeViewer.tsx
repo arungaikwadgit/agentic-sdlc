@@ -22,6 +22,7 @@
  */
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import JSZip from 'jszip';
+import { useAlert } from '@/contexts/AlertContext';
 import styles from './PrototypeViewer.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -554,6 +555,7 @@ export default function PrototypeViewer({
     proto.files[0]?.path ?? null,
   );
   const [downloading, setDownloading] = useState(false);
+  const { showAlert } = useAlert();
 
   const selectedFileObj = useMemo(
     () => proto.files.find(f => f.path === selectedFile) ?? null,
@@ -563,7 +565,7 @@ export default function PrototypeViewer({
   const handleDownloadZip = useCallback(async () => {
     setDownloading(true);
     try { await downloadZip(proto, projectName); }
-    catch (e) { alert(`ZIP download failed: ${String(e)}`); }
+    catch (e) { showAlert(`ZIP download failed: ${String(e)}`, { kind: 'error' }); }
     finally { setDownloading(false); }
   }, [proto, projectName]);
 

@@ -17,6 +17,8 @@
  *   - Download HTML / Copy PNG → Figma actions per version
  */
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { useToast } from '@/contexts/ToastContext';
+import { useAlert } from '@/contexts/AlertContext';
 import styles from './MockupPreview.module.css';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -293,7 +295,7 @@ function applyStyleAndRouter(htmlCode: string, s: StyleState): string {
   return styleBlock + '\n' + result;
 }
 
-async function copyAsPng(htmlContent: string, label: string): Promise<void> {
+async function copyAsPng(htmlContent: string, label: string): Promise<'copied' | 'downloaded'> {
   const { default: html2canvas } = await import('html2canvas');
   const container = document.createElement('div');
   Object.assign(container.style, {
@@ -324,7 +326,7 @@ async function copyAsPng(htmlContent: string, label: string): Promise<void> {
 
     if (navigator.clipboard && window.ClipboardItem) {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
-      alert(`✓ "${label}" copied as PNG — paste directly into Figma (Ctrl+V / Cmd+V).`);
+      return 'copied';
     } else {
       const url = URL.createObjectURL(pngBlob);
       const a = document.createElement('a');
@@ -332,6 +334,7 @@ async function copyAsPng(htmlContent: string, label: string): Promise<void> {
       a.download = label.replace(/[^a-z0-9_-]/gi, '_') + '.png';
       a.click();
       URL.revokeObjectURL(url);
+      return 'downloaded';
     }
   } finally {
     URL.revokeObjectURL(blobUrl);
@@ -357,6 +360,8 @@ function HtmlFrame({
   const [height, setHeight] = useState(680);
   const [copyingPng, setCopyingPng] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const { toast } = useToast();
+  const { showAlert } = useAlert();
   const styledHtml = useMemo(
     () => applyStyleAndRouter(block.code, styleState),
     [block.code, styleState],
@@ -400,8 +405,13 @@ function HtmlFrame({
             disabled={copyingPng}
             onClick={async () => {
               setCopyingPng(true);
-              try { await copyAsPng(styledHtml, block.label); }
-              catch (e) { alert(`PNG export failed: ${String(e)}`); }
+              try {
+                const result = await copyAsPng(styledHtml, block.label);
+                if (result === 'copied') {
+                  toast(`✓ "${block.label}" copied as PNG — paste directly into Figma (Ctrl+V / Cmd+V).`, 'success');
+                }
+              }
+              catch (e) { showAlert(`PNG export failed: ${String(e)}`, { kind: 'error' }); }
               finally { setCopyingPng(false); }
             }}
             title="Copy this mockup as a PNG — paste directly into Figma with Ctrl+V / Cmd+V"

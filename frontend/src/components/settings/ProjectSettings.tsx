@@ -12,6 +12,7 @@ import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import { api } from '@/services/api';
 import { useIntegrations } from '@/hooks/useIntegrations';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAlert } from '@/contexts/AlertContext';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectMember } from '@/lib/projectAccess';
 import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/project.types';
@@ -170,6 +171,7 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function ProjectSettings({ project, onClose, onRestartPipeline, initialTab, onTabChange }: Props) {
   const { user, adminMode } = useAuth();
+  const { showAlert } = useAlert();
   const [tab, setTabState] = useState<Tab>(initialTab ?? 'team');
   function setTab(t: Tab) {
     setTabState(t);
@@ -268,7 +270,7 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
   // ─── Invite logic ──────────────────────────────────────────────────────────
   async function sendInvite(member: TeamMember) {
     if (member.appRole === 'project_owner') {
-      alert('Invite links cannot grant Project Owner access. Assign Editor, Reviewer, or Viewer first.');
+      showAlert('Invite links cannot grant Project Owner access. Assign Editor, Reviewer, or Viewer first.', { kind: 'warning' });
       return;
     }
     setInvSending(member.id);
@@ -301,12 +303,12 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
           const m = p.teamMembers.find((x) => x.id === member.id);
           if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
         });
-        alert('Invite link generated, but email sending failed: ' + (data.error ?? 'Unknown error'));
+        showAlert('Invite link generated, but email sending failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
       } else {
-        alert('Invite failed: ' + (data.error ?? 'Unknown error'));
+        showAlert('Invite failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
       }
     } catch (e) {
-      alert('Invite failed: ' + String(e));
+      showAlert('Invite failed: ' + String(e), { kind: 'error' });
     } finally {
       setInvSending(null);
     }
