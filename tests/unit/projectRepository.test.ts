@@ -195,6 +195,21 @@ describe('projectRepository', () => {
     expect(buildApiUrl('/projects')).toBe('/api/projects');
   });
 
+  // Regression test for a real production bug: VITE_API_URL is a full origin
+  // ending in "/api" in production (e.g. Railway), not the literal string "/api"
+  // like local dev. The old buildApiUrl() only special-cased base === '/api'
+  // exactly and blindly concatenated otherwise, which doubled up into
+  // ".../api/api/projects" for every caller here since they all already pass an
+  // "/api"-prefixed path. The local-dev-only test above never caught this because
+  // it never exercised a full-URL base.
+  it('builds a single /api prefix when VITE_API_URL is a full production URL ending in /api', () => {
+    vi.stubEnv('VITE_API_URL', 'https://agentic-sdlc-production.up.railway.app/api');
+
+    expect(buildApiUrl('/api/projects')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects');
+    expect(buildApiUrl('/projects')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects');
+    expect(buildApiUrl('/api/projects/permissions/me')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects/permissions/me');
+  });
+
   describe('createProject', () => {
     it('creates a project with generated id and default fields (TS-1, TS-2)', async () => {
       const project = await createProject(baseProjectData());

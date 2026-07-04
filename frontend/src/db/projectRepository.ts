@@ -25,11 +25,18 @@ export function buildApiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const base = getApiBase(import.meta.env.VITE_API_URL as string | undefined);
 
-  if (base === '/api') {
-    return normalizedPath.startsWith('/api') ? normalizedPath : `/api${normalizedPath}`;
-  }
-
-  return `${base}${normalizedPath.startsWith('/api') ? normalizedPath : `/api${normalizedPath}`}`;
+  // getApiBase() always returns something ending in "/api" -- either the literal
+  // string "/api" (local dev, VITE_API_URL unset or already "/api") or a full
+  // origin + "/api" (production, e.g. VITE_API_URL=https://.../api). Every caller
+  // in this file already passes an "/api"-prefixed path (e.g. '/api/projects'), so
+  // strip that redundant prefix before concatenating. The previous version only
+  // special-cased base === '/api' literally and otherwise concatenated blindly,
+  // which was fine in local dev but doubled up into ".../api/api/projects" in
+  // production where base is the full Railway URL ending in "/api" -- the local
+  // case accidentally masked the bug because "/api" + "/api/projects" still
+  // "looked" like it worked by coincidence of string matching, not by design.
+  const suffix = normalizedPath.startsWith('/api') ? normalizedPath.slice(4) : normalizedPath;
+  return `${base}${suffix}`;
 }
 
 const PROJECT_REPOSITORY_EVENT = 'sdlc:project-repository-change';
