@@ -94,7 +94,13 @@ const CORP_PROXY =
   process.env.http_proxy  ||
   '';
 
-if (!OPENAI_API_KEY) {
+// Skip the fail-fast exit under test: proxy.sendInviteEmail.test.ts (and any other
+// suite that require()s this module) runs with NODE_ENV=test and no real API keys
+// configured, jest sets NODE_ENV=test by default and CI's ci.yml sets it explicitly
+// for the backend job. Without this exception, simply require()-ing proxy.js from a
+// test file calls process.exit(1) and kills the entire jest process, which is what
+// was failing "Backend (tsc + jest)" in CI, unrelated to the recent package.json move.
+if (!OPENAI_API_KEY && process.env.NODE_ENV !== 'test') {
   console.error('ERROR: OPENAI_API_KEY is not set in backend/.env');
   process.exit(1);
 }

@@ -58,10 +58,14 @@ describe('sendInviteEmail (Gmail SMTP)', () => {
     const { sendInviteEmail, getGmailTransporter } = require('./proxy');
 
     expect(getGmailTransporter()).not.toBeNull();
+    // proxy.js strips whitespace from GMAIL_APP_PASSWORD before use (Google displays the
+    // 16-char app password as 4 space-separated groups for readability, but the real
+    // credential has no spaces) — this test simulates that exact input to prove the
+    // stripping actually happens, so the expected pass here is deliberately spaceless.
     expect(createTransportMock).toHaveBeenCalledWith(
       expect.objectContaining({
         service: 'gmail',
-        auth: { user: 'sender@gmail.com', pass: 'abcd efgh ijkl mnop' },
+        auth: { user: 'sender@gmail.com', pass: 'abcdefghijklmnop' },
       }),
     );
 
