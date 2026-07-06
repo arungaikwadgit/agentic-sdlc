@@ -13,7 +13,7 @@ import DocumentViewer from '../documents/DocumentViewer';
 import ReviewGateModal from '../reviewGate/ReviewGateModal';
 import ProjectSettings from '../settings/ProjectSettings';
 import { initials } from '../settings/ProjectSettings';
-import type { Tab as ProjectSettingsTab } from '../settings/ProjectSettings';
+import type { Tab as ProjectSettingsTab, InviteLinkInfo, InviteErrorInfo } from '../settings/ProjectSettings';
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';
 import AgentThinkingPanel from './AgentThinkingPanel';
@@ -193,6 +193,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   // e.g. the Domain Knowledge tab and having the panel remount for any reason
   // would silently reset the view back to the Team Members tab.
   const [settingsTab, setSettingsTab] = useState<ProjectSettingsTab>('team');
+  // Same remount problem as settingsTab above, but for the per-member invite
+  // link/error shown after Send/Resend Invite — see the matching comment on
+  // initialInviteLink/onInviteLinkChange in ProjectSettings' Props.
+  const [teamInviteLink, setTeamInviteLink] = useState<InviteLinkInfo>(null);
+  const [teamInviteError, setTeamInviteError] = useState<InviteErrorInfo>(null);
   const [downloadingArtifacts, setDownloadingArtifacts] = useState(false);
   const [showGithubPush, setShowGithubPush] = useState(false);
   const [apiReady, setApiReady] = useState<boolean | null>(null);
@@ -1417,21 +1422,4 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             setPendingGate(null);
             if (nextPhase) startPipeline(nextPhase);
           }}
-          onReject={() => setPendingGate(null)}
-          onClose={() => setPendingGate(null)}
-        />
-      )}
-
-      {showTeamPanel && (
-        <ProjectSettings
-          key={teamPanelKey}
-          project={project}
-          onClose={() => setShowTeamPanel(false)}
-          onRestartPipeline={() => setShouldAutoStart(true)}
-          initialTab={settingsTab}
-          onTabChange={setSettingsTab}
-        />
-      )}
-    </div>
-  );
-}
+          onReject={() => setPendingGate(n

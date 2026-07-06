@@ -116,7 +116,7 @@ export default function UploadStep({ files, onFilesAdded, onFileRemove }: Props)
                 aria-label={`Remove ${f.name}`}
                 disabled={isExtracting}
               >
-                \u2715
+                {'\u2715'}
               </button>
             </div>
           ))}
@@ -125,7 +125,7 @@ export default function UploadStep({ files, onFilesAdded, onFileRemove }: Props)
 
       {allReady && (
         <div className={styles.readyBanner}>
-          <span>\u2713</span>
+          <span>{'\u2713'}</span>
           <span>
             {files.filter((f) => f.status === 'ready').length} document(s) ready for extraction.
             {files.some((f) => f.status === 'error') && ' Some files had errors and will be skipped.'}
@@ -143,5 +143,4 @@ export default function UploadStep({ files, onFilesAdded, onFileRemove }: Props)
         </ul>
       </div>
     </div>
-  );
-}
+ 

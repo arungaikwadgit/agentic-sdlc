@@ -36,6 +36,9 @@ const INVITE_ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
 export type Tab = 'general' | 'team' | 'assignments' | 'knowledge';
 
+export type InviteLinkInfo = { memberId: string; link: string; emailSent?: boolean } | null;
+export type InviteErrorInfo = { memberId: string; message: string } | null;
+
 interface Props {
   project: Project;
   onClose: () => void;
@@ -51,6 +54,20 @@ interface Props {
   initialTab?: Tab;
   /** Called whenever the active tab changes, so the parent can persist it. */
   onTabChange?: (tab: Tab) => void;
+  /**
+   * Same remount problem as initialTab/onTabChange above, but for the
+   * per-member invite link/error shown right after Send/Resend Invite:
+   * updateProject() (called both to add the member and, moments later, to
+   * record the invite token) fires a repository-change event that causes
+   * this panel to remount, which would otherwise wipe the just-set invite
+   * link right as it appears — the link would flash and vanish before the
+   * admin could copy it. Lifting this state into the parent (same pattern
+   * as initialTab) makes it survive the remount.
+   */
+  initialInviteLink?: InviteLinkInfo;
+  onInviteLinkChange?: (v: InviteLinkInfo) => void;
+  initialInviteError?: InviteErrorInfo;
+  onInviteErrorChange?: (v: InviteErrorInfo) => void;
 }
 
 /** Parse a legacy "A + B + C" or "A, B, C" tech stack string into individual tags. */
@@ -169,7 +186,10 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function ProjectSettings({ project, onClose, onRestartPipeline, initialTab, onTabChange }: Props) {
+export default function ProjectSettings({
+  project, onClose, onRestartPipeline, initialTab, onTabChange,
+  initialInviteLink, onInviteLinkChange, initialInviteError, onInviteErrorChange,
+}: Props) {
   const { user, adminMode } = useAuth();
   const { showAlert } = useAlert();
   const [tab, setTabState] = useState<Tab>(initialTab ?? 'team');
@@ -216,7 +236,26 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
   const [inviteTarget,  setInviteTarget]  = useState<'new' | TeamMember | null>(null);
   const [invitePrefill, setInvitePrefill] = useState<{ name: string; email: string; jobRole: string } | undefined>(undefined);
   const [invSending, setInvSending]     = useState<string | null>(null);
-  const [inviteLink, setInviteLink]     = useState<{ memberId: string; link: string; emailSent?: boolean } | null>(null);
+  // inviteLink/inviteError are seeded from — and written back through to —
+  // the parent (see initialInviteLink/onInviteLinkChange in Props above).
+  // This panel gets remounted by ProjectWorkspace on repository-change events
+  // (the same `key`-bump remount documented for `tab`/initialTab), which
+  // would otherwise wipe these right as they're set, making the invite link
+  // flash and disappear before it could be copied.
+  const [inviteLink, setInviteLinkState] = useState<InviteLinkInfo>(initialInviteLink ?? null);
+  function setInviteLink(v: InviteLinkInfo) {
+    setInviteLinkState(v);
+    onInviteLinkChange?.(v);
+  }
+  // Inline, per-member email-delivery-failed message (replaces a global modal
+  // warning — see sendInvite()). Rendered directly under that member's
+  // Resend/Send Invite button rather than as a popup that could cover the
+  // invite link banner.
+  const [inviteError, setInviteErrorState] = useState<InviteErrorInfo>(initialInviteError ?? null);
+  function setInviteError(v: InviteErrorInfo) {
+    setInviteErrorState(v);
+    onInviteErrorChange?.(v);
+  }
 
   // ── Assignments tab state ──
   const [roleFilterId, setRoleFilterId] = useState<string>('all');
@@ -275,6 +314,7 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
     }
     setInvSending(member.id);
     setInviteLink(null);
+    setInviteError(null);
     try {
       const API   = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
       const { getAuthHeader } = await import('@/services/api');
@@ -298,17 +338,21 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
       // two). Only a real 4xx/5xx (bad request, unauthorized, DB failure)
       // means no invite was created at all.
       if (res.ok && data.ok && data.inviteLink && data.token) {
+        // No modal here anymore — a popup warning was covering the invite
+        // link right as the admin went to copy it. Instead: the link always
+        // renders inline under this member's tile (below), and if the email
+        // itself failed to send, a small inline red message renders right
+        // under that member's Resend/Send Invite button — both are scoped to
+        // this specific member via memberId, so they show up exactly where
+        // the admin clicked, not in a page-level banner or a blocking modal.
         setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !!data.emailSent });
+        if (!data.emailSent && data.emailError) {
+          setInviteError({ memberId: member.id, message: data.emailError });
+        }
         await updateProject(project.id, (p) => {
           const m = p.teamMembers.find((x) => x.id === member.id);
           if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
         });
-        if (!data.emailSent && data.emailError) {
-          showAlert(
-            'Invite link created, but email delivery failed: ' + data.emailError + ' Copy the link below and share it manually.',
-            { kind: 'warning' },
-          );
-        }
       } else {
         showAlert('Invite failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
       }
@@ -1010,21 +1054,6 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
             {tab === 'team' && (
               <div className={styles.tabContent}>
 
-                {/* Dev-mode invite link banner */}
-                {inviteLink && (
-                  <div className={styles.inviteBanner}>
-                    {inviteLink.emailSent
-                      ? <><strong>✅ Invite email sent.</strong> Copy the link to share directly:</>
-                      : <><strong>⚠ Email not configured</strong> — copy this link and share manually:</>
-                    }
-                    <div className={styles.inviteLinkRow}>
-                      <input readOnly value={inviteLink.link} className={styles.inviteLinkInput} />
-                      <button className={styles.copyBtn} onClick={() => navigator.clipboard.writeText(inviteLink.link)}>Copy</button>
-                    </div>
-                    <button className={styles.dismissLink} onClick={() => setInviteLink(null)}>Dismiss</button>
-                  </div>
-                )}
-
                 {/* Add member section */}
                 <div className={styles.addSection}>
                   <p className={styles.sectionTitle}>
@@ -1205,6 +1234,43 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
                                   </button>
                                 )}
                               </div>
+
+                              {/* Inline email-delivery-failed message — scoped to this
+                                  member, rendered right under their Resend/Send Invite
+                                  button rather than as a page-level popup. */}
+                              {inviteError?.memberId === m.id && (
+                                <p style={{ color: 'var(--error)', fontSize: 12, margin: '6px 0 0' }}>
+                                  ⚠ Email delivery failed: {inviteError.message}
+                                </p>
+                              )}
+
+                              {/* Invite link for this member — shown right on their
+                                  tile as soon as an invite is created, whether or not
+                                  the email itself sent. */}
+                              {inviteLink?.memberId === m.id && (
+                                <div style={{ marginTop: 6 }}>
+                                  <div className={styles.inviteLinkRow}>
+                                    <input
+                                      readOnly
+                                      value={inviteLink.link}
+                                      className={styles.inviteLinkInput}
+                                      onFocus={(e) => e.currentTarget.select()}
+                                    />
+                                    <button
+                                      className={styles.copyBtn}
+                                      onClick={() => navigator.clipboard.writeText(inviteLink.link)}
+                                    >
+                                      Copy
+                                    </button>
+                                  </div>
+                                  <button
+                                    className={styles.dismissLink}
+                                    onClick={() => { setInviteLink(null); setInviteError(null); }}
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
@@ -1477,82 +1543,4 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
                   <input type="text" className={styles.knowledgeTextarea}
                     style={{ minHeight: 'unset', height: 36, resize: 'none' }}
                     value={brandingUrl}
-                    onChange={(e) => setBrandingUrl(e.target.value)}
-                    disabled={!isAdmin}
-                    placeholder="Optional: https://example.com — the site whose branding to replicate"
-                  />
-                  <textarea
-                    className={styles.knowledgeTextarea}
-                    value={brandingGuidelines}
-                    onChange={(e) => { setBrandingGuidelines(e.target.value); setBrandingSaved(false); }}
-                    rows={6}
-                    disabled={!isAdmin}
-                    placeholder="e.g. Primary color #1A73E8, secondary #34A853; font: Inter; tone: friendly and approachable; follow our existing web app's visual style..."
-                  />
-                  {brandingSaved && (
-                    <p style={{ fontSize: 12, color: 'var(--success)', marginTop: 6 }}>✓ Branding guidelines saved and will be used by the UX Mockups agent.</p>
-                  )}
-                  {brandingSourceNote && (
-                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>{brandingSourceNote}</p>
-                  )}
-                  {brandingError && (
-                    <p style={{ fontSize: 12, color: 'var(--error, #dc2626)', marginTop: 6 }}>{brandingError}</p>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button
-                    className="btn-primary"
-                    disabled={!isAdmin}
-                    onClick={async () => {
-                      await updateProject(project.id, (p) => { p.brandingGuidelines = brandingGuidelines.trim() || undefined; });
-                      setBrandingSaved(true);
-                    }}
-                  >
-                    Save Branding Guidelines
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    style={{ fontSize: 12 }}
-                    disabled={!isAdmin || brandingLoading}
-                    onClick={async () => {
-                      setBrandingLoading(true);
-                      setBrandingError(null);
-                      setBrandingSaved(false);
-                      setBrandingSourceNote(null);
-                      try {
-                        const { brief, signals } = await api.generateBrandingGuidelines({
-                          projectName: project.name,
-                          projectDescription: project.description,
-                          notes: brandingGuidelines,
-                          url: brandingUrl,
-                        });
-                        if (brief) {
-                          setBrandingGuidelines(brief);
-                          if (signals) {
-                            setBrandingSourceNote(`Based on a live fetch of ${signals.url}.`);
-                          }
-                        } else {
-                          setBrandingError('No content returned. Try again.');
-                        }
-                      } catch (err) {
-                        setBrandingError(err instanceof Error ? err.message : 'Failed to generate branding guidelines.');
-                      } finally {
-                        setBrandingLoading(false);
-                      }
-                    }}
-                  >
-                    {brandingLoading ? '🔍 Researching...' : '🔍 Get Branding Guidelines'}
-                  </button>
-                </div>
-                {!isAdmin && (
-                  <p className={styles.adminHint}>Select an admin identity to edit branding guidelines.</p>
-                )}
-              </div>
-            )}
-
-        </div>
-      </div>
-    </div>
-    </>
-  );
-}
+                    onChange={(e
