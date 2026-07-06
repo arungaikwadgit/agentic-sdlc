@@ -405,12 +405,69 @@ export async function runL3Agent(
     }
   }
 
-  // If loop exhausted without FINAL_OUTPUT, use last LLM response as output
+  // If the loop exhausted maxIterations without the LLM ever emitting
+  // FINAL_OUTPUT/passthrough, don't fall back to whatever raw text it last
+  // produced. If that last turn was itself a dangling "TOOL_CALL: ..."
+  // request (e.g. an agent whose instructed workflow needs more tool calls
+  // than its configured maxIterations allows), that request text would
+  // otherwise get saved as the agent's "output" instead of a real document
+  // -- which is exactly what surfaced as a missing/broken artifact for the
+  // stakeholder agent. Instead, make one bounded, tool-free forced-
+  // finalization call: same conversation history, but a system prompt with
+  // no tools block at all (so there's nothing left to call) and an
+  // explicit instruction to write the complete document right now.
   if (!finalOutput) {
-    finalOutput = turns
-      .filter((t) => t.role === 'assistant')
-      .map((t) => t.content)
-      .pop() ?? '';
+    l3Meta.iterationCount += 1;
+    const forceContent =
+      'You have used all available tool-call iterations. Tool calls are no longer available. ' +
+      'Write your complete final document now, using everything you have already gathered above. ' +
+      'Do not summarize what you would have done — produce the actual, complete document.';
+    try {
+      const forcedResp = await callWithRetry({
+        systemPrompt: options.systemPrompt, // no tools block — nothing left to call
+        userPrompt: buildConversationPrompt(turns, forceContent, turns.length),
+        agentId: options.agentId,
+        provider: options.provider,
+      });
+      const forcedRawText = api.extractText(forcedResp);
+      totalTokens += forcedResp.usage?.total_tokens ?? 0;
+      lastProvider = forcedResp.provider;
+      lastModel = forcedResp.model;
+
+      const forcedParsed = parseResponse(forcedRawText);
+      // If it STILL tries to call a tool even with none offered, reject it
+      // rather than saving that request text as the document.
+      const candidate = forcedParsed.type === 'tool_call'
+        ? ''
+        : (forcedParsed.finalOutput ?? forcedRawText).trim();
+
+      finalOutput = candidate;
+      l3Meta.decisions.push({
+        type: 'output_accepted',
+        rationale: candidate
+          ? `Final output produced via a forced tool-free finalization call after exhausting ${maxIterations} iteration(s).`
+          : `Forced finalization call also failed to produce a usable document after exhausting ${maxIterations} iteration(s).`,
+        confidence: candidate ? 0.6 : 0.1,
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      l3Meta.decisions.push({
+        type: 'output_accepted',
+        rationale: `Forced finalization call failed: ${err instanceof Error ? err.message : String(err)}`,
+        confidence: 0.1,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  // Last-resort: if even the forced call produced nothing usable, surface a
+  // clear, honest error message rather than silently saving a dangling
+  // TOOL_CALL: request (or blank text) as if it were a finished artifact.
+  if (!finalOutput) {
+    finalOutput =
+      `[This agent did not produce a complete document within ${maxIterations} iteration(s), ` +
+      'and a forced finalization attempt also failed to produce usable output. Try re-running ' +
+      'this agent — if this happens consistently, its maxIterations may need to be increased.]';
   }
 
   return {

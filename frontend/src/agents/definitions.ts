@@ -328,7 +328,16 @@ const stakeholder: AgentDefinition = {
     `STEP 5 — Produce all 6 sections. Every stakeholder in the register must appear in the Power/Interest grid. Communication plan must name a specific cadence and owner — "as needed" is rejected. Traceability must reference actual BR-xxx IDs from the BRD.\n` +
     `STEP 6 — Self-check: verify the Power/Interest grid accounts for every stakeholder in the register, every communication plan row has an owner from the team roster, and the escalation path uses real names/roles. Fix any gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // The goal above mandates 4 sequential tool calls (projectCharter, brd,
+  // team_roster, domain_context) before the agent can even begin writing
+  // (STEP 5), plus a self-check pass (STEP 6) -- that's 5+ LLM turns at
+  // minimum. maxIterations: 3 was previously exhausting the loop mid
+  // tool-call, and the runtime's exhaustion fallback used to fall back to
+  // whatever raw text the LLM last produced -- which, if that was itself a
+  // dangling TOOL_CALL: line, meant the tool-call request text (not a real
+  // document) got saved as the agent's output. Bumped to give this agent's
+  // own instructed workflow enough room to actually reach FINAL_OUTPUT.
+  maxIterations: 6,
 };
 
 const userStory: AgentDefinition = {
