@@ -33,6 +33,27 @@ import AppLogo from '@/components/common/AppLogo';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined ?? 'http://localhost:3001').replace(/\/$/, '');
 
+/**
+ * Supabase's auth client sometimes falls back to stringifying a raw,
+ * non-standard error body as `.message` (e.g. when the Auth server 500s
+ * instead of returning a proper 4xx with a message field) -- that produces
+ * unreadable text like "{}" on screen. Detect that case and show a fallback
+ * that actually tells the user (and us) something useful instead.
+ */
+function friendlyAuthError(
+  error: { message?: string; status?: number } | null | undefined,
+  fallback: string
+): string {
+  const msg = error?.message?.trim();
+  const looksUnreadable = !msg || msg.startsWith('{') || msg.startsWith('[');
+  if (looksUnreadable) {
+    return error?.status
+      ? `${fallback} (server error ${error.status}). This usually means email delivery isn't configured for this project yet — please contact the project owner.`
+      : fallback;
+  }
+  return msg;
+}
+
 interface InviteInfo {
   id: string;
   role: string;
@@ -182,7 +203,12 @@ export default function InviteAcceptPage() {
       }
 
       if (error) {
-        setState({ status: 'form', invite, mode: 'signup', error: error.message });
+        setState({
+          status: 'form',
+          invite,
+          mode: 'signup',
+          error: friendlyAuthError(error, 'Could not send the verification email. Please try again.'),
+        });
         return;
       }
 
@@ -218,7 +244,12 @@ export default function InviteAcceptPage() {
       try {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
-          setState({ status: 'form', invite, mode: 'signin', error: error.message });
+          setState({
+            status: 'form',
+            invite,
+            mode: 'signin',
+            error: friendlyAuthError(error, 'Could not sign in. Please check your password and try again.'),
+          });
           return;
         }
       } catch (err) {
@@ -254,7 +285,11 @@ export default function InviteAcceptPage() {
       });
 
       if (error) {
-        setState({ status: 'verify-code', invite, error: error.message || 'That code is incorrect or has expired.' });
+        setState({
+          status: 'verify-code',
+          invite,
+          error: friendlyAuthError(error, 'That code is incorrect or has expired.'),
+        });
         return;
       }
     } catch (err) {
@@ -275,7 +310,7 @@ export default function InviteAcceptPage() {
     setResendMsg('Sending…');
     try {
       const { error } = await supabase.auth.resend({ type: 'signup', email: state.invite.invitedEmail ?? '' });
-      setResendMsg(error ? (error.message || 'Could not resend the code.') : 'A new code is on its way.');
+      setResendMsg(error ? friendlyAuthError(error, 'Could not resend the code.') : 'A new code is on its way.');
     } catch (err) {
       console.error('[InviteAcceptPage] resend() network failure:', err);
       setResendMsg('Could not reach the authentication service. Check your connection and try again.');

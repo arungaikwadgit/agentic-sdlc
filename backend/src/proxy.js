@@ -15,6 +15,12 @@ const { createLocalProjectStore } = require('./localProjectStore');
 const { createInMemoryAppStateStore } = require('./appStateStore');
 
 const app   = express();
+// Railway sits the app behind a reverse proxy that sets X-Forwarded-For.
+// Without this, express-rate-limit can't safely trust that header to key
+// rate limits per real client IP (it throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// instead, as seen in production logs). `1` trusts exactly one hop — the
+// Railway edge proxy — which matches this deployment's actual topology.
+app.set('trust proxy', 1);
 const PORT  = process.env.PORT ?? 3001;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
