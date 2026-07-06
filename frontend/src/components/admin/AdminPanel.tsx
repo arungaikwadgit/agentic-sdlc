@@ -883,6 +883,46 @@ function SettingsTab() {
     setMessage('Export downloaded');
   };
 
+  // Wipes all projects, team members, agent runs/jobs, memory records,
+  // action proposals, rollback log, and invite data via
+  // POST /api/admin/reset-application-data (backend/src/proxy.js). Master
+  // reference data (domains, phases, agent definitions, role templates) is
+  // never touched — that endpoint's table list contains no master_* table.
+  // Strongly recommend exporting a backup first via the button above, since
+  // this has no undo.
+  const [resetting, setResetting] = useState(false);
+  const resetApplicationData = async () => {
+    const typed = window.prompt(
+      'This permanently deletes ALL projects, team members, agent runs, and invite data. ' +
+      'Master reference data (domains, phases, agent definitions, role templates) is NOT affected. ' +
+      'This cannot be undone — export a backup first if you need one.\n\n' +
+      'Type RESET to confirm:'
+    );
+    if (typed !== 'RESET') {
+      if (typed !== null) setMessage('Reset cancelled — confirmation text did not match.');
+      return;
+    }
+    setResetting(true);
+    try {
+      const headers = await getAuthHeader();
+      const res = await fetch(`${API_URL}/admin/reset-application-data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ confirm: 'RESET' }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setMessage('Reset failed: ' + (data.error ?? `HTTP ${res.status}`));
+        return;
+      }
+      setMessage(`Application data reset. Tables cleared: ${(data.tablesReset ?? []).join(', ')}`);
+    } catch (err) {
+      setMessage('Reset failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const envVars = [
     ['VITE_SUPABASE_URL',      import.meta.env.VITE_SUPABASE_URL],
     ['VITE_SUPABASE_ANON_KEY', import.meta.env.VITE_SUPABASE_ANON_KEY],
@@ -950,6 +990,19 @@ function SettingsTab() {
       <div className={styles.actionGroup}>
         <button className={styles.smallBtn} onClick={exportData}>⬇ Export Backend Project Data</button>
         <button className={styles.dangerBtn} onClick={clearSettings}>🗑 Clear App Settings</button>
+      </div>
+
+      {/* Danger zone: full application data reset */}
+      <div className={styles.sectionHeader} style={{ marginTop: '1.5rem' }}>Danger Zone</div>
+      <div className={styles.checkDetail} style={{ marginBottom: '10px' }}>
+        Permanently deletes all projects, team members, agent runs, and invite data.
+        Master reference data (domains, phases, agent definitions, role templates) is never touched.
+        Export a backup above first — this has no undo.
+      </div>
+      <div className={styles.actionGroup}>
+        <button className={styles.dangerBtn} onClick={resetApplicationData} disabled={resetting}>
+          {resetting ? 'Resetting…' : '☠ Reset Application Data'}
+        </button>
       </div>
 
       {/* Session */}
