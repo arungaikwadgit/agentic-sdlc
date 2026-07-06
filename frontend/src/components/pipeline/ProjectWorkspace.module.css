@@ -265,6 +265,38 @@
   to { transform: rotate(360deg); }
 }
 
+/* Centered, non-blocking background-sync indicator (see ProjectWorkspace's
+   projectRefreshing) -- fixed to the viewport so it stays centered
+   regardless of scroll position, fades in/out via opacity transition
+   instead of mounting/unmounting so it never causes a layout flicker, and
+   pointer-events: none so it's purely visual and never intercepts clicks. */
+.syncIndicator {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 500;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+
+.syncIndicatorIcon {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Small inline spinning glyph for the sidebar step list's running-agent icon */
 .spinIcon {
   display: inline-block;

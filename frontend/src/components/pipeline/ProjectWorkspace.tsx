@@ -181,7 +181,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const { user, adminMode, loading: authLoading } = useAuth();
-  const { project, loading: projectLoading } = useProject(projectId);
+  const { project, loading: projectLoading, refreshing: projectRefreshing } = useProject(projectId);
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
@@ -803,6 +803,22 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
   return (
     <div className={styles.layout}>
+      {/* Smooth, non-blocking sync indicator for background project
+          refreshes (fires on every agent-run update during a pipeline run).
+          Replaces the old behavior of swapping the whole workspace out for
+          a full-page loading screen on every single update, which is what
+          caused the visible flicker while agents were executing. This
+          fades in/out via CSS rather than mounting/unmounting, and
+          pointer-events: none means it never blocks interaction with the
+          content underneath. */}
+      <div
+        className={styles.syncIndicator}
+        style={{ opacity: projectRefreshing ? 1 : 0 }}
+        aria-hidden={!projectRefreshing}
+      >
+        <div className={styles.syncIndicatorIcon} />
+      </div>
+
       <header className={styles.topbar}>
         <button className="btn-secondary" onClick={onBack} style={{ fontSize: 12 }}>&#8592; Dashboard</button>
         <div className={styles.projectInfo}>
