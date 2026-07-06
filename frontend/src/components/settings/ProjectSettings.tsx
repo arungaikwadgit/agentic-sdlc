@@ -1543,4 +1543,82 @@ export default function ProjectSettings({
                   <input type="text" className={styles.knowledgeTextarea}
                     style={{ minHeight: 'unset', height: 36, resize: 'none' }}
                     value={brandingUrl}
-                    onChange={(e
+                    onChange={(e) => setBrandingUrl(e.target.value)}
+                    disabled={!isAdmin}
+                    placeholder="Optional: https://example.com — the site whose branding to replicate"
+                  />
+                  <textarea
+                    className={styles.knowledgeTextarea}
+                    value={brandingGuidelines}
+                    onChange={(e) => { setBrandingGuidelines(e.target.value); setBrandingSaved(false); }}
+                    rows={6}
+                    disabled={!isAdmin}
+                    placeholder="e.g. Primary color #1A73E8, secondary #34A853; font: Inter; tone: friendly and approachable; follow our existing web app's visual style..."
+                  />
+                  {brandingSaved && (
+                    <p style={{ fontSize: 12, color: 'var(--success)', marginTop: 6 }}>✓ Branding guidelines saved and will be used by the UX Mockups agent.</p>
+                  )}
+                  {brandingSourceNote && (
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>{brandingSourceNote}</p>
+                  )}
+                  {brandingError && (
+                    <p style={{ fontSize: 12, color: 'var(--error, #dc2626)', marginTop: 6 }}>{brandingError}</p>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="btn-primary"
+                    disabled={!isAdmin}
+                    onClick={async () => {
+                      await updateProject(project.id, (p) => { p.brandingGuidelines = brandingGuidelines.trim() || undefined; });
+                      setBrandingSaved(true);
+                    }}
+                  >
+                    Save Branding Guidelines
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    style={{ fontSize: 12 }}
+                    disabled={!isAdmin || brandingLoading}
+                    onClick={async () => {
+                      setBrandingLoading(true);
+                      setBrandingError(null);
+                      setBrandingSaved(false);
+                      setBrandingSourceNote(null);
+                      try {
+                        const { brief, signals } = await api.generateBrandingGuidelines({
+                          projectName: project.name,
+                          projectDescription: project.description,
+                          notes: brandingGuidelines,
+                          url: brandingUrl,
+                        });
+                        if (brief) {
+                          setBrandingGuidelines(brief);
+                          if (signals) {
+                            setBrandingSourceNote(`Based on a live fetch of ${signals.url}.`);
+                          }
+                        } else {
+                          setBrandingError('No content returned. Try again.');
+                        }
+                      } catch (err) {
+                        setBrandingError(err instanceof Error ? err.message : 'Failed to generate branding guidelines.');
+                      } finally {
+                        setBrandingLoading(false);
+                      }
+                    }}
+                  >
+                    {brandingLoading ? '🔍 Researching...' : '🔍 Get Branding Guidelines'}
+                  </button>
+                </div>
+                {!isAdmin && (
+                  <p className={styles.adminHint}>Select an admin identity to edit branding guidelines.</p>
+                )}
+              </div>
+            )}
+
+        </div>
+      </div>
+    </div>
+    </>
+  );
+}

@@ -1422,4 +1422,25 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             setPendingGate(null);
             if (nextPhase) startPipeline(nextPhase);
           }}
-          onReject={() => setPendingGate(n
+          onReject={() => setPendingGate(null)}
+          onClose={() => setPendingGate(null)}
+        />
+      )}
+
+      {showTeamPanel && (
+        <ProjectSettings
+          key={teamPanelKey}
+          project={project}
+          onClose={() => setShowTeamPanel(false)}
+          onRestartPipeline={() => setShouldAutoStart(true)}
+          initialTab={settingsTab}
+          onTabChange={setSettingsTab}
+          initialInviteLink={teamInviteLink}
+          onInviteLinkChange={setTeamInviteLink}
+          initialInviteError={teamInviteError}
+          onInviteErrorChange={setTeamInviteError}
+        />
+      )}
+    </div>
+  );
+}

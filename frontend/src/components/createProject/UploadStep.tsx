@@ -143,4 +143,5 @@ export default function UploadStep({ files, onFilesAdded, onFileRemove }: Props)
         </ul>
       </div>
     </div>
- 
+  );
+}
