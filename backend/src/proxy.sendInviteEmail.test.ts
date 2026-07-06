@@ -16,7 +16,12 @@ describe('sendInviteEmail (Gmail SMTP)', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.dontMock('nodemailer');
-    process.env = { ...ORIGINAL_ENV, PORT: '0' };
+    // Explicitly clear Resend config: proxy.js tries Resend before Gmail, and
+    // dotenv.config() (proxy.js's first line) auto-loads backend/.env from
+    // CWD -- if a real RESEND_API_KEY is configured there for local dev, these
+    // tests would otherwise make a real network call to Resend's API instead
+    // of exercising the Gmail/dev-mode paths they're actually testing.
+    process.env = { ...ORIGINAL_ENV, PORT: '0', RESEND_API_KEY: '', RESEND_FROM_EMAIL: '' };
   });
 
   afterAll(() => {
@@ -58,10 +63,6 @@ describe('sendInviteEmail (Gmail SMTP)', () => {
     const { sendInviteEmail, getGmailTransporter } = require('./proxy');
 
     expect(getGmailTransporter()).not.toBeNull();
-    // proxy.js strips whitespace from GMAIL_APP_PASSWORD before use (Google displays the
-    // 16-char app password as 4 space-separated groups for readability, but the real
-    // credential has no spaces) — this test simulates that exact input to prove the
-    // stripping actually happens, so the expected pass here is deliberately spaceless.
     expect(createTransportMock).toHaveBeenCalledWith(
       expect.objectContaining({
         service: 'gmail',

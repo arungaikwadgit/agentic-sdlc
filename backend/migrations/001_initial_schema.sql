@@ -2,22 +2,50 @@
 -- Phase 0 (P0-6): Full initial schema for Autonomous Agent Runtime
 -- All tables required by Phases 1-9 are defined here.
 -- node-pg-migrate: up
+--
+-- IDEMPOTENCY NOTE (added — fixes CI/local "relation already exists" failures):
+-- 000_full_schema.sql is a squash script that already creates every type/table
+-- in this file (guarded with IF NOT EXISTS / DO $$ EXCEPTION). node-pg-migrate
+-- runs every file in this directory in filename order on a fresh database, so
+-- 000 runs first and 001 runs immediately after against the same DB. Every
+-- statement below is now guarded the same way 000 already is, so re-running
+-- this file against a DB that already has these objects (from 000) is a safe
+-- no-op instead of an error. This does NOT change behavior on environments
+-- (e.g. Railway prod) where 001 already ran previously and is recorded in
+-- node-pg-migrate's tracking table — those are untouched.
 
 -- ── Extensions ──────────────────────────────────────────────────────────────
 -- pgvector deferred to v2; reserved here so the extension slot is claimed
 -- CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ── Enums ───────────────────────────────────────────────────────────────────
-CREATE TYPE agent_run_status AS ENUM ('running', 'succeeded', 'failed', 'retrying');
-CREATE TYPE agent_job_status AS ENUM ('queued', 'running', 'succeeded', 'failed');
-CREATE TYPE memory_record_scope AS ENUM ('project', 'domain_shared');
-CREATE TYPE action_proposal_status AS ENUM ('pending', 'auto_approved', 'approved', 'rejected');
-CREATE TYPE risk_level AS ENUM ('low', 'medium', 'high');
-CREATE TYPE user_role AS ENUM ('admin', 'product_owner');
+DO $$ BEGIN
+  CREATE TYPE agent_run_status AS ENUM ('running', 'succeeded', 'failed', 'retrying');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE agent_job_status AS ENUM ('queued', 'running', 'succeeded', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE memory_record_scope AS ENUM ('project', 'domain_shared');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE action_proposal_status AS ENUM ('pending', 'auto_approved', 'approved', 'rejected');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE risk_level AS ENUM ('low', 'medium', 'high');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE user_role AS ENUM ('admin', 'product_owner');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── projects ─────────────────────────────────────────────────────────────────
 -- Mirrors the frontend Project type; created here as the authoritative source.
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL,
     description     TEXT,
@@ -30,7 +58,7 @@ CREATE TABLE projects (
 );
 
 -- ── team_members ─────────────────────────────────────────────────────────────
-CREATE TABLE team_members (
+CREATE TABLE IF NOT EXISTS team_members (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     email       TEXT NOT NULL,
@@ -42,14 +70,16 @@ CREATE TABLE team_members (
 );
 
 -- Back-fill FK now that team_members exists
-ALTER TABLE projects
+DO $$ BEGIN
+  ALTER TABLE projects
     ADD CONSTRAINT fk_projects_active_admin
     FOREIGN KEY (active_admin_id) REFERENCES team_members(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ── agent_runs ────────────────────────────────────────────────────────────────
 -- Persisted result of every agent pipeline execution.
 -- Phase 1 adds: goal, plan_steps, tool_trace, decisions, memory_reads
-CREATE TABLE agent_runs (
+CREATE TABLE IF NOT EXISTS agent_runs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     agent_key       TEXT NOT NULL,          -- e.g. 'manager', 'logAnalysis'
@@ -74,14 +104,14 @@ CREATE TABLE agent_runs (
     completed_at    TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agent_runs_project_id ON agent_runs(project_id);
-CREATE INDEX idx_agent_runs_status ON agent_runs(status);
-CREATE INDEX idx_agent_runs_agent_key ON agent_runs(agent_key);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_project_id ON agent_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_agent_key ON agent_runs(agent_key);
 
 -- ── agent_jobs ────────────────────────────────────────────────────────────────
 -- Durable job queue for backend worker execution (Phase 3).
 -- SELECT FOR UPDATE SKIP LOCKED used by worker to claim jobs atomically.
-CREATE TABLE agent_jobs (
+CREATE TABLE IF NOT EXISTS agent_jobs (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     agent_key           TEXT NOT NULL,
@@ -97,16 +127,22 @@ CREATE TABLE agent_jobs (
     completed_at        TIMESTAMPTZ
 );
 
-CREATE INDEX idx_agent_jobs_project_id ON agent_jobs(project_id);
-CREATE INDEX idx_agent_jobs_status ON agent_jobs(status);
--- Partial index for worker queue query: only queued jobs ready to run
-CREATE INDEX idx_agent_jobs_queue ON agent_jobs(created_at)
-    WHERE status = 'queued' AND (next_attempt_after IS NULL OR next_attempt_after <= NOW());
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_project_id ON agent_jobs(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_status ON agent_jobs(status);
+-- Partial index for worker queue query: only queued jobs.
+-- NOW()/CURRENT_TIMESTAMP cannot appear in an index predicate (Postgres
+-- requires predicates to be IMMUTABLE — "functions in index predicate must
+-- be marked IMMUTABLE"), so the next_attempt_after <= NOW() part of the
+-- worker's query is just a normal runtime filter, not part of the index
+-- predicate. 000_full_schema.sql already has this fixed; this file had
+-- drifted from it until now.
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_queue ON agent_jobs(created_at)
+    WHERE status = 'queued';
 
 -- ── memory_records ───────────────────────────────────────────────────────────
 -- Project-isolated and domain-shared memory (Phase 2).
 -- Retrieval MUST always filter by project_id + (project_id match OR (domain_id + approved=true)).
-CREATE TABLE memory_records (
+CREATE TABLE IF NOT EXISTS memory_records (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     scope           memory_record_scope NOT NULL DEFAULT 'project',
@@ -126,15 +162,15 @@ CREATE TABLE memory_records (
         CHECK (scope != 'domain_shared' OR domain_id IS NOT NULL)
 );
 
-CREATE INDEX idx_memory_records_project_id ON memory_records(project_id);
-CREATE INDEX idx_memory_records_domain_id ON memory_records(domain_id);
-CREATE INDEX idx_memory_records_approved ON memory_records(approved);
-CREATE INDEX idx_memory_records_tags ON memory_records USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_memory_records_project_id ON memory_records(project_id);
+CREATE INDEX IF NOT EXISTS idx_memory_records_domain_id ON memory_records(domain_id);
+CREATE INDEX IF NOT EXISTS idx_memory_records_approved ON memory_records(approved);
+CREATE INDEX IF NOT EXISTS idx_memory_records_tags ON memory_records USING GIN(tags);
 
 -- ── action_proposals ─────────────────────────────────────────────────────────
 -- Policy-bounded action proposals emitted by agents (Phase 4).
 -- v1 action_type values: generate_document | tag_memory_record | flag_for_review
-CREATE TABLE action_proposals (
+CREATE TABLE IF NOT EXISTS action_proposals (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     agent_run_id    UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -147,20 +183,20 @@ CREATE TABLE action_proposals (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_action_proposals_project_id ON action_proposals(project_id);
-CREATE INDEX idx_action_proposals_agent_run_id ON action_proposals(agent_run_id);
-CREATE INDEX idx_action_proposals_status ON action_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_project_id ON action_proposals(project_id);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_agent_run_id ON action_proposals(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_action_proposals_status ON action_proposals(status);
 
 -- ── rollback_log ─────────────────────────────────────────────────────────────
 -- Snapshot recorded before every auto-approved generate_document proposal (Phase 4).
-CREATE TABLE rollback_log (
+CREATE TABLE IF NOT EXISTS rollback_log (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     proposal_id     UUID NOT NULL REFERENCES action_proposals(id) ON DELETE CASCADE,
     snapshot        JSONB NOT NULL,         -- {agent_key, output_preview: first 1000 chars}
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_rollback_log_proposal_id ON rollback_log(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_rollback_log_proposal_id ON rollback_log(proposal_id);
 
 -- ── updated_at trigger (reusable) ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION set_updated_at()
@@ -171,10 +207,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_projects_updated_at
+DO $$ BEGIN
+  CREATE TRIGGER trg_projects_updated_at
     BEFORE UPDATE ON projects
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE TRIGGER trg_memory_records_updated_at
+DO $$ BEGIN
+  CREATE TRIGGER trg_memory_records_updated_at
     BEFORE UPDATE ON memory_records
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

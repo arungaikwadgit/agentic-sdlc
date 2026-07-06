@@ -41,9 +41,15 @@ async function main() {
   const raw = fs.readFileSync(seedFile, 'utf8');
   const sql = compilePsqlTemplate(raw);
 
+  // See seedMasterData.js for why this is conditional: local docker-compose
+  // Postgres has no SSL listener and rejects an SSL negotiation attempt
+  // outright, while Supabase/managed Postgres requires it.
+  const seedTargetHost = (process.env.POSTGRES_URL ?? '').replace(/^[a-z]+:\/\/[^@]*@/, '').split(/[:/]/)[0];
+  const seedIsLocalHost = /^(localhost|127\.0\.0\.1|db)$/i.test(seedTargetHost ?? '');
+
   const pool = new Pool({
     connectionString: process.env.POSTGRES_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: seedIsLocalHost ? false : { rejectUnauthorized: false },
   });
 
   try {

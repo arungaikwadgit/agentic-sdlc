@@ -146,6 +146,62 @@ root cause of the `GET /api/projects/:id 404` bug where a bookmarked project
 ID stopped resolving after a `nodemon` auto-restart wiped the in-memory
 project store.
 
+## Invite Links (manual sharing + security model)
+
+The email-invite feature is on hold. The supported way to add someone to a
+project today is the **manual invite link**: an Admin or Project Owner
+generates a link in Project Settings → Team, copies it, and shares it however
+they like (Slack, chat, in person). Email sending (Resend/Gmail) still runs
+automatically if configured on the backend, but it's best-effort — invite
+creation always succeeds and always returns a copyable link, whether or not
+the email actually sends. If email delivery fails, the UI shows the failure
+reason and the link is still there to copy and share by hand.
+
+**Who can create/revoke/view invites for a project**
+- Any app Admin (`ADMIN_EMAIL_ALLOWLIST`, checked in `backend/src/proxy.js`),
+  for any project.
+- The project's own Project Owner (the project creator, or anyone with an
+  accepted `app_role='project_owner'` `team_members` row for that project).
+- A Project Owner can only grant `editor`, `reviewer`, or `viewer` —
+  `project_owner` itself is never grantable through an invite link, by anyone.
+- Everyone else gets `403 Forbidden`. Denied attempts are logged (best-effort,
+  non-blocking) to `invite_log` when a team_members row exists to attach the
+  log entry to, or to the server console otherwise.
+
+**How the token is protected**
+- The invite token is a random UUID, shown to the caller exactly once (in the
+  API response and the share link).
+- Only its SHA-256 hash (`team_members.invite_token_hash`) is ever persisted.
+  Accept/validate/revoke all hash the client-supplied token server-side and
+  compare hashes — the raw token is never looked up or logged.
+- A tampered or guessed token simply won't match any stored hash and 404s.
+
+**What the server checks before granting access** (`/api/invite/accept`,
+`backend/src/proxy.js`):
+1. The token's hash matches a `team_members` row.
+2. That invite is `pending` (not `accepted` already, not `revoked`).
+3. It hasn't passed its 7-day TTL (`isInviteExpired`, derived from
+   `invited_at` — there's no separate `expires_at` column to drift out of
+   sync).
+4. The invited email matches the *server-verified* Supabase session email —
+   never a client-supplied email/query-param. `requireVerifiedInviteeEmail()`
+   re-validates the bearer JWT and requires a confirmed email on every accept
+   call.
+5. The resulting access is scoped to exactly that one project and that one
+   role — accept issues a project-scoped `invite_sessions` token, and the
+   invitee's `team_members` row for any *other* project is untouched.
+
+None of this is enforced client-side only — the invite-accept page
+(`frontend/src/components/invite/InviteAcceptPage.tsx`) calls the same
+server endpoints and only shows "you're in" after the server confirms; it
+never grants access based on URL parameters alone.
+
+**Testing**: `backend/src/proxy.inviteSecurity.test.ts` covers the token
+hashing / role-ranking / expiry / admin-allowlist logic without a database.
+`backend/src/proxy.inviteFlow.integration.test.ts` covers the full
+create → accept/revoke → authorization HTTP flow against a real Postgres and
+is skipped automatically if `POSTGRES_URL_TEST` isn't set.
+
 ## Running Locally
 
 ```bash

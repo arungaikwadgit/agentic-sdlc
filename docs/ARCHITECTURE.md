@@ -80,7 +80,7 @@ flowchart LR
 - `projectRepository.ts` loads and saves projects through backend APIs.
 - App-wide mutable state such as theme, model, prompt defaults, domain defaults, integration credentials, and backlog items persists through proxy-backed Postgres tables.
 - Master catalogs such as phases, review gates, agents, domains, and role templates are served from Postgres through the proxy catalog API.
-- Invite access is project-scoped, accepted once, and resolved server-side through `team_members` plus `invite_sessions`.
+- Invite access is project-scoped, accepted once, and resolved server-side through `team_members` plus `invite_sessions`. Invite creation/revocation is restricted to app Admins and that project's Owner (`authorizeInviteAction()` in `backend/src/proxy.js`); the invite token itself is never stored in plaintext — only its SHA-256 hash (`team_members.invite_token_hash`) — see `docs/security-review-2026-07-05.md`.
 - The runtime API stores agent runs, jobs, memory records, and action proposals in Postgres.
 
 ### Data ownership and API flow

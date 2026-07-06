@@ -149,6 +149,15 @@ async function seed() {
     throw new Error('POSTGRES_URL or PGHOST/PGPORT/PGDATABASE/PGUSER is required');
   }
 
+  // Local docker-compose Postgres has no SSL listener at all and rejects an SSL
+  // negotiation attempt outright ("The server does not support SSL connections").
+  // Supabase (and most managed Postgres) requires SSL. Detect "local" by host,
+  // since that's the one thing both connection styles (PG* vars or a single
+  // POSTGRES_URL) reliably expose without extra config.
+  const targetHost = process.env.PGHOST ?? (process.env.POSTGRES_URL ?? '').replace(/^[a-z]+:\/\/[^@]*@/, '').split(/[:/]/)[0];
+  const isLocalHost = /^(localhost|127\.0\.0\.1|db)$/i.test(targetHost ?? '');
+  const sslOption = isLocalHost ? false : { rejectUnauthorized: false };
+
   const pool = process.env.PGHOST
     ? new Pool({
         host: process.env.PGHOST,
@@ -156,9 +165,9 @@ async function seed() {
         database: process.env.PGDATABASE ?? 'postgres',
         user: process.env.PGUSER,
         password: process.env.PGPASSWORD,
-        ssl: { rejectUnauthorized: false },
+        ssl: sslOption,
       })
-    : new Pool({ connectionString: process.env.POSTGRES_URL, ssl: { rejectUnauthorized: false } });
+    : new Pool({ connectionString: process.env.POSTGRES_URL, ssl: sslOption });
   const client = await pool.connect();
 
   try {

@@ -1324,7 +1324,7 @@ app.get('/api/master-data/catalog', async (_req, res) => {
 // Railway/Render free-tier deployments where the DB is optional at first.
 
 const { Pool } = require('pg');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 
 // Gmail SMTP client (optional — set GMAIL_USER + GMAIL_APP_PASSWORD to enable real emails)
 // GMAIL_APP_PASSWORD is a 16-character Google App Password, not the account password —
@@ -1350,6 +1350,36 @@ const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
 const INVITABLE_APP_ROLES = ['editor', 'reviewer', 'viewer'];
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const INVITE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Rank used to enforce "a Project Owner cannot assign a role higher than
+// their own permission" — project_owner is already excluded from
+// INVITABLE_APP_ROLES entirely, but this is kept as an explicit,
+// spec-literal guard (and future-proofs the check if that ever changes).
+const APP_ROLE_RANK = { viewer: 0, reviewer: 1, editor: 2, project_owner: 3 };
+function appRoleRank(role) {
+  return Object.prototype.hasOwnProperty.call(APP_ROLE_RANK, role) ? APP_ROLE_RANK[role] : -1;
+}
+
+// Invite tokens are never stored in plaintext. The raw token is generated,
+// returned to the caller exactly once (API response / share link), and only
+// its SHA-256 hash is persisted (team_members.invite_token_hash, and the
+// in-memory fallback store's key). Lookups on accept/validate/revoke hash
+// the client-supplied token and compare against the stored hash — the raw
+// token itself is never round-tripped through the database.
+function hashInviteToken(token) {
+  return createHash('sha256').update(String(token)).digest('hex');
+}
+
+// A pending invite is expired once its TTL has elapsed, derived from
+// invited_at rather than a separate stored expiry column (one less field to
+// keep in sync). Centralised here so every accept/validate/list call site
+// uses the exact same rule.
+function isInviteExpired(invitedAtMsOrDate) {
+  if (!invitedAtMsOrDate) return true;
+  const invitedAtMs = invitedAtMsOrDate instanceof Date ? invitedAtMsOrDate.getTime() : new Date(invitedAtMsOrDate).getTime();
+  if (Number.isNaN(invitedAtMs)) return true;
+  return Date.now() - invitedAtMs > INVITE_TOKEN_TTL_MS;
+}
 
 // In-memory fallback when Postgres is unavailable
 const inviteStore = new Map();
@@ -1378,9 +1408,17 @@ if (!dbConnectionString) {
 // limiter is far too loose for an action that triggers an outbound email and
 // could otherwise be used to spam arbitrary addresses or enumerate emails.
 // 5 invites per 15 minutes per IP.
+//
+// NODE_ENV=test gets a much higher ceiling: the integration test suite
+// (proxy.inviteFlow.integration.test.ts) runs many /api/invite/send calls
+// against a single long-lived server instance in one Jest file, all from the
+// same loopback IP, so the production limit of 5 was being hit partway
+// through the suite and made unrelated later tests fail with a rate-limit
+// response instead of a real invite -- not a bug in those tests, just this
+// limiter not accounting for the test environment.
 const inviteSendRateLimit = rateLimit({
   windowMs: 15 * 60_000,
-  max: 5,
+  max: process.env.NODE_ENV === 'test' ? 1000 : 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many invite requests from this IP. Please try again in a few minutes.' },
@@ -1824,32 +1862,136 @@ async function dbGetMasterCatalog() {
   return catalog;
 }
 
-async function dbUpsertMember({ projectId, name, email, appRole, inviteToken }) {
-  if (!dbPool) return;
+// ── Authorization: who can create/revoke/view invites for a project ─────────
+// Two independent signals are checked because this app currently represents
+// project membership in two places kept in sync by application code rather
+// than a single source of truth:
+//   1. team_members (relational) — the row invitees get once their invite is
+//      accepted; RLS policies (003_rls_policies.sql) already treat this as
+//      the authority for project_owner-gated actions.
+//   2. projects.data.teamMembers (JSONB, seeded by server/src/routes/projects.ts
+//      at project-creation time) — this is where the ORIGINAL creator/owner
+//      is recorded; they never go through the accept-invite flow themselves,
+//      so they have no team_members row until/unless one is created some
+//      other way. Without checking this too, a project's own creator would
+//      be wrongly denied permission to invite anyone to their own project.
+async function getCallerAppRoleForProject(projectId, email) {
+  if (!dbPool || !email) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  const relational = await dbPool.query(`
+    SELECT app_role FROM team_members
+    WHERE project_id = $1 AND lower(email) = $2 AND invite_status = 'accepted'
+    LIMIT 1
+  `, [projectId, normalizedEmail]).catch(() => ({ rows: [] }));
+  if (relational.rows[0]) return relational.rows[0].app_role;
+
+  const jsonb = await dbPool.query(`
+    SELECT member->>'appRole' AS app_role
+    FROM projects, jsonb_array_elements(COALESCE(data->'teamMembers', '[]'::jsonb)) AS member
+    WHERE id = $1 AND lower(member->>'email') = $2
+    LIMIT 1
+  `, [projectId, normalizedEmail]).catch(() => ({ rows: [] }));
+  if (jsonb.rows[0]) return jsonb.rows[0].app_role;
+
+  return null;
+}
+
+// Returns { ok: true, callerEmail, callerRole } when the caller may
+// create/revoke/view invites for projectId, or writes the appropriate
+// 401/403 response and returns { ok: false }. Pass requestedAppRole only for
+// the "create" action so the Project-Owner role-ceiling check runs.
+async function authorizeInviteAction(req, res, { projectId, action, requestedAppRole }) {
+  if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+    return { ok: true, callerEmail: null, callerRole: 'admin' };
+  }
+
+  const callerEmail = req.authUser?.email ?? null;
+  if (!callerEmail) {
+    res.status(401).json({ error: 'Please sign in to manage invites for this project.' });
+    return { ok: false };
+  }
+
+  if (isConfiguredAdminEmail(callerEmail)) {
+    return { ok: true, callerEmail, callerRole: 'admin' };
+  }
+
+  if (!projectId) {
+    res.status(400).json({ error: 'projectId is required.' });
+    return { ok: false };
+  }
+
+  const callerAppRole = await getCallerAppRoleForProject(projectId, callerEmail);
+  if (callerAppRole !== 'project_owner') {
+    await logInviteEvent({ projectId, teamMemberId: null, action: `${action}_denied`, performedBy: callerEmail }).catch(() => {});
+    res.status(403).json({ error: 'Only the project owner or an app admin can manage invites for this project.' });
+    return { ok: false };
+  }
+
+  if (requestedAppRole && appRoleRank(requestedAppRole) >= appRoleRank('project_owner')) {
+    res.status(403).json({ error: 'Project Owner cannot grant a role equal to or higher than their own.' });
+    return { ok: false };
+  }
+
+  return { ok: true, callerEmail, callerRole: 'project_owner' };
+}
+
+// Best-effort audit trail — never blocks the actual invite operation if
+// logging fails (e.g. DB unavailable). teamMemberId may be null for
+// create-denied events (no team_members row exists yet to attach to) — those
+// are logged to the console instead since invite_log.team_member_id is NOT NULL.
+async function logInviteEvent({ projectId, teamMemberId, action, performedBy }) {
+  if (!dbPool || !projectId) return;
+  if (!teamMemberId) {
+    console.log(`[invite audit] project=${projectId} action=${action} by=${performedBy ?? 'unknown'} (no team_member row — logged to console only)`);
+    return;
+  }
   await dbPool.query(`
-    INSERT INTO team_members (project_id, name, email, role, app_role, invite_token, invite_status, invited_at)
-    VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())
+    INSERT INTO invite_log (project_id, team_member_id, action, performed_by)
+    VALUES ($1, $2, $3, $4)
+  `, [projectId, teamMemberId, action, performedBy ?? null]);
+}
+
+async function dbUpsertMember({ projectId, name, email, appRole, inviteTokenHash }) {
+  if (!dbPool) return null;
+  // NOTE: `role` (legacy user_role enum: 'admin' | 'product_owner') and
+  // `app_role` (fine-grained RBAC enum: 'project_owner' | 'editor' | 'reviewer' | 'viewer')
+  // are two different columns with two different enum types. This used to bind
+  // appRole (e.g. 'editor') into BOTH columns, which fails with
+  // "invalid input value for enum user_role" for any appRole that isn't
+  // 'admin'/'product_owner' -- i.e. almost every real invite. `role` is left
+  // out of the INSERT entirely so it takes its schema default
+  // ('product_owner') and is left untouched on conflict.
+  const { rows } = await dbPool.query(`
+    INSERT INTO team_members (project_id, name, email, app_role, invite_token, invite_token_hash, invite_status, invited_at)
+    VALUES ($1, $2, $3, $4, NULL, $5, 'pending', NOW())
     ON CONFLICT (project_id, email) DO UPDATE
-      SET app_role = $5, invite_token = $6, invite_status = 'pending', invited_at = NOW(), accepted_at = NULL
-  `, [projectId, name, email, appRole, appRole, inviteToken]);
+      SET app_role = $4, invite_token = NULL, invite_token_hash = $5, invite_status = 'pending', invited_at = NOW(), accepted_at = NULL
+    RETURNING id
+  `, [projectId, name, email, appRole, inviteTokenHash]);
+  return rows[0]?.id ?? null;
 }
 
 async function dbAcceptInvite(token, email) {
   if (!dbPool) return null;
   await ensureInviteSessionTable();
+  const tokenHash = hashInviteToken(token);
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
 
+    // Look up by hash (current, secure path). The raw invite_token fallback
+    // exists only for rows created before invite_token_hash existed — never
+    // written for new invites (see dbUpsertMember).
     const pendingRes = await client.query(`
       SELECT tm.id, tm.project_id, tm.name, tm.email, tm.app_role
       FROM team_members tm
-      WHERE tm.invite_token = $1
-        AND lower(tm.email) = lower($2)
+      WHERE (tm.invite_token_hash = $1 OR tm.invite_token = $2)
+        AND lower(tm.email) = lower($3)
         AND tm.invite_status = 'pending'
       LIMIT 1
       FOR UPDATE
-    `, [token, email]);
+    `, [tokenHash, token, email]);
 
     const pending = pendingRes.rows[0];
     if (!pending) {
@@ -1857,13 +1999,26 @@ async function dbAcceptInvite(token, email) {
       return null;
     }
 
+    // Defense-in-depth: reject if the stored role somehow isn't one of the
+    // roles invite links are allowed to grant (rule: "invite role is valid").
+    if (!INVITABLE_APP_ROLES.includes(pending.app_role)) {
+      await client.query('ROLLBACK');
+      throw Object.assign(new Error('Invite has an invalid role and cannot be accepted.'), { code: 'INVALID_ROLE' });
+    }
+
     await client.query(`
       UPDATE team_members
       SET invite_status = 'accepted',
           accepted_at = COALESCE(accepted_at, NOW()),
-          invite_token = NULL
+          invite_token = NULL,
+          invite_token_hash = NULL
       WHERE id = $1
     `, [pending.id]);
+
+    await client.query(`
+      INSERT INTO invite_log (project_id, team_member_id, action, performed_by)
+      VALUES ($1, $2, 'accepted', $3)
+    `, [pending.project_id, pending.id, email]);
 
     await client.query(`
       UPDATE invite_sessions
@@ -1903,19 +2058,48 @@ async function dbGetTeam(projectId) {
   return rows;
 }
 
-async function dbRevokeInvite(token) {
+// Resolves a raw client-supplied token to its team_members row (by hash,
+// falling back to legacy raw-token rows) without mutating anything — used to
+// authorize an action (revoke) against the invite's project before doing it.
+async function dbFindInviteByToken(token) {
+  if (!dbPool) return null;
+  const tokenHash = hashInviteToken(token);
+  const { rows } = await dbPool.query(`
+    SELECT id, project_id, email, app_role, invite_status
+    FROM team_members
+    WHERE invite_token_hash = $1 OR invite_token = $2
+    LIMIT 1
+  `, [tokenHash, token]).catch(() => ({ rows: [] }));
+  return rows[0] ?? null;
+}
+
+async function dbRevokeInvite(token, performedBy) {
   if (!dbPool) return;
   await ensureInviteSessionTable().catch(() => {});
-  await dbPool.query(`
+  const tokenHash = hashInviteToken(token);
+  // NOTE: invite_token_hash is deliberately KEPT (not nulled) on revoke.
+  // It's a one-way SHA-256 hash, not the secret itself, so retaining it isn't
+  // a security risk -- and /api/invite/validate needs it to still find this
+  // row so it can report a clean "this invite is no longer valid" (409)
+  // instead of a bare "not found" (404) once invite_status = 'revoked'.
+  // invite_token (the legacy raw-token column) is still cleared since new
+  // invites never populate it in the first place.
+  const { rows } = await dbPool.query(`
     UPDATE team_members
     SET invite_status = 'revoked', invite_token = NULL
-    WHERE invite_token = $1
-  `, [token]);
+    WHERE invite_token_hash = $1 OR invite_token = $2
+    RETURNING id, project_id
+  `, [tokenHash, token]);
   await dbPool.query(`
     UPDATE invite_sessions
     SET revoked_at = NOW()
     WHERE token = $1 AND revoked_at IS NULL
   `, [token]).catch(() => {});
+  const revoked = rows[0];
+  if (revoked) {
+    await logInviteEvent({ projectId: revoked.project_id, teamMemberId: revoked.id, action: 'revoked', performedBy }).catch(() => {});
+  }
+  return revoked ?? null;
 }
 
 async function dbSyncAcceptedMemberInProjectData(projectId, email, acceptedAtMs) {
@@ -2094,17 +2278,24 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     return res.status(400).json({ error: 'A valid invite email is required' });
   }
 
-  const token = randomUUID();
+  // Authorization: only an app Admin or this project's Project Owner may
+  // create an invite, and a Project Owner cannot grant a role >= their own.
+  const auth = await authorizeInviteAction(req, res, { projectId, action: 'create', requestedAppRole: appRole });
+  if (!auth.ok) return; // response already sent
+
+  const token = randomUUID();          // returned to the caller once — never persisted raw
+  const tokenHash = hashInviteToken(token);
   const baseUrl = resolveInviteBaseUrl(req);
   const inviteLink = `${baseUrl}/invite?token=${token}&projectId=${encodeURIComponent(projectId)}&email=${encodeURIComponent(normalizedEmail)}`;
 
   console.log(
-    `[invite/send] request received projectId=${projectId} appRole=${appRole} ` +
+    `[invite/send] request received projectId=${projectId} appRole=${appRole} createdBy=${auth.callerEmail ?? '(admin-bypass)'} ` +
     `emailDomain=${normalizedEmail.split('@')[1] ?? '?'} gmailConfigured=${!!(GMAIL_USER && GMAIL_APP_PASSWORD)}`
   );
 
-  // Store in memory
-  inviteStore.set(token, {
+  // Store in memory (fallback path) — keyed by hash, matching the DB column,
+  // so a tampered/guessed token never matches by construction.
+  inviteStore.set(tokenHash, {
     projectId, projectName, email: normalizedEmail, name, appRole,
     invitedBy, invitedAt: Date.now(), acceptedAt: null,
   });
@@ -2113,11 +2304,21 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   // since a DB write failure here (e.g. no Postgres connection string
   // configured on this service) was indistinguishable from a healthy no-op
   // and made this flow much harder to debug from Railway logs alone.
-  await dbUpsertMember({ projectId, name, email: normalizedEmail, appRole, inviteToken: token }).catch((err) => {
+  const teamMemberId = await dbUpsertMember({ projectId, name, email: normalizedEmail, appRole, inviteTokenHash: tokenHash }).catch((err) => {
     console.error(`[invite/send] dbUpsertMember failed (non-fatal, invite email still attempted): ${err?.message ?? err}`);
+    return null;
   });
+  await logInviteEvent({
+    projectId,
+    teamMemberId,
+    action: 'sent',
+    performedBy: auth.callerEmail ?? invitedBy ?? null,
+  }).catch(() => {});
 
-  // Send email
+  // Send email (best-effort — this is now the fallback distribution channel,
+  // not the only one: the inviteLink is always returned below so an
+  // Admin/Project Owner can copy and share it manually regardless of
+  // whether email sending is configured or succeeds).
   const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy });
   console.log(
     `[invite/send] sendInviteEmail result ok=${emailResult.ok} dev=${!!emailResult.dev}` +
@@ -2125,10 +2326,13 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   );
 
   if (!emailResult.ok && !emailResult.dev) {
-    return res.status(502).json({
-      error: emailResult.error ?? 'Invite email failed to send.',
+    return res.status(200).json({
+      ok: true,
       inviteLink,
       token,
+      emailSent: false,
+      emailError: emailResult.error ?? 'Invite email failed to send.',
+      message: 'Invite link created. Email delivery failed — copy the link below and share it manually.',
     });
   }
 
@@ -2136,10 +2340,10 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     ok: true,
     inviteLink,
     token,
-    dev: emailResult.dev ?? false,
+    emailSent: !emailResult.dev,
     message: emailResult.dev
       ? 'Invite link generated (no email sent — RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
-      : 'Invite email sent.',
+      : 'Invite email sent. You can also copy the link below to share it directly.',
   });
 });
 
@@ -2188,27 +2392,45 @@ app.post('/api/invite/accept', async (req, res) => {
   const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
   if (!verifiedEmail) return; // response already sent
 
+  const tokenHash = hashInviteToken(token);
+
   if (dbPool) {
     const { rows } = await dbPool.query(`
-      SELECT tm.project_id, tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
+      SELECT tm.id, tm.project_id, tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
       FROM team_members tm
       JOIN projects p ON p.id = tm.project_id
-      WHERE tm.invite_token = $1
+      WHERE tm.invite_token_hash = $1 OR tm.invite_token = $2
       LIMIT 1
-    `, [token]).catch(() => ({ rows: [] }));
+    `, [tokenHash, token]).catch(() => ({ rows: [] }));
 
     const existing = rows[0];
     if (existing) {
       if (existing.invite_status === 'revoked') {
+        await logInviteEvent({ projectId: existing.project_id, teamMemberId: existing.id, action: 'failed_validation:revoked', performedBy: verifiedEmail }).catch(() => {});
         return res.status(410).json({ error: 'This invite is no longer valid.' });
       }
+      if (existing.invite_status === 'accepted') {
+        return res.status(409).json({ error: 'This invite has already been accepted.' });
+      }
       if (existing.email && existing.email.toLowerCase() !== verifiedEmail) {
+        await logInviteEvent({ projectId: existing.project_id, teamMemberId: existing.id, action: 'failed_validation:email_mismatch', performedBy: verifiedEmail }).catch(() => {});
         return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
       }
-      const dbRow = await dbAcceptInvite(token, verifiedEmail).catch(() => null);
+      if (isInviteExpired(existing.invited_at)) {
+        await logInviteEvent({ projectId: existing.project_id, teamMemberId: existing.id, action: 'failed_validation:expired', performedBy: verifiedEmail }).catch(() => {});
+        return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
+      }
+      let invalidRoleError = null;
+      const dbRow = await dbAcceptInvite(token, verifiedEmail).catch((err) => {
+        if (err?.code === 'INVALID_ROLE') { invalidRoleError = err; return null; }
+        throw err;
+      });
+      if (invalidRoleError) {
+        return res.status(409).json({ error: invalidRoleError.message });
+      }
       if (dbRow) {
         await dbSyncAcceptedMemberInProjectData(dbRow.project_id, dbRow.email, Date.now());
-        inviteStore.delete(token);
+        inviteStore.delete(tokenHash);
         return res.json({
           ok: true,
           accessToken: dbRow.access_token,
@@ -2220,21 +2442,22 @@ app.post('/api/invite/accept', async (req, res) => {
           expiresAt: dbRow.expires_at,
         });
       }
+      if (res.headersSent) return;
     }
   }
 
-  const invite = inviteStore.get(token);
+  const invite = inviteStore.get(tokenHash);
   if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
   if (invite.email !== verifiedEmail) return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
 
-  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
-    inviteStore.delete(token);
+  if (isInviteExpired(invite.invitedAt)) {
+    inviteStore.delete(tokenHash);
     return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
   }
 
   invite.acceptedAt = Date.now();
-  inviteStore.set(token, invite);
+  inviteStore.set(tokenHash, invite);
 
   return res.json({
     ok: true,
@@ -2258,10 +2481,20 @@ app.get('/api/invite/accept', async (req, res) => {
   const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
   if (!verifiedEmail) return; // response already sent
 
+  const tokenHash = hashInviteToken(token);
+
   // Try DB first
-  const dbRow = await dbAcceptInvite(token, verifiedEmail).catch(() => null);
+  let invalidRoleError = null;
+  const dbRow = await dbAcceptInvite(token, verifiedEmail).catch((err) => {
+    if (err?.code === 'INVALID_ROLE') { invalidRoleError = err; return null; }
+    return null; // any other DB error: fall through to in-memory fallback below
+  });
+  if (invalidRoleError) {
+    return res.status(409).json({ error: invalidRoleError.message });
+  }
   if (dbRow) {
-    inviteStore.delete(token);
+    await dbSyncAcceptedMemberInProjectData(dbRow.project_id, dbRow.email, Date.now());
+    inviteStore.delete(tokenHash);
     return res.json({
       ok: true,
       projectId: dbRow.project_id,
@@ -2275,18 +2508,18 @@ app.get('/api/invite/accept', async (req, res) => {
   }
 
   // Fallback to in-memory
-  const invite = inviteStore.get(token);
+  const invite = inviteStore.get(tokenHash);
   if (!invite) return res.status(404).json({ error: 'Invite not found or already used.' });
   if (invite.email !== verifiedEmail) return res.status(403).json({ error: 'This invite was sent to a different email address than your confirmed account.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'This invite has already been accepted.' });
 
-  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
-    inviteStore.delete(token);
+  if (isInviteExpired(invite.invitedAt)) {
+    inviteStore.delete(tokenHash);
     return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
   }
 
   invite.acceptedAt = Date.now();
-  inviteStore.set(token, invite);
+  inviteStore.set(tokenHash, invite);
 
   return res.json({
     ok: true,
@@ -2306,20 +2539,26 @@ app.get('/api/invite/validate', async (req, res) => {
   const { token, email } = req.query;
   if (!token) return res.status(400).json({ error: 'token is required' });
 
+  const tokenHash = hashInviteToken(token);
+
   // DB lookup
   if (dbPool) {
     const { rows } = await dbPool.query(
       `SELECT tm.name, tm.email, tm.app_role, tm.invite_status, tm.invited_at, p.id AS project_id, p.name AS project_name, p.description AS project_description
        FROM team_members tm JOIN projects p ON p.id = tm.project_id
-       WHERE tm.invite_token = $1`, [token]
+       WHERE tm.invite_token_hash = $1 OR tm.invite_token = $2`, [tokenHash, token]
     ).catch(() => ({ rows: [] }));
     if (rows[0]) {
       const r = rows[0];
       if (r.invite_status === 'revoked') return res.status(409).json({ error: 'This invite is no longer valid.' });
-      if (r.invited_at && Date.now() - new Date(r.invited_at).getTime() > INVITE_TOKEN_TTL_MS) {
+      if (isInviteExpired(r.invited_at)) {
         return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
       }
       if (r.invite_status !== 'pending') return res.status(409).json({ error: 'This invite has already been used.' });
+      // Note: this endpoint only previews invite details for the "you've been
+      // invited" landing page (no session required) — it never grants access.
+      // Access is granted exclusively by /api/invite/accept, which requires a
+      // verified session and re-validates every rule server-side.
       return res.json({
         ok: true,
         id: token,
@@ -2336,11 +2575,11 @@ app.get('/api/invite/validate', async (req, res) => {
   }
 
   // In-memory fallback
-  const invite = inviteStore.get(token);
+  const invite = inviteStore.get(tokenHash);
   if (!invite) return res.status(404).json({ error: 'Invite not found.' });
   if (invite.acceptedAt) return res.status(409).json({ error: 'Already accepted.' });
-  if (Date.now() - invite.invitedAt > INVITE_TOKEN_TTL_MS) {
-    inviteStore.delete(token);
+  if (isInviteExpired(invite.invitedAt)) {
+    inviteStore.delete(tokenHash);
     return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
   }
   return res.json({
@@ -2361,8 +2600,24 @@ app.get('/api/invite/validate', async (req, res) => {
 app.delete('/api/invite/revoke', checkToken, async (req, res) => {
   const { token } = req.body ?? {};
   if (!token) return res.status(400).json({ error: 'token is required' });
-  await dbRevokeInvite(token).catch(() => {});
-  inviteStore.delete(token);
+
+  const existing = await dbFindInviteByToken(token);
+  const inviteFromMemory = existing ? null : inviteStore.get(hashInviteToken(token));
+  const projectId = existing?.project_id ?? inviteFromMemory?.projectId ?? null;
+
+  // If we can't resolve which project this token belongs to at all (DB
+  // unavailable and not in the in-memory store either), there is nothing to
+  // authorize against or to revoke — treat as not found rather than silently
+  // "succeeding" with no authorization check performed.
+  if (!projectId) {
+    return res.status(404).json({ error: 'Invite not found.' });
+  }
+
+  const auth = await authorizeInviteAction(req, res, { projectId, action: 'revoke' });
+  if (!auth.ok) return; // response already sent
+
+  await dbRevokeInvite(token, auth.callerEmail).catch(() => {});
+  inviteStore.delete(hashInviteToken(token));
   return res.json({ ok: true });
 });
 
@@ -2447,12 +2702,17 @@ app.patch('/api/invite/projects/:projectId', async (req, res) => {
 // ── GET /api/invite/team/:projectId ──────────────────────────────────────────
 app.get('/api/invite/team/:projectId', checkToken, async (req, res) => {
   const { projectId } = req.params;
+
+  const auth = await authorizeInviteAction(req, res, { projectId, action: 'view' });
+  if (!auth.ok) return; // response already sent
+
   const dbRows = await dbGetTeam(projectId).catch(() => null);
   if (dbRows) return res.json({ ok: true, members: dbRows });
-  // In-memory: filter by projectId
+  // In-memory: filter by projectId. Note: the map key is now a token hash,
+  // not the raw token, so it is never returned to the client here either.
   const members = [];
-  for (const [token, inv] of inviteStore.entries()) {
-    if (inv.projectId === projectId) members.push({ ...inv, token });
+  for (const [tokenHash, inv] of inviteStore.entries()) {
+    if (inv.projectId === projectId) members.push({ ...inv, tokenHash });
   }
   return res.json({ ok: true, members });
 });
@@ -2482,4 +2742,13 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, sendInviteEmail, getGmailTransporter };
+module.exports = {
+  app,
+  sendInviteEmail,
+  getGmailTransporter,
+  // Exported for unit testing only (invite-link security hardening):
+  hashInviteToken,
+  appRoleRank,
+  isInviteExpired,
+  isConfiguredAdminEmail,
+};

@@ -31,5 +31,29 @@ Sample/demo seed files are not part of that migration chain; they live under `ba
 - `backend/migrations/` directory holds numbered SQL files (`001_initial_schema.sql`, etc.)
 - `DATABASE_URL` env var required for migration runner
 - `npm run migrate:up` and `npm run migrate:down` added to `backend/package.json`
-- `npm run migrate:up:test` runs against `DATABASE_URL_TEST` in CI
+- `npm run migrate:up:test` runs against `POSTGRES_URL_TEST` in CI
 - No ORM — all DB access is via raw `pg` queries in repository classes
+
+### Amendment — 2026-07-05: migration files must be idempotent, not just ordered
+
+`000_full_schema.sql` was added later as a single-file "squash" for fresh
+databases, documented as equivalent to running `001_initial_schema.sql` +
+`002_invite_roles.sql` in order — but `001`/`002` were never removed from
+`backend/migrations/`, and node-pg-migrate runs every file in the directory
+in filename order regardless of what any file's comment claims. On a
+database that had never run any migration before (CI's ephemeral test DB, a
+new contributor's local Postgres), this meant `000` created every
+table/type, and `001`/`002` immediately failed re-creating the same objects
+without `IF NOT EXISTS`/guard clauses — this was the root cause of a
+GitHub Actions CI failure and a local Postgres setup failure (2026-07-05).
+
+**Consequence going forward:** every migration file must be safe to re-run
+against a database that may already have some or all of its objects —
+`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF
+NOT EXISTS`, and `DO $$ ... EXCEPTION WHEN duplicate_object THEN NULL; END
+$$;` around `CREATE TYPE`/`ADD CONSTRAINT`/`CREATE TRIGGER` — the same
+pattern `000_full_schema.sql` and `003_rls_policies.sql` already used. This
+was retrofitted into `001_initial_schema.sql` and `002_invite_roles.sql`;
+any new migration file should follow this pattern from the start rather than
+assuming it only ever runs once, in sequence, against a database that
+already has the exact prior migrations applied.

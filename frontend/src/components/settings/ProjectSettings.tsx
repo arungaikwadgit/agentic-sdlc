@@ -291,19 +291,24 @@ export default function ProjectSettings({ project, onClose, onRestartPipeline, i
         }),
       });
       const data = await res.json();
-      if (res.ok && data.ok) {
-        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !data.dev });
+      // The manual invite-link is now the primary, always-available path —
+      // email is best-effort on top of it. The server responds ok:true with
+      // inviteLink/token whenever the invite itself was created, regardless
+      // of whether the email actually sent (data.emailSent distinguishes the
+      // two). Only a real 4xx/5xx (bad request, unauthorized, DB failure)
+      // means no invite was created at all.
+      if (res.ok && data.ok && data.inviteLink && data.token) {
+        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !!data.emailSent });
         await updateProject(project.id, (p) => {
           const m = p.teamMembers.find((x) => x.id === member.id);
           if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
         });
-      } else if (data.inviteLink && data.token) {
-        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: false });
-        await updateProject(project.id, (p) => {
-          const m = p.teamMembers.find((x) => x.id === member.id);
-          if (m) { m.inviteToken = data.token; m.invitedAt = Date.now(); m.inviteStatus = 'pending'; }
-        });
-        showAlert('Invite link generated, but email sending failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
+        if (!data.emailSent && data.emailError) {
+          showAlert(
+            'Invite link created, but email delivery failed: ' + data.emailError + ' Copy the link below and share it manually.',
+            { kind: 'warning' },
+          );
+        }
       } else {
         showAlert('Invite failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
       }

@@ -38,3 +38,21 @@ The agent runtime requires persistent storage for: agent runs, agent jobs (durab
 - Master catalog tables include `master_phases`, `master_review_gates`, `master_agents`, `master_phase_agents`, `master_domains`, `master_role_templates`, and `master_role_template_agents`
 - pgvector extension deferred to v2; column type for embeddings reserved as `vector(1536)` placeholder
 - Supabase chosen as production host (aligns with ADR-008 auth decision)
+
+### Amendment — 2026-07-05: closing tracked/untracked schema drift on `projects`
+
+Production's `projects` table had accumulated four columns (`owner_id`, `data`
+JSONB, `domain`, `status`) that were never added through a node-pg-migrate
+file — likely applied by hand at some point directly against Supabase. A
+freshly-created database (CI's ephemeral test DB, a new contributor's local
+Postgres) never had them, which silently broke anything that depended on
+`projects.data` (e.g. `dbSyncAcceptedMemberInProjectData()` in
+`backend/src/proxy.js`) outside of production.
+
+`backend/migrations/005_secure_invite_links.sql` formally tracks these four
+columns with `ADD COLUMN IF NOT EXISTS` — a no-op on production, a real fix
+everywhere else. Going forward, **any manual/ad-hoc schema change made
+directly against Supabase must be back-filled into a node-pg-migrate file**
+in the same PR, or this class of drift recurs. See also the ADR-002
+amendment on migration idempotency, which this same incident also exposed.
+t also exposed.

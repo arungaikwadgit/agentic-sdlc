@@ -183,14 +183,24 @@ CREATE POLICY action_proposals_all ON action_proposals
   );
 
 -- rollback_log
+-- NOTE: rollback_log has no project_id column of its own (see
+-- 000_full_schema.sql) -- it only relates to a project indirectly via
+-- proposal_id -> action_proposals.project_id. The naive copy of the other
+-- tables' pattern here used to reference a nonexistent rollback_log.project_id
+-- column directly, which made this policy (and every migration after it,
+-- including 004_master_data_catalog.sql) fail with
+-- "error: column \"project_id\" does not exist".
 DROP POLICY IF EXISTS rollback_log_all ON rollback_log;
 CREATE POLICY rollback_log_all ON rollback_log
   FOR ALL
   USING (
-    project_id IN (
-      SELECT project_id FROM team_members
-      WHERE email = current_setting('request.jwt.claims', true)::jsonb->>'email'
-        AND invite_status = 'accepted'
+    proposal_id IN (
+      SELECT id FROM action_proposals
+      WHERE project_id IN (
+        SELECT project_id FROM team_members
+        WHERE email = current_setting('request.jwt.claims', true)::jsonb->>'email'
+          AND invite_status = 'accepted'
+      )
     )
   );
 
