@@ -92,8 +92,16 @@ type State =
   | { status: 'error'; message: string };
 
 export default function InviteAcceptPage() {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('token') ?? '';
+  // Captured ONCE at mount via a lazy initializer, not re-read from
+  // window.location.search on every render. Supabase's client
+  // (detectSessionInUrl: true) rewrites the URL via history.replaceState()
+  // after processing the confirmation redirect's auth tokens, and that
+  // rewrite can strip our own ?token=... query param along with Supabase's
+  // own params. If token were read fresh on every render, clicking "Sign
+  // In & Join Project" after returning from the confirmation link would
+  // send an empty token to /api/invite/accept ("token is required") even
+  // though the same link worked fine for the earlier /invite/validate call.
+  const [token] = useState(() => new URLSearchParams(window.location.search).get('token') ?? '');
 
   const [state, setState] = useState<State>({ status: 'loading' });
   const [password, setPassword] = useState('');
