@@ -40,6 +40,30 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
     }
   } catch { /* admin-mode helper unavailable â€” continue */ }
 
+  // Invite session is checked BEFORE the Supabase session. An invite session
+  // is only ever present in sessionStorage after someone completes the
+  // /invite accept flow, and it's scoped to exactly one project via the
+  // dedicated /api/invite/* endpoints (see getInviteBearer() in proxy.js,
+  // which requires "Bearer invite:<token>" and 401s on anything else).
+  // Accepting an invite also creates a real Supabase account for the
+  // invitee (now that email confirmation is off, that Supabase session is
+  // active immediately) -- so if Supabase were checked first, every
+  // request after acceptance would carry the invitee's raw Supabase JWT
+  // instead, which /api/invite/projects* rejects outright, making the
+  // invited project permanently inaccessible for the life of that browser
+  // session. Checking invite session first matches the app's own
+  // "switch to owner mode" design (Dashboard.tsx clearInviteSession()),
+  // which exists specifically so a user who is both a project owner and an
+  // invited guest elsewhere can explicitly opt out of invite-scoped mode.
+  try {
+    const { getInviteSession } = await import('@/services/inviteSession');
+    const inviteSession = getInviteSession();
+    if (inviteSession?.token) {
+      console.log('[auth] getAuthHeader: using invite session token');
+      return { Authorization: `Bearer invite:${inviteSession.token}` };
+    }
+  } catch { /* invite session unavailable â€” fall through */ }
+
   try {
     const { supabase, isSupabaseConfigured } = await import('@/lib/supabase');
     console.log(`[auth] getAuthHeader: isSupabaseConfigured=${isSupabaseConfigured}`);
@@ -56,15 +80,6 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
   } catch (e) {
     console.log('[auth] getAuthHeader: supabase session lookup threw:', e instanceof Error ? e.message : e);
   }
-
-  try {
-    const { getInviteSession } = await import('@/services/inviteSession');
-    const inviteSession = getInviteSession();
-    if (inviteSession?.token) {
-      console.log('[auth] getAuthHeader: using invite session token');
-      return { Authorization: `Bearer invite:${inviteSession.token}` };
-    }
-  } catch { /* invite session unavailable â€” fall through */ }
 
   console.log('[auth] getAuthHeader: no auth mechanism available â€” returning empty headers (unauthenticated request)');
   return {};
