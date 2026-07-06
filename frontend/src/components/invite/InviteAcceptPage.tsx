@@ -91,17 +91,34 @@ type State =
   | { status: 'done'; projectId: string; projectName: string }
   | { status: 'error'; message: string };
 
+const INVITE_TOKEN_STORAGE_KEY = 'sdlc:invite-accept-token';
+
 export default function InviteAcceptPage() {
-  // Captured ONCE at mount via a lazy initializer, not re-read from
-  // window.location.search on every render. Supabase's client
-  // (detectSessionInUrl: true) rewrites the URL via history.replaceState()
-  // after processing the confirmation redirect's auth tokens, and that
-  // rewrite can strip our own ?token=... query param along with Supabase's
-  // own params. If token were read fresh on every render, clicking "Sign
-  // In & Join Project" after returning from the confirmation link would
-  // send an empty token to /api/invite/accept ("token is required") even
-  // though the same link worked fine for the earlier /invite/validate call.
-  const [token] = useState(() => new URLSearchParams(window.location.search).get('token') ?? '');
+  // Persisted to sessionStorage the moment we first see it in the URL (the
+  // original invite-link click, before any Supabase redirect happens), and
+  // read back from there if the URL's ?token=... is later missing.
+  //
+  // This isn't just "capture once at mount" -- that alone isn't enough.
+  // After the invitee clicks the confirmation link in their email, Supabase
+  // redirects back to this same page with session tokens attached, and its
+  // client (detectSessionInUrl: true) cleans up the URL via
+  // history.replaceState(state, '', window.location.pathname) -- using
+  // *only* pathname, dropping the entire search string (our own
+  // ?token=...&projectId=...&email=... along with Supabase's own params).
+  // That cleanup runs as part of the Supabase client's own initialization
+  // (see @/lib/supabase, created at module-import time), which happens
+  // before InviteAcceptPage even mounts on this second page load -- so a
+  // mount-time read of window.location.search can already be too late.
+  // sessionStorage survives across that redirect because it's set on the
+  // very first load, well before Supabase ever touches the URL.
+  const [token] = useState(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('token');
+    if (fromUrl) {
+      try { window.sessionStorage.setItem(INVITE_TOKEN_STORAGE_KEY, fromUrl); } catch { /* ignore */ }
+      return fromUrl;
+    }
+    try { return window.sessionStorage.getItem(INVITE_TOKEN_STORAGE_KEY) ?? ''; } catch { return ''; }
+  });
 
   const [state, setState] = useState<State>({ status: 'loading' });
   const [password, setPassword] = useState('');
