@@ -88,6 +88,12 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   const members = project.teamMembers ?? [];
   const gateAssignees = getGateAssignees(project, agents);
 
+  // Every agent under this gate must have a completed artifact before the
+  // pipeline can be approved past this gate — otherwise downstream phases
+  // would start from missing/partial context.
+  const incompleteAgents = agents.filter((a) => project.agentRuns[a]?.status !== 'complete');
+  const allAgentsComplete = incompleteAgents.length === 0;
+
   // Editable output state
   const [editedOutput, setEditedOutput] = useState<string>('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -330,7 +336,17 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
               </select>
             )}
             <button className="btn-danger" onClick={onReject}>Reject &amp; Stop</button>
-            <button className="btn-primary" onClick={() => onApprove(notes, approvedById || undefined)}>
+            <button
+              className="btn-primary"
+              onClick={() => onApprove(notes, approvedById || undefined)}
+              disabled={!allAgentsComplete}
+              title={
+                allAgentsComplete
+                  ? undefined
+                  : `Waiting on ${incompleteAgents.length} agent${incompleteAgents.length === 1 ? '' : 's'} to finish: ` +
+                    incompleteAgents.map((a) => AGENT_DEFINITIONS[a]?.name ?? a).join(', ')
+              }
+            >
               Approve &amp; Continue ›
             </button>
           </div>
