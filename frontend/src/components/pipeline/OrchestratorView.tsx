@@ -759,7 +759,7 @@ Suggest 8-10 NEW risks covering domain, technical, integration, process, and tre
                             onClick={() => { setEditingIdx(idx); setAddingNew(false); }}>✏ Edit</button>
                           <button className="btn-secondary"
                             style={{ fontSize: 11, padding: '3px 8px', color: 'var(--error)' }}
-                            onClick={() => handleDelete(idx)}>✕</button>
+                            onClick={() => handleDelete(idx)} aria-label="Delete row">✕</button>
                         </td>
                       )}
                     </tr>

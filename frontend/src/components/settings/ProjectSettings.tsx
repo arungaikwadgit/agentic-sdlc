@@ -110,7 +110,7 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
       <div className={styles.inviteModal}>
         <div className={styles.inviteModalHeader}>
           <h3>{isResend ? `Send Invite to ${existingMember!.name}` : 'Invite a Team Member'}</h3>
-          <button className={styles.closeBtn} onClick={onClose}>✕</button>
+          <button className={styles.closeBtn} onClick={onClose} aria-label="Close">✕</button>
         </div>
 
         <div className={styles.formGroup}>
@@ -787,7 +787,7 @@ export default function ProjectSettings({
               <h2>Project Settings</h2>
               <p className={styles.subtitle}>{project.name}</p>
             </div>
-            <button className={styles.closeBtn} onClick={onClose}>✕</button>
+            <button className={styles.closeBtn} onClick={onClose} aria-label="Close project settings">✕</button>
           </div>
 
           <div className={styles.adminBar}>
@@ -928,7 +928,7 @@ export default function ProjectSettings({
                     <div className={styles.inviteModal}>
                       <div className={styles.inviteModalHeader}>
                         <h3>Restart Pipeline?</h3>
-                        <button className={styles.closeBtn} onClick={() => setShowRestartConfirm(false)}>✕</button>
+                        <button className={styles.closeBtn} onClick={() => setShowRestartConfirm(false)} aria-label="Cancel restart">✕</button>
                       </div>
                       <p style={{ marginBottom: 12, lineHeight: 1.5 }}>
                         You changed the <strong>{projectDomain !== project.domain ? 'domain' : 'tech stack'}</strong>. This will:
@@ -1119,7 +1119,7 @@ export default function ProjectSettings({
                     {removeError && (
                       <div className={styles.removeError}>
                         ⛔ {removeError}
-                        <button className={styles.removeErrorDismiss} onClick={() => setRemoveError(null)}>✕</button>
+                        <button className={styles.removeErrorDismiss} onClick={() => setRemoveError(null)} aria-label="Dismiss error">✕</button>
                       </div>
                     )}
                     <div className={styles.memberGrid}>

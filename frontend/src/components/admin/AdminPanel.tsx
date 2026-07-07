@@ -78,7 +78,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
               <div className={styles.headerSub}>© 2026 Arun Gaikwad · Proprietary · Confidential</div>
             </div>
           </div>
-          <button className={styles.closeBtn} onClick={onClose}>✕</button>
+          <button className={styles.closeBtn} onClick={onClose} aria-label="Close admin panel">✕</button>
         </div>
 
         {/* Tabs */}
@@ -367,7 +367,7 @@ function ProjectsTab() {
       </div>
 
       <div className={styles.detail}>
-        {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')}>✕</button></div>}
+        {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')} aria-label="Dismiss message">✕</button></div>}
         {!sel && <div className={styles.empty}>Select a project</div>}
         {sel && (
           <>
@@ -483,7 +483,7 @@ function AgentsTab() {
         ))}
       </div>
       <div className={styles.detail}>
-        {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')}>✕</button></div>}
+        {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')} aria-label="Dismiss message">✕</button></div>}
         {!sel && <div className={styles.empty}>Select a project</div>}
         {sel && (
           <>
@@ -616,7 +616,7 @@ function BackendTab() {
     <div>
       {message && (
         <div className={isError ? styles.errorMsg : styles.successMsg}>
-          {message} <button className={styles.linkBtn} onClick={() => setMessage('')}>✕</button>
+          {message} <button className={styles.linkBtn} onClick={() => setMessage('')} aria-label="Dismiss message">✕</button>
         </div>
       )}
 
@@ -939,7 +939,7 @@ function SettingsTab() {
 
   return (
     <div>
-      {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')}>✕</button></div>}
+      {message && <div className={styles.successMsg}>{message} <button className={styles.linkBtn} onClick={() => setMessage('')} aria-label="Dismiss message">✕</button></div>}
 
       {/* Session-level overrides */}
       <div className={styles.sectionHeader}>Session Overrides</div>
