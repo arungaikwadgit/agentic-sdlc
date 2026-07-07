@@ -137,7 +137,9 @@ const sdlcOrchestrator: AgentDefinition = {
     'STEP 5 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, and risk mitigations are actionable. Fix gaps before finishing.',
 
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls (domain, team roster, style guide) + write + self-check
+  // needs more than 3 iterations — same corruption risk class as the stakeholder fix.
+  maxIterations: 5,
 };
 
 // ─── Phase 1 ─────────────────────────────────────────────────────────────────
@@ -186,7 +188,8 @@ const manager: AgentDefinition = {
     `STEP 4 — Produce all 12 PRD sections. Functional requirements must be numbered FR-001, FR-002, etc. with MoSCoW priority and acceptance signal. Success metrics must have baseline, target, and measurement method.\n` +
     `STEP 5 — Self-check: verify every FR-xxx has an acceptance signal, all success metrics are quantifiable, scope exclusions have rationale, and risk owners are real team member names. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check needs more than 3 iterations.
+  maxIterations: 5,
 };
 
 // ─── Phase 1B ────────────────────────────────────────────────────────────────
@@ -234,7 +237,8 @@ const projectCharter: AgentDefinition = {
     `STEP 3 — Produce all charter sections. Budget estimate must show calculation basis (headcount x duration x rate). Scope statement must reference specific FR-xxx items. Every approval role must have a real team member name.\n` +
     `STEP 4 — Self-check: verify budget has stated assumptions, scope matches PRD boundaries, all approval signatures have named team members. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 2 mandatory tool calls + write + self-check.
+  maxIterations: 4,
 };
 
 const brd: AgentDefinition = {
@@ -282,7 +286,8 @@ const brd: AgentDefinition = {
     `STEP 5 — Produce all BRD sections. BR-xxx must be numbered, testable, and cite FR-xxx. RACI must use real team member names. Process flows must show current-state vs future-state. Compliance rules must cite specific regulations.\n` +
     `STEP 6 — Self-check: verify every BR-xxx cites a FR-xxx, RACI has real names, and compliance regulations are named. Fix gaps before finishing.`,
   tools: ALL_TOOLS,
-  maxIterations: 4,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 // ─── Phase 2 ──────────────────────────────────────────────────────────────────
@@ -381,7 +386,8 @@ const userStory: AgentDefinition = {
     `STEP 4 — Produce all 6 sections: 5+ epics with 3-5 stories each, Fibonacci story points, Given/When/Then ACs, dependency map, DoD checklist, and non-functional stories with measurable ACs.\n` +
     `STEP 5 — Self-check: every epic maps to a FR-xxx, every story has an owner, all ACs are Given/When/Then, story IDs are unique (US-1xx). Fix gaps before finishing.`,
   tools: ALL_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const businessRules: AgentDefinition = {
@@ -423,7 +429,8 @@ const businessRules: AgentDefinition = {
     `STEP 3 — Produce all sections. State machine must list ALL states including error/rejected states. Decision tables must show all condition combinations. Compliance rules must cite specific regulations (e.g. GDPR Article 17).\n` +
     `STEP 4 — Self-check: verify every rule has an ID, IF/THEN form, BR-xxx traceability link, and priority. State machine covers all entity states. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+  // 2 mandatory tool calls + write + self-check.
+  maxIterations: 4,
 };
 
 const feasibility: AgentDefinition = {
@@ -473,7 +480,8 @@ const feasibility: AgentDefinition = {
     `STEP 5 — Produce all 9 sections. Financial estimates must show their calculation basis (team size x duration x rate, or comparable benchmark). Risk scores must use Likelihood (1-5) x Impact (1-5) = Risk Score, sorted descending. Every risk must cite a specific PRD/BRD item.\n` +
     `STEP 6 — Self-check: verify all 9 sections are present, every financial figure has a stated assumption, the risk table is sorted by score, and Go/No-Go criteria are explicit thresholds (not "leadership will decide"). Fix any gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 const dataModel: AgentDefinition = {
@@ -525,7 +533,8 @@ const dataModel: AgentDefinition = {
     `STEP 5 — Produce all 8 sections + erDiagram. Every entity in the ER diagram must have a data dictionary entry. All attributes must use concrete SQL types (VARCHAR(255), not "text"). PII classification must be field-level.\n` +
     `STEP 6 — Self-check: verify every FR-xxx entity is in the model, every BR state machine has a status field, all ER entities have dictionary entries, no generic types (text/number/string), and PII fields are enumerated. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 // ─── Phase 3 ──────────────────────────────────────────────────────────────────
@@ -578,7 +587,8 @@ const architecture: AgentDefinition = {
     `STEP 6 — Produce all 10 ADD sections. NFR targets from STEP 1 must be cited by number in the Scalability section. Data architecture must be consistent with STEP 2 entities. Every tech choice must name a rejected alternative. All 3+ ADRs must include negative trade-offs.\n` +
     `STEP 7 — Self-check: verify scalability section references specific NFR numbers, data architecture matches data model entities, every ADR has consequences (including negatives), and all 10 sections are present. Fix any gaps before finishing.`,
   tools: ALL_TOOLS,
-  maxIterations: 5,
+  // 5 mandatory tool calls + write + self-check.
+  maxIterations: 7,
 };
 
 const apiDesign: AgentDefinition = {
@@ -634,7 +644,8 @@ const apiDesign: AgentDefinition = {
     `STEP 5 — Produce all 9 sections. Endpoint paths must use entity names from STEP 2. Auth design must match STEP 1 mechanism. The 8-10 core endpoints must map to the US-xxx stories from STEP 3.\n` +
     `STEP 6 — Self-check: verify endpoint field names match data dictionary, auth mechanism matches architecture, each endpoint cites a US-xxx story, error envelope is consistent across all endpoints. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 5,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 const uxResearch: AgentDefinition = {
@@ -673,7 +684,8 @@ const uxResearch: AgentDefinition = {
     `STEP 5 — Produce all 8 sections. Each persona must reference a user story role. Journey maps must show current vs future state. Competitive analysis must name 3 real products with specific UX strengths/weaknesses.\n` +
     `STEP 6 — Self-check: verify 3 distinct personas, 2 complete journey maps, 3 named competitors, WCAG checklist has domain-specific items. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 const interaction: AgentDefinition = {
@@ -709,7 +721,8 @@ const interaction: AgentDefinition = {
     `STEP 4 — Produce all 8 sections. Design tokens must be specific values. Component library must describe each component's states/variants. Wireframes must cover the 5 screens most critical to the primary user journey from STEP 1.\n` +
     `STEP 5 — Self-check: verify design tokens are concrete values (not vague), every wireframe is linked to a persona use case, WCAG criteria are cited by number, and animation guidelines specify duration/easing values. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const LAYOUT_ARCHETYPES = [
@@ -775,11 +788,13 @@ Every mockup must include ALL of the following:
 8. CSS DESIGN TOKENS — declare at :root: --color-primary, --color-secondary, --color-surface, --color-text, --color-accent, --color-success, --color-danger, --font-family, --radius, --shadow-sm, --shadow-md, --shadow-lg, --spacing-unit.
 9. PROFESSIONAL SHADOWS & DEPTH — cards: 0 1px 3px rgba(0,0,0,0.08); hover: 0 8px 32px rgba(0,0,0,0.12); navbar: 0 1px 4px rgba(0,0,0,0.08).
 10. TYPOGRAPHY HIERARCHY — 3+ distinct type sizes. Load Google Font via @import if appropriate.
+11. ACCESSIBILITY BASELINE (industry-standard, not optional) — text-vs-background contrast must meet at least 4.5:1 (WCAG AA); every icon-only button/control must have an aria-label; every interactive element must have a visible :focus-visible outline (do not set outline:none without an equivalent replacement); status must never be conveyed by color alone (pair every status badge with a text label or icon shape); all primary tap targets at least 44x44px.
 
 CRITICAL OUTPUT RULES:
 - Each block must be a COMPLETE standalone HTML document starting with <!DOCTYPE html>.
 - RESPONSIVE DESIGN IS MANDATORY. Include <meta name="viewport"> as FIRST tag. Use mobile-first CSS.
-- Do NOT use placeholder images. Use CSS gradients, emoji icons, or inline SVG instead.
+- Do NOT use placeholder images. Use CSS gradients or inline SVG for icons and graphics.
+- ICONS MUST BE INLINE SVG, NEVER EMOJI. Emoji are font-dependent, render inconsistently across platforms/OSes, and cannot be themed via CSS design tokens — this is a hard requirement for commercial-grade output, not a style preference.
 - Do NOT use external CDN links except @import for Google Fonts.`,
   buildUserPrompt: (ctx) => {
     const versionCount = Math.min(4, Math.max(2, ctx.mockupVersionCount ?? 2));
@@ -932,7 +947,8 @@ const securityCompliance: AgentDefinition = {
     `STEP 6 — Produce all 10 sections. STRIDE must name threats per architecture component. OWASP must rate all 10 items (High/Med/Low). Compliance checklist must cite specific regulations by name. Incident response must have named role owners.\n` +
     `STEP 7 — Self-check: verify STRIDE covers all architecture components, all 10 OWASP items are rated, compliance regulations are named (not generic), and incident response roles are assigned to real team members. Fix gaps before finishing.`,
   tools: ALL_TOOLS,
-  maxIterations: 5,
+  // 5 mandatory tool calls + write + self-check.
+  maxIterations: 7,
 };
 
 // ─── Phase 4 ──────────────────────────────────────────────────────────────────
@@ -970,7 +986,8 @@ const sprintPlanner: AgentDefinition = {
     `STEP 4 — Produce all 7 sections. Sprint 0 must list specific setup tasks by name. Sprints 1-6 must list US-xxx IDs. Inter-sprint dependencies must be explicit. Release milestones must be dated.\n` +
     `STEP 5 — Self-check: verify total story points across all sprints matches the user story backlog total, each sprint has a specific goal (not generic), and all task owners are real team member names. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const taskBreakdown: AgentDefinition = {
@@ -1006,7 +1023,8 @@ const taskBreakdown: AgentDefinition = {
     `STEP 4 — Produce all task sections. Backend tasks must name specific endpoints from STEP 2. Every task has: ID, title, type, estimated hours, assignee, dependencies, and acceptance criteria.\n` +
     `STEP 5 — Self-check: verify all API endpoints from STEP 2 have corresponding tasks, total hours are reasonable for team size, and no tasks are unassigned. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const techDebt: AgentDefinition = {
@@ -1041,7 +1059,8 @@ const techDebt: AgentDefinition = {
     `STEP 4 — Produce all sections. Debt register must score each item (Impact 1-5 x Effort 1-5), sorted descending. Every ADR trade-off from STEP 1 must appear as a debt item.\n` +
     `STEP 5 — Self-check: verify register is sorted by priority score, all ADR negatives are captured, every item has a named owner, and refactoring roadmap items have realistic sprint targets. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const codeStructure: AgentDefinition = {
@@ -1076,7 +1095,8 @@ const codeStructure: AgentDefinition = {
     `STEP 3 — Produce all sections. Directory tree must be in a fenced text block and consistent with tech stack from STEP 1. Every API resource from STEP 2 maps to a named file/module.\n` +
     `STEP 4 — Self-check: verify the tree structure matches tech stack conventions, API resources from STEP 2 are all represented, naming conventions are consistent throughout. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+  // 2 mandatory tool calls + write + self-check.
+  maxIterations: 4,
 };
 
 const codeSnippets: AgentDefinition = {
@@ -1113,7 +1133,8 @@ const codeSnippets: AgentDefinition = {
     `STEP 4 — Produce 4 code snippets: (1) backend API handler for the endpoint from STEP 2, (2) data model/entity using the ORM from STEP 1, (3) frontend component from STEP 3, (4) service/business-logic function. Each 20-50 lines with contextual explanation.\n` +
     `STEP 5 — Self-check: verify all snippets use the tech stack from STEP 1, backend handler matches the API endpoint from STEP 2, and no snippet is a generic placeholder. Fix gaps before finishing.`,
   tools: ALL_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const uiComponentLibrary: AgentDefinition = {
@@ -1150,7 +1171,8 @@ const uiComponentLibrary: AgentDefinition = {
     `STEP 4 — Produce all sections. Component inventory must cover every component from STEP 1. Folder structure must match STEP 2 conventions. Governance model must name real owners from STEP 3.\n` +
     `STEP 5 — Self-check: verify every interaction design component is in the inventory, props/variants are specified for each shared component, and ownership is assigned. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const codeReviewStandards: AgentDefinition = {
@@ -1188,7 +1210,8 @@ const codeReviewStandards: AgentDefinition = {
     `STEP 4 — Produce all 10 sections. Language/framework standards must name the actual tech stack from STEP 1. Automated checks must specify real tools (e.g. ESLint, Prettier, Jest coverage gate at 80%). Named reviewers must come from STEP 3.\n` +
     `STEP 5 — Self-check: verify language standards match architecture tech stack, automated tools are named (not generic), and all Review Process role assignments use real team member names. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const roadmapPlanner: AgentDefinition = {
@@ -1227,7 +1250,8 @@ const roadmapPlanner: AgentDefinition = {
     `STEP 6 — Produce all 8 roadmap sections. Q1-Q4 Year 1 plan must match sprint milestones from STEP 4. Success metrics per quarter must be quantifiable.\n` +
     `STEP 7 — Self-check: verify all P0 epics are in Now, sprint milestones match Q1-Q2, DRI is a real team member name, and quarterly metrics are measurable. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 5 mandatory tool calls + write + self-check.
+  maxIterations: 7,
 };
 
 // ─── Phase 5 ──────────────────────────────────────────────────────────────────
@@ -1267,7 +1291,8 @@ const testPlan: AgentDefinition = {
     `STEP 4 — Produce all test plan sections. Automation tools must match STEP 1 tech stack. Risk-based priorities must reference actual US-xxx story IDs from STEP 2. Every test type must have a named owner from STEP 3.\n` +
     `STEP 5 — Self-check: verify automation tools are consistent with architecture, entry/exit criteria are measurable thresholds, and P0 stories have explicit coverage commitments. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const testCases: AgentDefinition = {
@@ -1308,7 +1333,8 @@ const testCases: AgentDefinition = {
     `STEP 5 — Produce all 8 sections. Every TC must cite either a US-xxx (for functional cases) or an API endpoint+response code (for integration cases) or a field constraint (for data validation cases).\n` +
     `STEP 6 — Self-check: verify every P0 user story has at least one TC, every API endpoint has at least one integration TC, and negative cases cover invalid inputs and auth failures. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
-  maxIterations: 4,
+  // 4 mandatory tool calls + write + self-check.
+  maxIterations: 6,
 };
 
 
@@ -1442,6 +1468,7 @@ UX QUALITY:
   - Responsive: sidebar collapses to bottom tabs at 768px; table scrolls horizontally on mobile
   - cursor: pointer on all interactive elements; visible focus rings (2px solid var(--color-primary))
   - SVG charts: responsive with viewBox, accessible <title> elements — NO Chart.js, NO canvas
+  - Icon-only buttons/controls (including the Theme Studio FAB) MUST have aria-label; never rely on the icon alone
 
 NO external dependencies — no CDN, no external fonts, no images. Everything inline.
 Single <style> block, then HTML, then single <script> block.
@@ -1503,7 +1530,7 @@ UX/UI PRINCIPLES (ui-ux-pro-max)
       `8. .env.example — all required environment variables`,
       `9. preview.html — LAST FILE — complete self-contained interactive prototype with:`,
       `   - 5 working screens (Dashboard, List, Detail, Form, Reports/Kanban) with real mock data`,
-      `   - Floating Theme Studio (🎨 FAB, bottom-right) with colors, presets, dark mode, font, radius, spacing`,
+      `   - Floating Theme Studio (FAB, bottom-right, inline SVG palette icon — not an emoji) with colors, presets, dark mode, font, radius, spacing`,
       `   - All CSS via custom properties, no external dependencies, sidebar+bottom-tab nav`,
       ``,
       `Mock data: 25 realistic ${ctx.domain} records. NEVER use "lorem ipsum", "John Doe", or placeholders.`,
@@ -1536,13 +1563,15 @@ UX/UI PRINCIPLES (ui-ux-pro-max)
       `Reports or Kanban), shared UI components (ThemeStudio, Modal, Badge, Toast, Sidebar), ` +
       `backend CRUD routes, db/schema.sql, db/seed.sql (25 realistic records), .env.example, ` +
       `and preview.html (last file) — self-contained single-file app with 5 screens, ` +
-      `floating Theme Studio FAB (🎨 colors+presets+dark mode+font+radius+spacing), ` +
+      `floating Theme Studio FAB (inline SVG palette icon, not emoji; colors+presets+dark mode+font+radius+spacing), ` +
       `sidebar+bottom-tab nav, responsive, CSS custom properties throughout, no external deps.`
     );
   },
 
   tools: CONTEXT_TOOLS,
-  maxIterations: 5,
+  // 4 mandatory tool calls (architecture, dataModel, apiDesign, uxMockups) — bump
+  // for the same reason as the stakeholder/L3 hardening fix.
+  maxIterations: 6,
 };
 
 
@@ -1584,7 +1613,8 @@ const devopsEngineer: AgentDefinition = {
     `STEP 4 — Produce all 10 sections. Pipeline YAML must be functional for the actual tech stack from STEP 1. Secret management must align with approach from STEP 2. Named owners must come from STEP 3.\n` +
     `STEP 5 — Self-check: verify pipeline YAML uses tools consistent with the architecture tech stack, security scan stage is present, and DORA metric owners are real team member names. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const infraEngineer: AgentDefinition = {
@@ -1624,7 +1654,8 @@ const infraEngineer: AgentDefinition = {
     `STEP 4 — Produce all 10 sections. Cloud provider must match architecture choice from STEP 1. Cost estimates must reference feasibility baseline from STEP 2. Runbook owners must come from STEP 3.\n` +
     `STEP 5 — Self-check: verify cloud provider matches architecture, monthly cost estimate is itemized by service, capacity planning covers 6 and 12 month projections, runbook owners are real names. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 // ─── Phase 8 ──────────────────────────────────────────────────────────────────
@@ -1663,7 +1694,8 @@ const observabilityEngineer: AgentDefinition = {
     `STEP 4 — Produce all 9 sections. SLI definitions must reference specific infrastructure metrics from STEP 1. Tooling must name real products (Prometheus/Grafana/Datadog/etc). Alert owners must be real team members.\n` +
     `STEP 5 — Self-check: verify at least 5 SLIs with measurement methods, alerting rules table has owners, tooling stack names real products. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 const onCallEngineer: AgentDefinition = {
@@ -1699,7 +1731,8 @@ const onCallEngineer: AgentDefinition = {
     `STEP 4 — Produce all 8 sections. The 10 runbooks must cover top alerts from STEP 1 and top security scenarios from STEP 2. Escalation matrix must use real names from STEP 3.\n` +
     `STEP 5 — Self-check: verify each runbook has all 5 fields, escalation tiers have real names, P0 incidents have SLA targets in minutes. Fix gaps before finishing.`,
   tools: CONTEXT_TOOLS,
-  maxIterations: 3,
+  // 3 mandatory tool calls + write + self-check.
+  maxIterations: 5,
 };
 
 // ─── Registry ──────────────────────────────────────────────────────────────────────────────
