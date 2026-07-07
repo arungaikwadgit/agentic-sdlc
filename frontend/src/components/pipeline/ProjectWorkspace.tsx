@@ -1106,19 +1106,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 )}
               </div>
 
-              {/* ── Additional instructions (user-facing extra prompt) ── */}
-              <div style={{ marginTop: 8 }}>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                  Additional instructions (appended to the prompt):
-                </p>
-                <textarea
-                  className={styles.rerunTextarea}
-                  value={rerunUserExtra}
-                  onChange={(e) => setRerunUserExtra(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Focus on the onboarding flow, use a two-column layout…"
-                />
-              </div>
+              {/* ── Additional instructions (user-facing extra prompt) ──
+                   Hidden from the UI per request, but rerunUserExtra is left
+                   wired into extraParts below in case this needs to come back
+                   (e.g. behind an "Advanced" toggle) — nothing else depends on
+                   the input being visible. */}
 
               {/* ── Working Prototype: style picker from UX Mockup versions ── */}
               {rerunAgent === 'workingPrototype' && project && (
