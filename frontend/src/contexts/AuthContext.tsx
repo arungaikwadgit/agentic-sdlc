@@ -47,7 +47,7 @@ interface AuthContextValue {
   /**
    * True when the signed-in user is a real, production-recognized app admin
    * (the `server/` service's ADMIN_EMAIL_ALLOWLIST, via
-   * GET /api/projects/permissions/me — see services/adminAuth.ts) — distinct
+   * GET /api/projects/permissions/me - see services/adminAuth.ts) - distinct
    * from `adminMode`, which is the local-dev-only bypass. Resolves
    * asynchronously after sign-in, so it starts false and flips true if
    * confirmed; treat it as "not yet known / not an admin" until then, same
@@ -103,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(data.session);
         setUser(data.session.user ?? null);
         setLoading(false);
+        void refreshAppAdminStatus(true);
         return;
       }
 
@@ -112,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(mockSession.user);
         setSession(mockSession);
         setAdminModeState(true);
+        setIsAppAdmin(true);
         setLoading(false);
         return;
       }
@@ -119,8 +121,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null);
       setUser(null);
       setAdminModeState(false);
+      setIsAppAdmin(false);
       setLoading(false);
-      void refreshAppAdminStatus(Boolean(data.session));
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {

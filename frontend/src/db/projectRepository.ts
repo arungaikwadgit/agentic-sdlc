@@ -315,7 +315,7 @@ export async function updateAgentRun(
 }
 
 /**
- * Soft-deletes a project. Requires non-empty remarks and app-admin access —
+ * Soft-deletes a project. Requires non-empty remarks and app-admin access -
  * enforced server-side in server/src/routes/projects.ts (DELETE /:id). This
  * never permanently removes the row; it flips `archived` + records the
  * remarks/timestamp/admin so the project can be restored via restoreProject().
@@ -329,7 +329,7 @@ export async function deleteProject(id: string, remarks: string): Promise<void> 
 }
 
 /**
- * Restores a soft-deleted project. App-admin only — enforced server-side
+ * Restores a soft-deleted project. App-admin only - enforced server-side
  * (POST /:id/restore), not via the generic PATCH path, so a non-admin can't
  * un-delete a project through a routine project edit.
  */
