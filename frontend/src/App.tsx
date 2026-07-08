@@ -17,7 +17,7 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import { isAdminMode } from './lib/adminMode';
 import { isInviteRoute } from './lib/inviteRoute';
 import { initializeMasterDataCatalog } from './services/masterDataCatalog';
-import { useAuth } from './contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
 
