@@ -27,34 +27,8 @@ export function getProxyToken(): string {
 
 /** Returns the best available auth header for the current session. */
 export async function getAuthHeader(): Promise<Record<string, string>> {
-  // Diagnostic logging (temporary): traces exactly which auth mechanism is
-  // used for each request, to debug a persistent 401 pattern in production
-  // where the browser appears logged in but backend calls are rejected.
-  // Never logs the actual token/JWT value, only presence/expiry metadata.
-  // Safe to remove once the 401 investigation is closed.
-  try {
-    const { isAdminMode } = await import('@/lib/adminMode');
-    if (isAdminMode()) {
-      console.log('[auth] getAuthHeader: using admin-bypass bearer token (dev-mode only)');
-      return { Authorization: `Bearer ${ADMIN_BYPASS_BEARER}` };
-    }
-  } catch { /* admin-mode helper unavailable â€” continue */ }
-
-  // Invite session is checked BEFORE the Supabase session. An invite session
-  // is only ever present in sessionStorage after someone completes the
-  // /invite accept flow, and it's scoped to exactly one project via the
-  // dedicated /api/invite/* endpoints (see getInviteBearer() in proxy.js,
-  // which requires "Bearer invite:<token>" and 401s on anything else).
-  // Accepting an invite also creates a real Supabase account for the
-  // invitee (now that email confirmation is off, that Supabase session is
-  // active immediately) -- so if Supabase were checked first, every
-  // request after acceptance would carry the invitee's raw Supabase JWT
-  // instead, which /api/invite/projects* rejects outright, making the
-  // invited project permanently inaccessible for the life of that browser
-  // session. Checking invite session first matches the app's own
-  // "switch to owner mode" design (Dashboard.tsx clearInviteSession()),
-  // which exists specifically so a user who is both a project owner and an
-  // invited guest elsewhere can explicitly opt out of invite-scoped mode.
+  // Invite sessions are scoped to a single project and must win over any
+  // regular/admin owner session until the user explicitly exits invite mode.
   try {
     const { getInviteSession } = await import('@/services/inviteSession');
     const inviteSession = getInviteSession();
@@ -62,15 +36,28 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
       console.log('[auth] getAuthHeader: using invite session token');
       return { Authorization: `Bearer invite:${inviteSession.token}` };
     }
-  } catch { /* invite session unavailable â€” fall through */ }
+  } catch { /* invite session unavailable - fall through */ }
 
+  // Prefer a real Supabase JWT whenever one exists. This is required for all
+  // project CRUD calls forwarded to the server/admin API, which rejects local
+  // mock admin tokens by design.
   try {
     const { supabase, isSupabaseConfigured } = await import('@/lib/supabase');
     console.log(`[auth] getAuthHeader: isSupabaseConfigured=${isSupabaseConfigured}`);
     if (isSupabaseConfigured) {
-      const { data } = await supabase.auth.getSession();
-      const jwt = data?.session?.access_token;
-      const expiresAt = data?.session?.expires_at;
+      let { data } = await supabase.auth.getSession();
+      let jwt = data?.session?.access_token;
+      let expiresAt = data?.session?.expires_at;
+      const refreshCutoff = Math.floor(Date.now() / 1000) + 60;
+
+      if (data?.session && (!jwt || !expiresAt || expiresAt <= refreshCutoff)) {
+        console.log('[auth] getAuthHeader: Supabase session is missing/near expiry - refreshing before API call');
+        const refreshed = await supabase.auth.refreshSession();
+        data = refreshed.data;
+        jwt = data?.session?.access_token;
+        expiresAt = data?.session?.expires_at;
+      }
+
       console.log(
         `[auth] getAuthHeader: supabase session ${jwt ? 'FOUND' : 'NOT FOUND'}` +
         (expiresAt ? `, expires_at=${new Date(expiresAt * 1000).toISOString()}` : '')
@@ -81,10 +68,19 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
     console.log('[auth] getAuthHeader: supabase session lookup threw:', e instanceof Error ? e.message : e);
   }
 
-  console.log('[auth] getAuthHeader: no auth mechanism available â€” returning empty headers (unauthenticated request)');
+  // Local development fallback only. This must come after Supabase so stale
+  // admin-mode sessionStorage cannot override a valid real login.
+  try {
+    const { isAdminMode } = await import('@/lib/adminMode');
+    if (isAdminMode()) {
+      console.log('[auth] getAuthHeader: using admin-bypass bearer token (dev-mode only)');
+      return { Authorization: `Bearer ${ADMIN_BYPASS_BEARER}` };
+    }
+  } catch { /* admin-mode helper unavailable - continue */ }
+
+  console.log('[auth] getAuthHeader: no auth mechanism available - returning empty headers (unauthenticated request)');
   return {};
 }
-
 export interface AgentRequest {
   systemPrompt: string;
   userPrompt: string;

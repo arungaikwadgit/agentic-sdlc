@@ -107,10 +107,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null };
     }
 
+    // A real Supabase login must clear any previous local admin-bypass flag.
+    // Otherwise API calls can keep sending the mock admin token to the server API,
+    // which correctly rejects it as an invalid Supabase JWT.
+    setAdminMode(false);
+    setAdminModeState(false);
+
     console.log(`[auth] signIn: attempting supabase.auth.signInWithPassword(${email})`);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    console.log(`[auth] signIn(${email}) -> ${error ? `error: ${error.message}` : 'success, session established'}`);
-    return { error };
+    if (error) {
+      console.log(`[auth] signIn(${email}) -> error: ${error.message}`);
+      return { error };
+    }
+
+    const { data } = await supabase.auth.getSession();
+    setUser(data.session?.user ?? null);
+    setSession(data.session ?? null);
+    console.log(`[auth] signIn(${email}) -> success, session established`);
+    return { error: null };
   }, []);
 
   const signOut = useCallback(async () => {
