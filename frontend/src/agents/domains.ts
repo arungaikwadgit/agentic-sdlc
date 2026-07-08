@@ -4,6 +4,39 @@
  */
 import type { DomainDefinition, DomainId } from '@/types/domain.types';
 
+/**
+ * Neutral fallback used whenever a domain lookup misses — e.g. the master
+ * data catalog failed to load (App.tsx's initializeMasterDataCatalog, which
+ * can mutate DOMAINS at runtime from the backend), or a project's `domain`
+ * field holds a value that isn't one of the known DomainIds. Prevents the
+ * `Cannot read properties of undefined (reading 'bgColor')` crash seen when
+ * components do `DOMAINS[project.domain].bgColor` directly.
+ */
+const FALLBACK_DOMAIN: DomainDefinition = {
+  id: 'saas',
+  label: 'Unknown',
+  color: '#64748b',
+  bgColor: '#e2e8f0',
+  context: 'Domain context unavailable — the master data catalog may not have loaded.',
+};
+
+function normalizeDomainDefinition(domain: DomainDefinition | undefined, requestedId?: string | null): DomainDefinition {
+  const fallbackLabel = requestedId ? `Unknown (${requestedId})` : FALLBACK_DOMAIN.label;
+  return {
+    id: (domain?.id ?? FALLBACK_DOMAIN.id) as DomainId,
+    label: domain?.label || fallbackLabel,
+    color: domain?.color || FALLBACK_DOMAIN.color,
+    bgColor: domain?.bgColor || FALLBACK_DOMAIN.bgColor,
+    context: domain?.context || FALLBACK_DOMAIN.context,
+  };
+}
+
+/** Safe lookup - never returns undefined or an incomplete visual definition. */
+export function getDomain(id: string | undefined | null): DomainDefinition {
+  const domain = id ? DOMAINS[id as DomainId] : undefined;
+  return normalizeDomainDefinition(domain, id);
+}
+
 export const DOMAINS: Record<DomainId, DomainDefinition> = {
   fintech: {
     id: 'fintech',

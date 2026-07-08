@@ -5,7 +5,7 @@ import { DOMAINS } from '@/agents/domains';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import { ROLE_TEMPLATES, type RoleTemplate } from '@/data/roleTemplates';
 import type { AgentId, PhaseId } from '@/types/agent.types';
-import type { DomainDefinition, DomainId } from '@/types/domain.types';
+import type { DomainId } from '@/types/domain.types';
 
 function getApiBase(raw: string | undefined): string {
   const base = (raw ?? '/api').replace(/\/$/, '');
@@ -161,18 +161,25 @@ function applyCatalog(catalog: MasterCatalogResponse) {
     agent.maxIterations = row.max_iterations ?? undefined;
   }
 
-  for (const key of Object.keys(DOMAINS) as DomainId[]) {
-    delete (DOMAINS as Record<string, DomainDefinition>)[key];
-  }
+  // Upsert only -- deliberately never delete existing DOMAINS entries first.
+  // Root cause of a prod crash (TypeError: Cannot read properties of
+  // undefined (reading 'bgColor')): this used to clear all keys from DOMAINS
+  // before repopulating from catalog.domains. If the backend catalog table
+  // was empty or missing a row for a domain a project actually uses (partial
+  // seed, migration gap, etc.), DOMAINS[project.domain] became undefined and
+  // any component reading `.bgColor`/`.color`/`.label` directly crashed.
+  // Upserting instead means the built-in defaults from agents/domains.ts
+  // remain in place for any domain id the backend response doesn't cover.
   for (const row of catalog.domains) {
+    const existing = DOMAINS[row.id];
     DOMAINS[row.id] = {
       id: row.id,
-      label: row.label,
-      color: row.color,
-      bgColor: row.bg_color,
-      context: row.context,
+      label: row.label || existing?.label || row.id,
+      color: row.color || existing?.color || '#64748b',
+      bgColor: row.bg_color || existing?.bgColor || '#e2e8f0',
+      context: row.context || existing?.context || 'Domain context unavailable.',
     };
-    DOMAIN_KNOWLEDGE_TEMPLATES[row.id] = row.template;
+    if (row.template) DOMAIN_KNOWLEDGE_TEMPLATES[row.id] = row.template;
   }
 
   const agentsByRole = new Map<string, AgentId[]>();
