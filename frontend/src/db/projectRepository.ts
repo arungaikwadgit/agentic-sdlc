@@ -12,7 +12,7 @@ import type { ProjectDocument } from '@/types/extraction.types';
 import { TOTAL_AGENTS } from '@/agents/constants';
 import { supabase } from '@/lib/supabase';
 import { getInviteSession } from '@/services/inviteSession';
-import { getAuthHeader } from '@/services/api';
+import { getAuthHeader, getProxyToken } from '@/services/api';
 
 function getApiBase(raw: string | undefined): string {
   const base = (raw ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -59,6 +59,10 @@ export function subscribeProjectRepositoryChange(listener: (projectId?: string) 
 async function authHeaders(): Promise<Record<string, string>> {
   const headers = await getAuthHeader();
   if (!headers.Authorization && !headers['X-API-Token']) {
+    const proxyToken = getProxyToken();
+    if (proxyToken) {
+      return { 'Content-Type': 'application/json', 'X-API-Token': proxyToken };
+    }
     throw new Error('Not authenticated');
   }
   return { 'Content-Type': 'application/json', ...headers };
