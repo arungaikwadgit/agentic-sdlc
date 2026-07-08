@@ -12,7 +12,7 @@ import type { ProjectDocument } from '@/types/extraction.types';
 import { TOTAL_AGENTS } from '@/agents/constants';
 import { supabase } from '@/lib/supabase';
 import { getInviteSession } from '@/services/inviteSession';
-import { getAuthHeader } from '@/services/api';
+import { getAuthHeader, getProxyToken } from '@/services/api';
 
 function getApiBase(raw: string | undefined): string {
   const base = (raw ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -59,6 +59,10 @@ export function subscribeProjectRepositoryChange(listener: (projectId?: string) 
 async function authHeaders(): Promise<Record<string, string>> {
   const headers = await getAuthHeader();
   if (!headers.Authorization && !headers['X-API-Token']) {
+    const proxyToken = getProxyToken();
+    if (proxyToken) {
+      return { 'Content-Type': 'application/json', 'X-API-Token': proxyToken };
+    }
     throw new Error('Not authenticated');
   }
   return { 'Content-Type': 'application/json', ...headers };
@@ -311,7 +315,7 @@ export async function updateAgentRun(
 }
 
 /**
- * Soft-deletes a project. Requires non-empty remarks and app-admin access —
+ * Soft-deletes a project. Requires non-empty remarks and app-admin access -
  * enforced server-side in server/src/routes/projects.ts (DELETE /:id). This
  * never permanently removes the row; it flips `archived` + records the
  * remarks/timestamp/admin so the project can be restored via restoreProject().
@@ -325,7 +329,7 @@ export async function deleteProject(id: string, remarks: string): Promise<void> 
 }
 
 /**
- * Restores a soft-deleted project. App-admin only — enforced server-side
+ * Restores a soft-deleted project. App-admin only - enforced server-side
  * (POST /:id/restore), not via the generic PATCH path, so a non-admin can't
  * un-delete a project through a routine project edit.
  */

@@ -47,7 +47,7 @@ interface AuthContextValue {
   /**
    * True when the signed-in user is a real, production-recognized app admin
    * (the `server/` service's ADMIN_EMAIL_ALLOWLIST, via
-   * GET /api/projects/permissions/me — see services/adminAuth.ts) — distinct
+   * GET /api/projects/permissions/me - see services/adminAuth.ts) - distinct
    * from `adminMode`, which is the local-dev-only bypass. Resolves
    * asynchronously after sign-in, so it starts false and flips true if
    * confirmed; treat it as "not yet known / not an admin" until then, same
@@ -86,38 +86,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Diagnostic logging (temporary): traces session state on load, to debug
-    // a persistent 401 pattern where the app appears logged in but backend
-    // calls are rejected. Never logs the JWT itself, only presence/expiry.
-    if (isAdminMode()) {
-      console.log('[auth] AuthProvider init: admin-bypass mode active (dev-mode only)');
-      const mockSession = makeMockSession();
-      setUser(mockSession.user);
-      setSession(mockSession);
-      setAdminModeState(true);
-      setLoading(false);
-      return;
-    }
+    // Supabase is the production source of truth. Check it first so a stale
+    // local admin-bypass flag cannot shadow a real authenticated session.
+    let cancelled = false;
 
     supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
       console.log(
-        `[auth] AuthProvider init: supabase.auth.getSession() -> ${data.session ? 'SESSION FOUND' : 'NO SESSION'}` +
-        (data.session?.expires_at ? `, user=${data.session.user?.email ?? '(no email)'}, expires_at=${new Date(data.session.expires_at * 1000).toISOString()}` : '')
+        '[auth] AuthProvider init: supabase.auth.getSession() -> ' + (data.session ? 'SESSION FOUND' : 'NO SESSION') +
+        (data.session?.expires_at ? ', user=' + (data.session.user?.email ?? '(no email)') + ', expires_at=' + new Date(data.session.expires_at * 1000).toISOString() : '')
       );
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
+
+      if (data.session) {
+        setAdminMode(false);
+        setAdminModeState(false);
+        setSession(data.session);
+        setUser(data.session.user ?? null);
+        setLoading(false);
+        void refreshAppAdminStatus(true);
+        return;
+      }
+
+      if (isAdminMode()) {
+        console.log('[auth] AuthProvider init: admin-bypass mode active (dev-mode only)');
+        const mockSession = makeMockSession();
+        setUser(mockSession.user);
+        setSession(mockSession);
+        setAdminModeState(true);
+        setIsAppAdmin(true);
+        setLoading(false);
+        return;
+      }
+
+      setSession(null);
+      setUser(null);
+      setAdminModeState(false);
+      setIsAppAdmin(false);
       setLoading(false);
-      void refreshAppAdminStatus(Boolean(data.session));
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      console.log(`[auth] onAuthStateChange: event=${_event} session=${nextSession ? 'present' : 'null'}`);
+      if (cancelled) return;
+      console.log('[auth] onAuthStateChange: event=' + _event + ' session=' + (nextSession ? 'present' : 'null'));
+      if (nextSession) {
+        setAdminMode(false);
+        setAdminModeState(false);
+      }
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
+      setLoading(false);
       void refreshAppAdminStatus(Boolean(nextSession));
     });
 
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      listener.subscription.unsubscribe();
+    };
   }, [refreshAppAdminStatus]);
 
   const signUp = useCallback(async (email: string, password: string) => {
