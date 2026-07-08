@@ -78,7 +78,7 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => '');
     const shouldSignOut =
       res.status === 401 &&
-      /invalid|expired|missing or malformed authorization|please sign in again/i.test(body);
+      /invalid|expired|please sign in again/i.test(body);
     if (shouldSignOut) {
       await supabase.auth.signOut().catch(() => {});
     }

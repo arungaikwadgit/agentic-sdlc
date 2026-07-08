@@ -31,7 +31,7 @@ interface Props {
 
 export default function Dashboard({ onOpenProject }: Props) {
   const { toast } = useToast();
-  const { user, signOut } = useAuth();
+  const { user, loading: authLoading, signOut } = useAuth();
 
   async function handleSignOut() {
     try {
@@ -57,19 +57,30 @@ export default function Dashboard({ onOpenProject }: Props) {
   }, [user?.email]);
 
   useEffect(() => {
+    const inviteSession = getInviteSession();
+    if (authLoading || (!user && !inviteSession)) {
+      setIsAppAdmin(false);
+      return;
+    }
     let active = true;
     checkIsAppAdmin().then((result) => { if (active) setIsAppAdmin(result); });
     return () => { active = false; };
-  }, [user?.email]);
+  }, [authLoading, user]);
 
   const [allProjects, setAllProjects] = useState<ProjectSummary[] | undefined>(undefined);
 
   useEffect(() => {
+    const inviteSession = getInviteSession();
+    if (authLoading || (!user && !inviteSession)) {
+      setAllProjects(undefined);
+      return;
+    }
+
     let active = true;
     async function loadProjects() {
       try {
         let projects = await listVisibleProjects();
-        if (projects.length === 0) {
+        if (projects.length === 0 && user) {
           const migrated = await importLegacyProjectsIfNeeded(projects.length);
           if (migrated > 0) {
             toast(`Imported ${migrated} legacy project${migrated === 1 ? '' : 's'} into Supabase.`, 'success');
@@ -89,7 +100,7 @@ export default function Dashboard({ onOpenProject }: Props) {
       active = false;
       unsubscribe();
     };
-  }, [toast]);
+  }, [authLoading, toast, user]);
 
   const isLoading = allProjects === undefined;
   const safeProjects = allProjects ?? [];
