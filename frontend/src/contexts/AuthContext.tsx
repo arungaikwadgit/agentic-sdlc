@@ -44,6 +44,17 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   adminMode: boolean;
+  /**
+   * True when the signed-in user is a real, production-recognized app admin
+   * (the `server/` service's ADMIN_EMAIL_ALLOWLIST, via
+   * GET /api/projects/permissions/me — see services/adminAuth.ts) — distinct
+   * from `adminMode`, which is the local-dev-only bypass. Resolves
+   * asynchronously after sign-in, so it starts false and flips true if
+   * confirmed; treat it as "not yet known / not an admin" until then, same
+   * as any other loading boolean. Bypass sessions are always treated as
+   * admins (adminMode already grants that) and don't need this check.
+   */
+  isAppAdmin: boolean;
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
@@ -56,6 +67,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [adminMode, setAdminModeState] = useState(false);
+  const [isAppAdmin, setIsAppAdmin] = useState(false);
+
+  // Checks the real production admin allowlist for the current session.
+  // Never runs for bypass sessions (adminMode already implies admin access);
+  // any failure just leaves isAppAdmin false.
+  const refreshAppAdminStatus = useCallback(async (hasSession: boolean) => {
+    if (!hasSession) {
+      setIsAppAdmin(false);
+      return;
+    }
+    try {
+      const { checkIsAppAdmin } = await import('@/services/adminAuth');
+      setIsAppAdmin(await checkIsAppAdmin());
+    } catch {
+      setIsAppAdmin(false);
+    }
+  }, []);
 
   useEffect(() => {
     // Diagnostic logging (temporary): traces session state on load, to debug
@@ -79,16 +107,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session);
       setUser(data.session?.user ?? null);
       setLoading(false);
+      void refreshAppAdminStatus(Boolean(data.session));
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       console.log(`[auth] onAuthStateChange: event=${_event} session=${nextSession ? 'present' : 'null'}`);
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
+      void refreshAppAdminStatus(Boolean(nextSession));
     });
 
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [refreshAppAdminStatus]);
 
   const signUp = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signUp({ email, password });
@@ -140,6 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAdminModeState(false);
       setUser(null);
       setSession(null);
+      setIsAppAdmin(false);
       return;
     }
 
@@ -147,7 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [adminMode]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, adminMode, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, adminMode, isAppAdmin, signUp, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
