@@ -2,7 +2,7 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
-import { DOMAINS } from '@/agents/domains';
+import { getDomain } from '@/agents/domains';
 import type { ProjectSummary } from '@/types/project.types';
 import styles from './ProjectCard.module.css';
 
@@ -34,7 +34,7 @@ interface Props {
 }
 
 export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEdit, onRestore }: Props) {
-  const domain = DOMAINS[project.domain];
+  const domain = getDomain(project.domain);
   const progress = project.totalAgents > 0
     ? Math.round((project.completedAgents / project.totalAgents) * 100)
     : 0;
