@@ -349,6 +349,48 @@ function ProjectsTab() {
   const sel = projects.find(p => p.id === selected);
   const gates = sel ? Object.entries(sel.reviewGates ?? {}) : [];
 
+  // ── Document Agent controls (docs/Document-Agent-Feature-Plan.md Section 3.2) ──
+  const [docStatus, setDocStatus] = useState<{ generated: number; total: number } | null>(null);
+  const [docActionBusy, setDocActionBusy] = useState(false);
+
+  const toggleDocumentAgent = async (id: string, enabled: boolean) => {
+    await updateProject(id, (project) => { project.documentAgentEnabled = enabled; });
+    setMessage(`Document Agent ${enabled ? 'enabled' : 'disabled'} for this project`);
+    await reload();
+  };
+
+  const refreshDocStatus = async (id: string) => {
+    setDocActionBusy(true);
+    try {
+      const [{ DOCUMENT_PACK }, { listProjectDocuments }] = await Promise.all([
+        import('@/agents/documentSpecs'),
+        import('@/services/documentAgentService'),
+      ]);
+      const rows = await listProjectDocuments(id);
+      setDocStatus({ generated: rows.length, total: DOCUMENT_PACK.length });
+    } catch (err) {
+      setMessage(`Failed to load document status: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDocActionBusy(false);
+    }
+  };
+
+  const regenerateAllDocs = async (id: string) => {
+    const proj = await getProject(id);
+    if (!proj) return;
+    setDocActionBusy(true);
+    try {
+      const { regenerateAll } = await import('@/services/documentAgentService');
+      const result = await regenerateAll(proj);
+      setMessage(`Documentation: ${result.generated} generated, ${result.skipped} not yet eligible, ${result.failed} failed`);
+      await refreshDocStatus(id);
+    } catch (err) {
+      setMessage(`Regenerate All failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDocActionBusy(false);
+    }
+  };
+
   return (
     <div className={styles.splitPane}>
       <div className={styles.list}>
@@ -410,6 +452,43 @@ function ProjectsTab() {
             <div className={styles.actionGroup}>
               <div className={styles.actionLabel}>Pipeline</div>
               <button className={styles.dangerBtn} onClick={() => clearAgentRuns(sel.id)}>Reset Agent Pipeline</button>
+            </div>
+
+            <div className={styles.actionGroup}>
+              <div className={styles.actionLabel}>
+                Documentation
+                <button
+                  className={styles.tinyBtn}
+                  style={{ marginLeft: '8px' }}
+                  disabled={docActionBusy}
+                  onClick={() => refreshDocStatus(sel.id)}
+                >
+                  {docActionBusy ? '…' : '↻ Status'}
+                </button>
+              </div>
+              <div className={styles.field}>
+                <span>Document Agent</span>
+                <button
+                  className={styles.smallBtn}
+                  onClick={() => toggleDocumentAgent(sel.id, sel.documentAgentEnabled === false)}
+                >
+                  {sel.documentAgentEnabled === false ? 'Disabled — click to enable' : 'Enabled — click to disable'}
+                </button>
+              </div>
+              {docStatus && (
+                <div className={styles.field}>
+                  <span>Generated</span>
+                  {docStatus.generated}/{docStatus.total} documents
+                </div>
+              )}
+              <button
+                className={styles.smallBtn}
+                disabled={docActionBusy || sel.documentAgentEnabled === false}
+                onClick={() => regenerateAllDocs(sel.id)}
+                title={sel.documentAgentEnabled === false ? 'Enable Document Agent first' : 'Regenerate every eligible document now'}
+              >
+                Regenerate All
+              </button>
             </div>
 
             <div className={styles.actionGroup}>

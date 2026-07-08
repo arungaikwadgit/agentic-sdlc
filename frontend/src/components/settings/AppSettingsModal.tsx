@@ -10,7 +10,7 @@ import {
   getAgentProviderHints, saveAgentProviderHint,
   type ProviderHint,
 } from '@/agents/promptDefaults';
-import { DOMAINS } from '@/agents/domains';
+import { DOMAINS, getDomain } from '@/agents/domains';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import {
   getDomainKnowledgeDefaults,
@@ -308,10 +308,10 @@ export default function AppSettingsModal({ onClose }: Props) {
     setDomainSaveMsg('');
     try {
       const generated = await api.generateDomainKnowledge({
-        domainLabel: DOMAINS[selectedDomain].label,
+        domainLabel: getDomain(selectedDomain).label,
         domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[selectedDomain],
-        projectName: `${DOMAINS[selectedDomain].label} (app-level default)`,
-        projectDescription: `A general-purpose ${DOMAINS[selectedDomain].label} project. This brief will be used as the app-wide starting point for all new ${DOMAINS[selectedDomain].label} projects, so keep it broadly applicable rather than tied to one specific product.`,
+        projectName: `${getDomain(selectedDomain).label} (app-level default)`,
+        projectDescription: `A general-purpose ${getDomain(selectedDomain).label} project. This brief will be used as the app-wide starting point for all new ${getDomain(selectedDomain).label} projects, so keep it broadly applicable rather than tied to one specific product.`,
         currentInput: domainDraft,
       });
       if (generated) setDomainDraft(generated);
@@ -947,7 +947,7 @@ export default function AppSettingsModal({ onClose }: Props) {
               <div className={styles.promptsLayout}>
                 <div className={styles.promptAgentList}>
                   {allDomainIds.map((domainId) => {
-                    const domainDef = DOMAINS[domainId];
+                    const domainDef = getDomain(domainId);
                     const hasCustom = domainKnowledgeDefaults[domainId] !== undefined;
                     return (
                       <button
@@ -966,9 +966,9 @@ export default function AppSettingsModal({ onClose }: Props) {
                   <div className={styles.knowledgeBanner}>
                     <span
                       className={styles.domainChip}
-                      style={{ color: DOMAINS[selectedDomain].color, background: DOMAINS[selectedDomain].bgColor }}
+                      style={{ color: getDomain(selectedDomain).color, background: getDomain(selectedDomain).bgColor }}
                     >
-                      {DOMAINS[selectedDomain].label}
+                      {getDomain(selectedDomain).label}
                     </span>
                     <span className={styles.fieldHint}>
                       {domainKnowledgeDefaults[selectedDomain] !== undefined

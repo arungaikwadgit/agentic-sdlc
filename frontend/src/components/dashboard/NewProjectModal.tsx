@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { createProject } from '@/db/projectRepository';
 import { api } from '@/services/api';
-import { DOMAINS } from '@/agents/domains';
+import { DOMAINS, getDomain } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import type { DomainId } from '@/types/domain.types';
@@ -87,6 +87,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [loading, setLoading] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Figma pull state
   const [showFigmaPull, setShowFigmaPull] = useState(false);
   const [figmaUrl, setFigmaUrl] = useState('');
@@ -259,14 +260,25 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     };
   }
 
+  function formatSaveError(err: unknown): string {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/401|not authenticated|invalid or expired|authorization/i.test(message)) {
+      return 'Your sign-in session is missing or expired. Please sign out, sign in again, then save the project.';
+    }
+    return `Project could not be saved. ${message}`;
+  }
+
   /** "Save for the project" — creates the project as-is: no AI enhancement,
    *  no auto-run. Same behavior in both Simple and Expert mode. */
   async function handleCreate() {
     if (!detailsValid()) return;
+    setSaveError(null);
     setLoading(true);
     try {
       const project = await createProject(buildProjectPayload(domainKnowledge));
       onCreated(project.id);
+    } catch (err) {
+      setSaveError(formatSaveError(err));
     } finally {
       setLoading(false);
     }
@@ -282,11 +294,12 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     if (!detailsValid()) return;
     setEnhancing(true);
     setEnhanceError(null);
+    setSaveError(null);
     try {
       let finalKnowledge = domainKnowledge;
       try {
         const generated = await api.generateDomainKnowledge({
-          domainLabel: DOMAINS[domain].label,
+          domainLabel: getDomain(domain).label,
           domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[domain],
           projectName: name,
           projectDescription: description,
@@ -307,6 +320,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
       const project = await createProject(buildProjectPayload(finalKnowledge));
       sessionStorage.setItem(`sdlc_autostart_${project.id}`, '1');
       onCreated(project.id);
+    } catch (err) {
+      setSaveError(formatSaveError(err));
     } finally {
       setEnhancing(false);
       setLoading(false);
@@ -340,8 +355,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   {PRESETS.map((p) => (
                     <button key={p.name} className={styles.preset} onClick={() => applyPreset(p)}>
                       <span className={styles.presetDomain}
-                        style={{ color: DOMAINS[p.domain].color, background: DOMAINS[p.domain].bgColor }}>
-                        {DOMAINS[p.domain].label}
+                        style={{ color: getDomain(p.domain).color, background: getDomain(p.domain).bgColor }}>
+                        {getDomain(p.domain).label}
                       </span>
                       <span>{p.name}</span>
                     </button>
@@ -435,7 +450,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 ))}
               </select>
               <p className={styles.hint}>
-                <strong>{DOMAINS[domain].label}</strong> — confirm domain-specific obligations during discovery.
+                <strong>{getDomain(domain).label}</strong> — confirm domain-specific obligations during discovery.
               </p>
 
               <label className={styles.label}>Tech Stack *</label>
@@ -606,13 +621,13 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 <div>
                   <span
                     className={styles.domainChip}
-                    style={{ color: DOMAINS[domain].color, background: DOMAINS[domain].bgColor }}
+                    style={{ color: getDomain(domain).color, background: getDomain(domain).bgColor }}
                   >
-                    {DOMAINS[domain].label}
+                    {getDomain(domain).label}
                   </span>
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                  This brief is pre-populated from the <strong>{DOMAINS[domain].label}</strong> template. Edit it to add your project-specific context — it will be prepended to every agent's system prompt automatically.
+                  This brief is pre-populated from the <strong>{getDomain(domain).label}</strong> template. Edit it to add your project-specific context — it will be prepended to every agent's system prompt automatically.
                 </p>
               </div>
 
@@ -647,6 +662,9 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               </p>
               {enhanceError && (
                 <p className={styles.fieldError} style={{ marginTop: -4 }}>{enhanceError}</p>
+              )}
+              {saveError && (
+                <p className={styles.fieldError} style={{ marginTop: -4 }}>{saveError}</p>
               )}
             </div>
 

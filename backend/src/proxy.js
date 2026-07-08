@@ -2762,6 +2762,187 @@ app.patch('/api/invite/projects/:projectId', async (req, res) => {
   return res.json(rows[0]);
 });
 
+// ── Document Agent: project_documents persistence ────────────────────────────
+// See docs/Document-Agent-Feature-Plan.md Section 4.2. This is a standalone
+// path (NOT under /api/projects, which is entirely forwarded to server/ via
+// forwardToServer above) so it works uniformly for both invite-session and
+// normal Supabase-authenticated users — checkToken already validates both
+// (Supabase JWT path + admin-bypass), and getCallerAppRoleForProject already
+// checks BOTH the relational team_members table (invite flow) AND the
+// projects.data->'teamMembers' JSONB roster (normal-session flow), so one
+// authorization helper here correctly covers both session types. Confirmed
+// POSTGRES_URL and the Supabase project behind SUPABASE_URL are the same
+// physical database, so this table is visible to every session type without
+// needing a mirrored implementation in server/.
+
+// Pure validation for the POST /api/project-documents/:projectId body — split out
+// from the route handler so it can be unit-tested without a database (see
+// src/projectDocuments.test.ts), following the same pattern as hashInviteToken /
+// appRoleRank / isInviteExpired above.
+const VALID_DOCUMENT_FORMATS = ['docx', 'md'];
+const VALID_GENERATION_TRIGGERS = ['agent_complete', 'gate_sync', 'manual'];
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024; // 5MB — see rationale at the call site below.
+// docId/category only ever come from the fixed, hardcoded DOCUMENT_PACK registry
+// (frontend/src/agents/documentSpecs.ts) when called through the real UI, but this
+// endpoint accepts them directly from the request body -- an editor-role caller
+// hitting the API directly (not through the frontend) could send anything. Both
+// values later get concatenated into ZIP entry paths client-side
+// (documentExporter.ts: `Documentation/${doc.category}/${filename}`), so an
+// unvalidated "../../" here would be a stored path-traversal payload that only
+// bites a *different* user later, when they export/extract the project's ZIP.
+// Restricting to a safe charset closes that off at the point of entry.
+const SAFE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MAX_TITLE_LENGTH = 200;
+
+function validateDocumentUpsertPayload(body) {
+  const { docId, category, title, format, contentBase64, sourceAgentIds, sourceOutputHash, trigger } = body ?? {};
+
+  if (!docId || !category || !title || !format || !contentBase64 || !sourceOutputHash) {
+    return { valid: false, error: 'docId, category, title, format, contentBase64, and sourceOutputHash are required.' };
+  }
+  if (typeof docId !== 'string' || !SAFE_ID_PATTERN.test(docId)) {
+    return { valid: false, error: 'docId must contain only letters, numbers, underscores, and hyphens.' };
+  }
+  if (typeof category !== 'string' || !SAFE_ID_PATTERN.test(category)) {
+    return { valid: false, error: 'category must contain only letters, numbers, underscores, and hyphens.' };
+  }
+  if (typeof title !== 'string' || title.length === 0 || title.length > MAX_TITLE_LENGTH) {
+    return { valid: false, error: `title must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters.` };
+  }
+  if (!VALID_DOCUMENT_FORMATS.includes(format)) {
+    return { valid: false, error: 'format must be "docx" or "md".' };
+  }
+
+  let contentBuffer;
+  try {
+    contentBuffer = Buffer.from(contentBase64, 'base64');
+  } catch {
+    return { valid: false, error: 'contentBase64 is not valid base64.' };
+  }
+  if (contentBuffer.length === 0 || contentBuffer.length > MAX_DOCUMENT_BYTES) {
+    return { valid: false, error: `Document content must be between 1 byte and ${MAX_DOCUMENT_BYTES / (1024 * 1024)}MB.` };
+  }
+
+  const generationTrigger = VALID_GENERATION_TRIGGERS.includes(trigger) ? trigger : 'agent_complete';
+
+  return {
+    valid: true,
+    docId, category, title, format, contentBuffer,
+    sourceAgentIds: Array.isArray(sourceAgentIds) ? sourceAgentIds : [],
+    sourceOutputHash,
+    generationTrigger,
+  };
+}
+
+async function authorizeDocumentAction(req, res, projectId, minRole) {
+  if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+    return { ok: true };
+  }
+  const callerEmail = req.authUser?.email ?? null;
+  if (!callerEmail) {
+    res.status(401).json({ error: 'Please sign in to access project documents.' });
+    return { ok: false };
+  }
+  if (isConfiguredAdminEmail(callerEmail)) return { ok: true };
+
+  const role = await getCallerAppRoleForProject(projectId, callerEmail);
+  if (!role || appRoleRank(role) < appRoleRank(minRole)) {
+    res.status(403).json({ error: `You need at least ${minRole} access to this project's documents.` });
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+// GET /api/project-documents/:projectId — list all generated documents (metadata only, no content bytes)
+app.get('/api/project-documents/:projectId', checkToken, async (req, res) => {
+  const { projectId } = req.params;
+  const auth = await authorizeDocumentAction(req, res, projectId, 'viewer');
+  if (!auth.ok) return;
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const { rows } = await dbPool.query(`
+    SELECT id, doc_id, category, title, format, source_agent_ids, source_output_hash,
+           generated_at, generation_trigger, version, octet_length(content) AS size_bytes
+    FROM project_documents
+    WHERE project_id = $1
+    ORDER BY category, doc_id
+  `, [projectId]).catch((err) => {
+    console.error('project_documents list error:', err.message);
+    return { rows: [] };
+  });
+
+  return res.json(rows);
+});
+
+// GET /api/project-documents/:projectId/:docId/download — raw file bytes for one document.
+// Used by ExportMenu.tsx's per-agent "Download Documentation" button and by
+// exportAllArtifactsZip when it pulls generated docs into the project-level ZIP.
+app.get('/api/project-documents/:projectId/:docId/download', checkToken, async (req, res) => {
+  const { projectId, docId } = req.params;
+  const auth = await authorizeDocumentAction(req, res, projectId, 'viewer');
+  if (!auth.ok) return;
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const { rows } = await dbPool.query(`
+    SELECT title, format, content FROM project_documents
+    WHERE project_id = $1 AND doc_id = $2
+    LIMIT 1
+  `, [projectId, docId]).catch((err) => {
+    console.error('project_documents download error:', err.message);
+    return { rows: [] };
+  });
+
+  const doc = rows[0];
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+
+  const ext = doc.format === 'docx' ? 'docx' : 'md';
+  const mime = doc.format === 'docx'
+    ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    : 'text/markdown';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `attachment; filename="${String(doc.title).replace(/[^\w.-]+/g, '_')}.${ext}"`);
+  return res.send(doc.content);
+});
+
+// POST /api/project-documents/:projectId — upsert one generated document.
+// Called by frontend documentAgentService.ts AFTER it generates the document
+// client-side (reusing the existing docx-generation logic already proven in
+// documentExporter.ts) and computes sourceOutputHash. This mirrors the
+// established "client computes, backend persists" pattern already used for
+// agent_runs — no document-generation logic is duplicated on the backend.
+// Body: { docId, category, title, format, contentBase64, sourceAgentIds, sourceOutputHash, trigger }
+app.post('/api/project-documents/:projectId', checkToken, async (req, res) => {
+  const { projectId } = req.params;
+  const auth = await authorizeDocumentAction(req, res, projectId, 'editor');
+  if (!auth.ok) return;
+  if (!dbPool) return res.status(503).json({ error: 'Project database is unavailable.' });
+
+  const validation = validateDocumentUpsertPayload(req.body);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.error });
+  }
+  const { docId, category, title, format, contentBuffer, sourceAgentIds, sourceOutputHash, generationTrigger } = validation;
+
+  const { rows } = await dbPool.query(`
+    INSERT INTO project_documents (project_id, doc_id, category, title, format, content, source_agent_ids, source_output_hash, generation_trigger, version)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
+    ON CONFLICT (project_id, doc_id) DO UPDATE
+      SET category = $3, title = $4, format = $5, content = $6, source_agent_ids = $7,
+          source_output_hash = $8, generation_trigger = $9, generated_at = NOW(),
+          version = project_documents.version + 1, updated_at = NOW()
+    RETURNING id, doc_id, category, title, format, version, generated_at
+  `, [
+    projectId, docId, category, title, format, contentBuffer,
+    sourceAgentIds, sourceOutputHash, generationTrigger,
+  ]).catch((err) => {
+    console.error('project_documents upsert error:', err.message);
+    return { rows: [] };
+  });
+
+  if (!rows[0]) return res.status(500).json({ error: 'Failed to persist document.' });
+  return res.status(200).json(rows[0]);
+});
+
 // ── GET /api/invite/team/:projectId ──────────────────────────────────────────
 app.get('/api/invite/team/:projectId', checkToken, async (req, res) => {
   const { projectId } = req.params;
@@ -2814,4 +2995,6 @@ module.exports = {
   appRoleRank,
   isInviteExpired,
   isConfiguredAdminEmail,
+  // Exported for unit testing only (Document Agent — project_documents):
+  validateDocumentUpsertPayload,
 };

@@ -7,7 +7,7 @@ import { updateProject, deleteProject, restoreProject as restoreProjectApi, chec
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { ROLE_TEMPLATES } from '@/data/roleTemplates';
-import { DOMAINS } from '@/agents/domains';
+import { DOMAINS, getDomain } from '@/agents/domains';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import { api } from '@/services/api';
 import { useIntegrations } from '@/hooks/useIntegrations';
@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAlert } from '@/contexts/AlertContext';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectMember } from '@/lib/projectAccess';
+import { initials } from '@/utils/text';
 import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/project.types';
 import type { DomainId } from '@/types/domain.types';
 import { INVITABLE_APP_ROLES, ROLE_PERMISSIONS } from '@/types/project.types';
@@ -28,9 +29,6 @@ const AVATAR_COLORS = [
   '#dc2626','#7c3aed','#db2777','#0d9488',
 ];
 
-export function initials(name: string) {
-  return name.split(' ').map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('');
-}
 
 const INVITE_ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
@@ -1481,8 +1479,8 @@ export default function ProjectSettings({
                   <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span>Domain Knowledge Brief</span>
                     <span className={styles.domainChipSmall}
-                      style={{ color: DOMAINS[project.domain].color, background: DOMAINS[project.domain].bgColor }}>
-                      {DOMAINS[project.domain].label}
+                      style={{ color: getDomain(project.domain).color, background: getDomain(project.domain).bgColor }}>
+                      {getDomain(project.domain).label}
                     </span>
                   </label>
                   <p className={styles.knowledgeHint}>
@@ -1505,7 +1503,7 @@ export default function ProjectSettings({
                       setKnowledgeLoading(true); setKnowledgeError(null); setKnowledgeSaved(false);
                       try {
                         const generated = await api.generateDomainKnowledge({
-                          domainLabel: DOMAINS[project.domain].label,
+                          domainLabel: getDomain(project.domain).label,
                           domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[project.domain],
                           projectName: project.name, projectDescription: project.description,
                           currentInput: domainKnowledge,

@@ -175,10 +175,45 @@ const menuBtnStyle: React.CSSProperties = {
 export default function ExportMenu({ agentId, project, canExport = true, disabledReason }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Document Agent — generated docs grounded in this agent's output (Section 4.2
+  // of docs/Document-Agent-Feature-Plan.md). Fetched lazily on menu open, not on
+  // mount, to avoid a network call per rendered ExportMenu instance.
+  const [generatedDocs, setGeneratedDocs] = useState<import('@/services/documentAgentService').ProjectDocumentRow[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
 
   const def = AGENT_DEFINITIONS[agentId];
   const output = project.agentRuns[agentId]?.output ?? '';
   const isDataModel = agentId === 'dataModel';
+
+  async function toggleOpen() {
+    const next = !open;
+    setOpen(next);
+    if (next && canExport) {
+      setDocsLoading(true);
+      try {
+        const { listDocumentsForAgent } = await import('@/services/documentAgentService');
+        const docs = await listDocumentsForAgent(project.id, agentId);
+        setGeneratedDocs(docs);
+      } catch {
+        setGeneratedDocs([]); // best-effort — export menu still works without this section
+      } finally {
+        setDocsLoading(false);
+      }
+    }
+  }
+
+  async function doDownloadGeneratedDoc(row: import('@/services/documentAgentService').ProjectDocumentRow) {
+    setOpen(false);
+    setLoading(true);
+    try {
+      const { downloadGeneratedDocument } = await import('@/services/documentAgentService');
+      await downloadGeneratedDocument(project.id, row);
+    } catch (err) {
+      console.error('Failed to download generated document:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function doExport(format: 'md' | 'docx' | 'pdf') {
     setOpen(false);
@@ -216,7 +251,16 @@ export default function ExportMenu({ agentId, project, canExport = true, disable
             agentLabel: d?.outputLabel ?? aid,
           };
         });
-      await exportAllArtifactsZip(artifacts, project.name);
+      // Best-effort — a Document Agent fetch failure shouldn't block the
+      // existing, already-working artifact export.
+      let generatedDocuments: Awaited<ReturnType<typeof import('@/services/documentAgentService').fetchAllDocumentsWithContent>> = [];
+      try {
+        const { fetchAllDocumentsWithContent } = await import('@/services/documentAgentService');
+        generatedDocuments = await fetchAllDocumentsWithContent(project.id);
+      } catch (err) {
+        console.error('Failed to include generated documentation in ZIP export:', err);
+      }
+      await exportAllArtifactsZip(artifacts, project.name, generatedDocuments);
     } finally {
       setLoading(false);
     }
@@ -230,7 +274,7 @@ export default function ExportMenu({ agentId, project, canExport = true, disable
     <div style={{ position: 'relative' }}>
       <button
         className="btn-secondary"
-        onClick={() => canExport && setOpen((v) => !v)}
+        onClick={() => canExport && toggleOpen()}
         disabled={loading || !output || !canExport}
         style={{ fontSize: 12 }}
         title={!canExport ? (disabledReason ?? 'Export is disabled for your current access level.') : undefined}
@@ -285,6 +329,32 @@ export default function ExportMenu({ agentId, project, canExport = true, disable
               >
                 🗄️ SQL Script (.sql)
               </button>
+            </>
+          )}
+          {docsLoading && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+              <div style={{ padding: '9px 14px', fontSize: 12, color: 'var(--text-muted)' }}>Checking documentation…</div>
+            </>
+          )}
+          {!docsLoading && generatedDocs.length > 0 && (
+            <>
+              <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+              <div style={{ padding: '6px 14px 2px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                Documentation
+              </div>
+              {generatedDocs.map((doc) => (
+                <button
+                  key={doc.doc_id}
+                  onClick={() => doDownloadGeneratedDoc(doc)}
+                  style={menuBtnStyle}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface2)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                  title={`Generated ${new Date(doc.generated_at).toLocaleString()} (v${doc.version})`}
+                >
+                  📘 {doc.title} (.{doc.format})
+                </button>
+              ))}
             </>
           )}
           {completedCount > 1 && (

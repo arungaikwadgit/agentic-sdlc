@@ -586,10 +586,17 @@ export async function exportCombinedDocx(
  * Download all completed agent artifacts for a project as a single ZIP file,
  * containing one polished Word document (.docx) per agent. Each file follows
  * the `<ProjectShortName>_<PhaseNumber>_<AgentLabel>.docx` naming convention.
+ *
+ * `generatedDocuments` (optional) adds the Document Agent's project-specific
+ * AppDocs pack (docs/Document-Agent-Feature-Plan.md Section 4.2) into the same
+ * ZIP under a `Documentation/<category>/` folder structure that mirrors the
+ * AppDocs/ folder taxonomy — real subfolders via JSZip's folder-path support,
+ * sitting alongside the raw agent-output artifacts already zipped above.
  */
 export async function exportAllArtifactsZip(
   artifacts: Array<{ title: string; markdown: string; phaseNumber: number; agentLabel: string }>,
   projectName: string,
+  generatedDocuments?: Array<{ category: string; title: string; format: 'docx' | 'md'; contentBase64: string }>,
 ) {
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
@@ -610,6 +617,23 @@ export async function exportAllArtifactsZip(
     }
     usedNames.add(filename);
     zip.file(filename, blob);
+  }
+
+  if (generatedDocuments && generatedDocuments.length > 0) {
+    const usedDocNames = new Set<string>();
+    for (const doc of generatedDocuments) {
+      const ext = doc.format === 'docx' ? 'docx' : 'md';
+      const baseName = doc.title.replace(/[^a-z0-9]/gi, '_');
+      let filename = `${baseName}.${ext}`;
+      let i = 2;
+      while (usedDocNames.has(`${doc.category}/${filename}`)) {
+        filename = `${baseName}_${i}.${ext}`;
+        i++;
+      }
+      usedDocNames.add(`${doc.category}/${filename}`);
+      // JSZip resolves slash-containing paths into real folders automatically.
+      zip.file(`Documentation/${doc.category}/${filename}`, doc.contentBase64, { base64: true });
+    }
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob' });

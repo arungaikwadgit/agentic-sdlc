@@ -228,6 +228,15 @@ export interface Project {
    * role or explicit member ID is allow-listed here.
    */
   exportAccess?: ProjectExportAccess;
+  /**
+   * Document Agent feature toggle (see docs/Document-Agent-Feature-Plan.md).
+   * Defaults to true (undefined is treated as enabled) so existing projects
+   * opt in automatically. Set to false via the Admin Panel "Documentation"
+   * block to stop both generation hooks (onAgentComplete, onGateApproved)
+   * for this project. Mirrors the projects.document_agent_enabled column
+   * added in backend/migrations/006_project_documents.sql.
+   */
+  documentAgentEnabled?: boolean;
 }
 
 export interface ProjectSummary {

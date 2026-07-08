@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getEffectivePromptDefault } from '@/agents/promptDefaults';
 import { REVIEW_GATES, PHASE_LABELS, PHASE_AGENTS } from '@/agents/constants';
-import { DOMAINS } from '@/agents/domains';
+import { getDomain } from '@/agents/domains';
 import { updateAgentRun, updateProject } from '@/db/projectRepository';
 import { api } from '@/services/api';
 import { checkPromptInjection } from '@/utils/sanitize';
@@ -222,7 +222,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     setDryRunning(true);
     setDryRunResult(null);
     try {
-      const domain = DOMAINS[project.domain];
+      const domain = getDomain(project.domain);
       const priorOutputs: Partial<Record<AgentId, string>> = {};
       for (const [id, run] of Object.entries(project.agentRuns)) {
         if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;

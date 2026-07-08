@@ -3,7 +3,7 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { updateProject, updateAgentRun } from '@/db/projectRepository';
+import { updateProject, updateAgentRun, getProject } from '@/db/projectRepository';
 import { PipelineEngine, runSingleAgent } from '@/services/pipelineEngine';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE, TOTAL_AGENTS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
@@ -12,7 +12,7 @@ import { api } from '@/services/api';
 import DocumentViewer from '../documents/DocumentViewer';
 import ReviewGateModal from '../reviewGate/ReviewGateModal';
 import ProjectSettings from '../settings/ProjectSettings';
-import { initials } from '../settings/ProjectSettings';
+import { initials } from '@/utils/text';
 import type { Tab as ProjectSettingsTab, InviteLinkInfo, InviteErrorInfo } from '../settings/ProjectSettings';
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';
@@ -1429,6 +1429,17 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             const nextPhase = gateToNext[pendingGate] as PhaseId | undefined;
             setPendingGate(null);
             if (nextPhase) startPipeline(nextPhase);
+
+            // Document Agent — fire-and-forget, never blocks gate approval.
+            // See docs/Document-Agent-Feature-Plan.md Section 4.4 (Hook 2).
+            getProject(projectId)
+              .then((freshProject) => {
+                if (!freshProject) return;
+                return import('@/services/documentAgentService').then(({ onGateApproved }) =>
+                  onGateApproved(freshProject)
+                );
+              })
+              .catch((err) => console.error('[Document Agent] onGateApproved hook failed:', err));
           }}
           onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}
