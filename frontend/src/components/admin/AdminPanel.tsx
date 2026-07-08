@@ -6,7 +6,9 @@
  * agent resets, live backend settings, and session-level app overrides.
  *
  * Access: navigate to /admin or press Ctrl+Shift+` anywhere in the app.
- * Only rendered when isAdminMode() is true.
+ * Only rendered when isAdminMode() is true (local dev bypass) or isAppAdmin
+ * is true (real production user on the `server/` service's
+ * ADMIN_EMAIL_ALLOWLIST — see services/adminAuth.ts).
  *
  * Session override keys (sessionStorage):
  *   sdlc_forceProvider  — "openai" | "anthropic" | "" (use backend default)
@@ -16,6 +18,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { isAdminMode } from '@/lib/adminMode';
 import { isSupabaseConfigured } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeader } from '@/services/api';
 import {
   listProjectRecords,
@@ -117,6 +120,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 // ── Health Tab ────────────────────────────────────────────────────────────────
 
 function HealthTab() {
+  const { isAppAdmin } = useAuth();
   const [checks, setChecks] = useState<HealthResult[]>([
     { label: 'API Server (proxy)',      status: 'checking' },
     { label: 'Agent Runtime (port 4000)',status: 'checking' },
@@ -170,11 +174,16 @@ function HealthTab() {
       detail: isSupabaseConfigured ? 'Both env vars present' : 'Not configured — local admin mode',
     });
 
-    // Admin mode
+    // Admin mode — either the local dev-only bypass, or a real production
+    // user confirmed against the backend admin allowlist (isAppAdmin).
     results.push({
       label: 'Admin Mode',
-      status: isAdminMode() ? 'ok' : 'warn',
-      detail: isAdminMode() ? 'Active — admin session enabled' : 'Not active — standard authenticated mode',
+      status: (isAdminMode() || isAppAdmin) ? 'ok' : 'warn',
+      detail: isAdminMode()
+        ? 'Active — local dev admin-bypass session'
+        : isAppAdmin
+          ? 'Active — production admin session (allowlisted account)'
+          : 'Not active — standard authenticated mode',
     });
 
     // Project repository
@@ -220,7 +229,7 @@ function HealthTab() {
     }
 
     setChecks(results);
-  }, []);
+  }, [isAppAdmin]);
 
   useEffect(() => { runChecks(); }, [runChecks]);
 

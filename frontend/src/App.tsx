@@ -17,6 +17,7 @@ import ErrorBoundary from './components/common/ErrorBoundary';
 import { isAdminMode } from './lib/adminMode';
 import { isInviteRoute } from './lib/inviteRoute';
 import { initializeMasterDataCatalog } from './services/masterDataCatalog';
+import { useAuth } from '@/contexts/AuthContext';
 
 export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
 
@@ -41,6 +42,7 @@ function detectInitialView(): View {
 
 export default function App() {
   useThemeInit();
+  const { isAppAdmin } = useAuth();
   const [catalogReady, setCatalogReady] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
 
@@ -66,11 +68,21 @@ export default function App() {
     () => isAdminMode() && window.location.pathname === '/admin'
   );
 
+  // Real production admins are recognized asynchronously (isAppAdmin resolves
+  // after sign-in, via GET /api/projects/permissions/me — see
+  // services/adminAuth.ts) — the local dev bypass above is synchronous and
+  // already covered by the lazy initializer.
+  useEffect(() => {
+    if (isAppAdmin && window.location.pathname === '/admin') {
+      setAdminOpen(true);
+    }
+  }, [isAppAdmin]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.ctrlKey && e.shiftKey && e.key === '`') {
         e.preventDefault();
-        if (isAdminMode()) {
+        if (isAdminMode() || isAppAdmin) {
           setAdminOpen((o) => !o);
         }
       }
@@ -80,7 +92,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [isAppAdmin]);
 
   if (!catalogReady) {
     return (
@@ -134,7 +146,7 @@ export default function App() {
             projectId={view.projectId}
             onBack={() => setView({ page: 'dashboard' })}
           />
-          <ChatWidget isAdmin={isAdminMode()} />
+          <ChatWidget isAdmin={isAdminMode() || isAppAdmin} />
         </ErrorBoundary>
       )}
 
