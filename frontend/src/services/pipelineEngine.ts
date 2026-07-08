@@ -15,7 +15,7 @@ import PQueue from 'p-queue';
 import { PHASE_ORDER, PARALLEL_PHASES, PHASE_AGENTS, REVIEW_GATES } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getPromptDefaults, getAgentProviderHints } from '@/agents/promptDefaults';
-import { DOMAINS } from '@/agents/domains';
+import { getDomain } from '@/agents/domains';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { api } from './api';
 import { runL3Agent } from './l3Runtime';
@@ -296,7 +296,7 @@ export class PipelineEngine {
 
 
   private buildContext(project: Project) {
-    const domain = DOMAINS[project.domain];
+    const domain = getDomain(project.domain);
     const priorOutputs: Partial<Record<AgentId, string>> = {};
     for (const [agentId, run] of Object.entries(project.agentRuns)) {
       if (run?.status === 'complete' && run.output) {
@@ -430,7 +430,7 @@ export async function runSingleAgent(
 
   try {
     // Build context from current project state
-    const domain = DOMAINS[project.domain];
+    const domain = getDomain(project.domain);
     const priorOutputs: Partial<Record<AgentId, string>> = {};
     for (const [id, run] of Object.entries(project.agentRuns)) {
       if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;

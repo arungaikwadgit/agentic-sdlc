@@ -12,7 +12,7 @@ import { api } from '@/services/api';
 import DocumentViewer from '../documents/DocumentViewer';
 import ReviewGateModal from '../reviewGate/ReviewGateModal';
 import ProjectSettings from '../settings/ProjectSettings';
-import { initials } from '../settings/ProjectSettings';
+import { initials } from '@/utils/text';
 import type { Tab as ProjectSettingsTab, InviteLinkInfo, InviteErrorInfo } from '../settings/ProjectSettings';
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';

@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { createProject } from '@/db/projectRepository';
 import { api } from '@/services/api';
-import { DOMAINS } from '@/agents/domains';
+import { DOMAINS, getDomain } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import type { DomainId } from '@/types/domain.types';
@@ -286,7 +286,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
       let finalKnowledge = domainKnowledge;
       try {
         const generated = await api.generateDomainKnowledge({
-          domainLabel: DOMAINS[domain].label,
+          domainLabel: getDomain(domain).label,
           domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[domain],
           projectName: name,
           projectDescription: description,
@@ -340,8 +340,8 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   {PRESETS.map((p) => (
                     <button key={p.name} className={styles.preset} onClick={() => applyPreset(p)}>
                       <span className={styles.presetDomain}
-                        style={{ color: DOMAINS[p.domain].color, background: DOMAINS[p.domain].bgColor }}>
-                        {DOMAINS[p.domain].label}
+                        style={{ color: getDomain(p.domain).color, background: getDomain(p.domain).bgColor }}>
+                        {getDomain(p.domain).label}
                       </span>
                       <span>{p.name}</span>
                     </button>
@@ -435,7 +435,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 ))}
               </select>
               <p className={styles.hint}>
-                <strong>{DOMAINS[domain].label}</strong> — confirm domain-specific obligations during discovery.
+                <strong>{getDomain(domain).label}</strong> — confirm domain-specific obligations during discovery.
               </p>
 
               <label className={styles.label}>Tech Stack *</label>
@@ -606,13 +606,13 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 <div>
                   <span
                     className={styles.domainChip}
-                    style={{ color: DOMAINS[domain].color, background: DOMAINS[domain].bgColor }}
+                    style={{ color: getDomain(domain).color, background: getDomain(domain).bgColor }}
                   >
-                    {DOMAINS[domain].label}
+                    {getDomain(domain).label}
                   </span>
                 </div>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                  This brief is pre-populated from the <strong>{DOMAINS[domain].label}</strong> template. Edit it to add your project-specific context — it will be prepended to every agent's system prompt automatically.
+                  This brief is pre-populated from the <strong>{getDomain(domain).label}</strong> template. Edit it to add your project-specific context — it will be prepended to every agent's system prompt automatically.
                 </p>
               </div>
 
