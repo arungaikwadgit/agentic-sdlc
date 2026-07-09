@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
  * Agentic SDLC — Express API Server
@@ -95,10 +95,19 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim());
 
+// Mirrors backend/src/proxy.js and backend/src/index.ts's isTrustedVercelPreview() —
+// this service (server/) was missing it, which is why Vercel preview/Dev-branch
+// deployments could reach this URL but every request failed CORS while
+// production and localhost worked fine. Keeps all three services' CORS
+// policy consistent instead of introducing a fourth, different rule.
+function isTrustedVercelPreview(origin: string): boolean {
+  return /^https:\/\/agentic-sdlc(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(origin);
+}
+
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true); // curl / Postman / server-to-server
-    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin) || isTrustedVercelPreview(origin)) return cb(null, true);
     cb(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,
