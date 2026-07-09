@@ -4,7 +4,7 @@
  * This replaces browser-local state for mutable app settings, integration credentials,
  * and the admin backlog so the browser is no longer the source of truth.
  */
-import { getAuthHeader } from '@/services/api';
+import { getAuthHeader, getProxyToken } from '@/services/api';
 import type { BacklogItem } from '@/types/adminData.types';
 import type { IntegrationCredential } from '@/types/integration.types';
 
@@ -32,9 +32,12 @@ export function subscribeAppStateChange(listener: AppStateListener): () => void 
 }
 
 async function apiFetch(path: string, init: RequestInit = {}) {
+  const authHeaders = await getAuthHeader();
+  const proxyToken = getProxyToken();
   const headers = {
-    ...(await getAuthHeader()),
+    ...authHeaders,
     ...(init.headers ?? {}),
+    ...(!authHeaders.Authorization && proxyToken ? { 'X-API-Token': proxyToken } : {}),
   };
   const response = await fetch(`${API_URL}${path}`, { ...init, headers });
   const text = await response.text();

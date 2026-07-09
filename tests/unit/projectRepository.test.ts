@@ -12,8 +12,16 @@ import type { Project } from '../../frontend/src/types/project.types';
 // projectRepository.ts only needs getAuthHeader() from services/api — mock
 // just that so a fake bearer token is always present (apiFetch throws
 // 'Not authenticated' otherwise).
+const getAuthHeaderMock = vi.hoisted(() => vi.fn(async () => ({ Authorization: 'Bearer test-token' })));
+const isAdminModeMock = vi.hoisted(() => vi.fn(() => false));
+
 vi.mock('../../frontend/src/services/api', () => ({
-  getAuthHeader: vi.fn(async () => ({ Authorization: 'Bearer test-token' })),
+  getAuthHeader: getAuthHeaderMock,
+}));
+
+vi.mock('../../frontend/src/lib/adminMode', () => ({
+  ADMIN_BYPASS_ENABLED: true,
+  isAdminMode: isAdminModeMock,
 }));
 
 vi.mock('../../frontend/src/services/inviteSession', () => ({
@@ -186,6 +194,10 @@ describe('projectRepository', () => {
     isAppAdminFlag = true;
     fetchMock.mockClear();
     signOutMock.mockClear();
+    getAuthHeaderMock.mockReset();
+    getAuthHeaderMock.mockResolvedValue({ Authorization: 'Bearer test-token' });
+    isAdminModeMock.mockReset();
+    isAdminModeMock.mockReturnValue(false);
   });
 
   it('builds a single /api prefix when VITE_API_URL is set to /api', () => {
@@ -208,6 +220,28 @@ describe('projectRepository', () => {
     expect(buildApiUrl('/api/projects')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects');
     expect(buildApiUrl('/projects')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects');
     expect(buildApiUrl('/api/projects/permissions/me')).toBe('https://agentic-sdlc-production.up.railway.app/api/projects/permissions/me');
+  });
+
+  it('uses the local admin bypass bearer for project CRUD when no Supabase JWT is available (TS-auth-1)', async () => {
+    getAuthHeaderMock.mockResolvedValue({});
+    isAdminModeMock.mockReturnValue(true);
+
+    await createProject(baseProjectData());
+
+    const requestInit = fetchMock.mock.calls.at(-1)?.[1];
+    expect(requestInit?.headers).toMatchObject({
+      Authorization: 'Bearer admin-local-bypass-token',
+      'Content-Type': 'application/json',
+    });
+    expect(requestInit?.headers).not.toHaveProperty('X-API-Token');
+  });
+
+  it('throws Not authenticated for project CRUD when neither JWT nor local admin bypass is present (TS-auth-2)', async () => {
+    getAuthHeaderMock.mockResolvedValue({});
+    isAdminModeMock.mockReturnValue(false);
+
+    await expect(createProject(baseProjectData())).rejects.toThrow('Not authenticated');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   describe('createProject', () => {

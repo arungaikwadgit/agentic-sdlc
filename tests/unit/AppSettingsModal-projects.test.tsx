@@ -110,6 +110,21 @@ vi.mock('../../frontend/src/services/api', () => ({
   getAuthHeader: vi.fn(async () => ({})),
 }));
 
+
+vi.mock('@/services/appStateApi', () => ({
+  getAppConfigValue: vi.fn(async (_key: string, fallback: unknown) => fallback),
+  setAppConfigValue: vi.fn(async () => undefined),
+  setAppConfigValues: vi.fn(async () => undefined),
+  listAppConfig: vi.fn(async () => ({})),
+  listIntegrations: vi.fn(async () => []),
+  getIntegration: vi.fn(async () => null),
+  saveIntegration: vi.fn(async () => undefined),
+  deleteIntegration: vi.fn(async () => undefined),
+  listBacklogItems: vi.fn(async () => []),
+  saveBacklogItem: vi.fn(async () => undefined),
+  deleteBacklogItem: vi.fn(async () => undefined),
+  subscribeAppStateChange: vi.fn(() => () => {}),
+}));
 // Import after mocks are registered.
 import AppSettingsModal from '../../frontend/src/components/settings/AppSettingsModal';
 

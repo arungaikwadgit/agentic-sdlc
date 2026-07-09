@@ -2,7 +2,7 @@
 //
 // Unit + integration tests for src/components/documents/DiagramPreview.tsx
 //
-// Implementation note (2025):
+// Implementation note (2026):
 //   DiagramPreview was migrated from a sandboxed-iframe / CDN approach to the
 //   mermaid npm package rendered directly into a React div via mermaid.render().
 //   There are NO iframes, srcDoc attributes, postMessage events, or CDN URLs
@@ -22,12 +22,15 @@ const { mockRender, mockInitialize } = vi.hoisted(() => ({
   mockInitialize: vi.fn(),
 }));
 
+
 vi.mock('mermaid', () => ({
   default: {
     initialize: mockInitialize,
     render: mockRender,
   },
 }));
+
+
 
 // jsdom stubs
 if (typeof URL.createObjectURL !== 'function') {
@@ -50,10 +53,12 @@ const SAMPLE_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="5"/></svg
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (globalThis as unknown as { __TEST_MERMAID__?: unknown }).__TEST_MERMAID__ = { initialize: mockInitialize, render: mockRender };
   mockRender.mockResolvedValue({ svg: SAMPLE_SVG });
 });
 
 afterEach(() => {
+  delete (globalThis as unknown as { __TEST_MERMAID__?: unknown }).__TEST_MERMAID__;
   vi.restoreAllMocks();
 });
 

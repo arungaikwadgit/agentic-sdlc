@@ -1,5 +1,5 @@
 // tests/unit/ProjectWorkspace-github-push.test.tsx
-// Component tests for components/pipeline/ProjectWorkspace.tsx — the
+// Component tests for components/pipeline/ProjectWorkspace.tsx â€” the
 // "Push to GitHub" button visibility and GithubPushModal wiring.
 // Covers TS-166 through TS-169.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -19,7 +19,9 @@ vi.mock('@/db/database', () => ({
 }));
 
 vi.mock('@/db/projectRepository', () => ({
+  getProject: vi.fn(async () => currentProject),
   updateProject: vi.fn(),
+  subscribeProjectRepositoryChange: vi.fn(() => () => {}),
   updateAgentRun: vi.fn(),
 }));
 
@@ -27,7 +29,7 @@ vi.mock('@/services/pipelineEngine', () => ({
   PipelineEngine: vi.fn().mockImplementation(() => ({ run: vi.fn(), stop: vi.fn() })),
 }));
 
-// callAgent stubbed — ProjectWorkspace pings it on mount to check API key.
+// callAgent stubbed â€” ProjectWorkspace pings it on mount to check API key.
 vi.mock('@/services/api', () => ({
   api: {
     callAgent: vi.fn().mockResolvedValue({ content: 'pong' }),
@@ -61,6 +63,17 @@ vi.mock('../../frontend/src/components/documents/GithubPushModal', () => ({
     return <div data-testid="github-push-modal" />;
   },
 }));
+vi.mock('@/hooks/useProject', () => ({
+  useProject: () => ({
+    project: currentProject,
+    loading: false,
+    refreshing: false,
+    error: null,
+    refresh: vi.fn(),
+    save: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
 
 import ProjectWorkspace from '../../frontend/src/components/pipeline/ProjectWorkspace';
 
@@ -87,7 +100,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'simple',
     teamMembers: [
-      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' },
+      { id: 'member-1', name: 'Alice Admin', email: 'owner@example.com', role: 'Admin', appRole: 'project_owner', isAdmin: true, avatarColor: '#fff' },
     ],
     activeAdminId: 'member-1',
     agentAssignments: [],
@@ -112,11 +125,11 @@ async function selectAgent(agentName: string) {
   return user;
 }
 
-describe('ProjectWorkspace — GitHub push integration', () => {
+describe('ProjectWorkspace â€” GitHub push integration', () => {
   beforeEach(() => {
     githubPushModalPropsSpy.mockClear();
     currentProject = undefined;
-  });
+  }, 15_000);
 
   it('renders the "Push to GitHub" button when admin, githubIntegrationId set, and Sprint Plan is selected and complete (TS-166)', async () => {
     currentProject = baseProject({
@@ -135,7 +148,7 @@ describe('ProjectWorkspace — GitHub push integration', () => {
       githubIntegrationId: 'gh-int-1',
       agentRuns: withCompleteRun('sprintPlanner', SPRINT_PLAN_OUTPUT),
       teamMembers: [
-        { id: 'member-1', name: 'Bob Dev', email: 'bob@example.com', role: 'Developer', isAdmin: false, avatarColor: '#fff' },
+        { id: 'member-1', name: 'Bob Dev', email: 'bob@example.com', role: 'Developer', appRole: 'editor', isAdmin: false, avatarColor: '#fff' },
       ],
       activeAdminId: 'member-1',
     } as Partial<Project>);
@@ -212,3 +225,7 @@ describe('ProjectWorkspace — GitHub push integration', () => {
     expect(props.sourceLabel).toBe(TASK_BREAKDOWN_DEF!.outputLabel);
   });
 });
+
+
+
+

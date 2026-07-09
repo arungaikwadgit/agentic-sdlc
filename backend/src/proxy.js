@@ -67,6 +67,122 @@ function getSupabase() {
   }
 }
 
+// Admin-privileged client (service_role key) — grants auth.admin.* access
+// (createUser/updateUserById/listUsers) that the anon-key client from
+// getSupabase() cannot do. SUPABASE_SERVICE_KEY was already present as an
+// env var (used by fetchSupabaseTable() for raw PostgREST reads) but never
+// wired into a proper Supabase client until the default-password invite
+// flow needed auth.admin.createUser().
+let _supabaseAdminClient = null;
+function getSupabaseAdmin() {
+  if (_supabaseAdminClient) return _supabaseAdminClient;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    _supabaseAdminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    return _supabaseAdminClient;
+  } catch (err) {
+    console.error(`getSupabaseAdmin(): createClient() threw — name=${err?.name ?? 'Unknown'} message=${err?.message ?? String(err)}`);
+    return null;
+  }
+}
+
+// Default invite/reset password: <firstname>_DDMMYY<3-char suffix>.
+// DDMMYY is the date this specific action (invite send or password reset)
+// happens, not a fixed value — so a reset always mints a different password
+// than the original invite even for the same person. The suffix exists
+// solely to defeat guessability: firstname + a knowable send date alone
+// would otherwise be a two-variable guess, especially for admin-visible
+// invited-today timestamps.
+const PASSWORD_SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // no 0/O/1/l/i — avoids ambiguous chars when read off an email
+function randomPasswordSuffix(length = 3) {
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += PASSWORD_SUFFIX_ALPHABET[Math.floor(Math.random() * PASSWORD_SUFFIX_ALPHABET.length)];
+  }
+  return out;
+}
+function generateDefaultPassword(name, date = new Date()) {
+  const firstName = String(name ?? 'user').trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yy = String(date.getFullYear()).slice(-2);
+  return `${firstName}_${dd}${mm}${yy}${randomPasswordSuffix()}`;
+}
+
+// Creates (or, if the email is already a Supabase user, updates) the
+// invitee's account with the generated default password, email_confirm
+// forced true (no separate confirmation-email step needed — the password
+// itself, delivered out of band via the invite email, is the proof of
+// mailbox ownership) and user_metadata.must_change_password set so the
+// frontend forces a password change on first login. Returns the plaintext
+// password (shown once, to the admin and in the invite email — never
+// stored) or throws if Supabase admin access isn't configured/reachable.
+async function provisionInviteeAccount({ email, name, actionDate }) {
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    throw Object.assign(new Error('Account provisioning is not configured on this server (missing SUPABASE_URL/SUPABASE_SERVICE_KEY).'), { code: 'ADMIN_CLIENT_UNAVAILABLE' });
+  }
+  const password = generateDefaultPassword(name, actionDate);
+  const metadata = { must_change_password: true, name: name ?? undefined };
+
+  const { data: createData, error: createError } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: metadata,
+  });
+
+  if (!createError) {
+    return { password, userId: createData?.user?.id ?? null, created: true };
+  }
+
+  // Supabase reports an existing account as a 422/"already registered"-style
+  // error rather than a distinct error code across all supabase-js versions —
+  // match on status/message rather than a single code so this doesn't break
+  // silently across a client library bump.
+  const alreadyExists = createError.status === 422 ||
+    /already.?(registered|exists)/i.test(createError.message ?? '');
+  if (!alreadyExists) {
+    throw createError;
+  }
+
+  // Re-invite / previously-removed-then-re-added member — find their
+  // existing user id and reset the password + flag instead of creating a
+  // duplicate account. supabase-js v2.45 has no getUserByEmail(), so this
+  // paginates listUsers() and matches by email; fine at this team's scale.
+  const existingUser = await findSupabaseUserByEmail(admin, email);
+  if (!existingUser) {
+    // createUser() said "already exists" but we can't find it — surface the
+    // original error rather than silently doing nothing.
+    throw createError;
+  }
+
+  const { error: updateError } = await admin.auth.admin.updateUserById(existingUser.id, {
+    password,
+    email_confirm: true,
+    user_metadata: { ...(existingUser.user_metadata ?? {}), ...metadata },
+  });
+  if (updateError) throw updateError;
+
+  return { password, userId: existingUser.id, created: false };
+}
+
+async function findSupabaseUserByEmail(admin, email) {
+  const target = String(email).trim().toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 25; page++) { // hard cap: 5,000 users — well beyond this app's scale
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) return null;
+    const match = data.users.find((u) => (u.email ?? '').toLowerCase() === target);
+    if (match) return match;
+    if (data.users.length < perPage) return null; // last page
+  }
+  return null;
+}
+
 async function fetchSupabaseTable(path) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     throw new Error('Supabase service-role access is not configured.');
@@ -2250,7 +2366,7 @@ async function sendViaResend({ to, subject, html }) {
   }
 }
 
-async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
+async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy, password, isReset = false }) {
   const roleLabel = {
     project_owner: 'Project Owner',
     editor: 'Editor',
@@ -2258,7 +2374,26 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
     viewer: 'Viewer',
   }[appRole] ?? appRole;
 
-  const html = `
+  // Password is shown in plaintext here by design (see generateDefaultPassword) —
+  // the tradeoff of email-as-delivery-channel for a first-login credential was
+  // an explicit product decision, offset by forcing a change on first sign-in.
+  const passwordBlock = password ? `
+      <div style="margin:20px 0;padding:16px 20px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;">
+        <p style="margin:0 0 6px;color:#3730a3;font-size:13px;font-weight:600;">Your sign-in password</p>
+        <p style="margin:0;color:#1e1b4b;font-size:18px;font-family:'Courier New',monospace;letter-spacing:0.5px;">${password}</p>
+        <p style="margin:8px 0 0;color:#4338ca;font-size:12px;">You'll be asked to set a new password the first time you sign in.</p>
+      </div>` : '';
+
+  const html = isReset ? `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px;">
+      <h2 style="color:#2E4057;margin-bottom:8px;">Your password was reset</h2>
+      <p style="color:#444;font-size:15px;">
+        <strong>${invitedBy}</strong> reset your sign-in password for <strong>${projectName}</strong>.
+      </p>
+      ${passwordBlock}
+      <p style="color:#999;font-size:12px;">If you were not expecting this, contact your project admin.</p>
+    </div>
+  ` : `
     <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px;">
       <h2 style="color:#2E4057;margin-bottom:8px;">You're invited to collaborate</h2>
       <p style="color:#444;font-size:15px;">
@@ -2272,13 +2407,14 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
         ${appRole === 'reviewer' ? 'view all agent outputs and approve review gates.' : ''}
         ${appRole === 'viewer' ? 'view all agent outputs (read-only).' : ''}
       </p>
+      ${passwordBlock}
       <a href="${inviteLink}" style="display:inline-block;margin:24px 0;padding:14px 28px;background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">
         Accept Invitation
       </a>
       <p style="color:#999;font-size:12px;">This link is valid for 7 days. If you were not expecting this invite, you can safely ignore this email.</p>
     </div>
   `;
-  const subject = `You're invited to ${projectName}`;
+  const subject = isReset ? `Your password was reset` : `You're invited to ${projectName}`;
 
   // 1. Resend (preferred — HTTPS API, works on any Railway plan)
   const resendResult = await sendViaResend({ to, subject, html });
@@ -2346,6 +2482,18 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   const auth = await authorizeInviteAction(req, res, { projectId, action: 'create', requestedAppRole: appRole });
   if (!auth.ok) return; // response already sent
 
+  // Create/refresh the invitee's Supabase account with a default password
+  // up front — before any local bookkeeping — so a failure here (Supabase
+  // admin API unreachable/misconfigured) doesn't leave behind a team_members
+  // row and invite link for an account that doesn't actually exist yet.
+  let provisioned;
+  try {
+    provisioned = await provisionInviteeAccount({ email: normalizedEmail, name, actionDate: new Date() });
+  } catch (err) {
+    console.error(`[invite/send] provisionInviteeAccount failed projectId=${projectId} email=${normalizedEmail.split('@')[1] ? '(redacted)@' + normalizedEmail.split('@')[1] : '?'}: ${err?.message ?? err}`);
+    return res.status(502).json({ error: 'Could not create the team member\'s account. Please try again, or contact support if this persists.' });
+  }
+
   const token = randomUUID();          // returned to the caller once — never persisted raw
   const tokenHash = hashInviteToken(token);
   const baseUrl = resolveInviteBaseUrl(req);
@@ -2353,7 +2501,7 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
 
   console.log(
     `[invite/send] request received projectId=${projectId} appRole=${appRole} createdBy=${auth.callerEmail ?? '(admin-bypass)'} ` +
-    `emailDomain=${normalizedEmail.split('@')[1] ?? '?'} gmailConfigured=${!!(GMAIL_USER && GMAIL_APP_PASSWORD)}`
+    `emailDomain=${normalizedEmail.split('@')[1] ?? '?'} gmailConfigured=${!!(GMAIL_USER && GMAIL_APP_PASSWORD)} accountCreated=${provisioned.created}`
   );
 
   // Store in memory (fallback path) — keyed by hash, matching the DB column,
@@ -2378,11 +2526,11 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     performedBy: auth.callerEmail ?? invitedBy ?? null,
   }).catch(() => {});
 
-  // Send email (best-effort — this is now the fallback distribution channel,
-  // not the only one: the inviteLink is always returned below so an
-  // Admin/Project Owner can copy and share it manually regardless of
-  // whether email sending is configured or succeeds).
-  const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy });
+  // Send email (best-effort for delivery — but unlike before, the password
+  // itself is NOT recoverable from the link alone anymore, so it's always
+  // also returned in the API response below for the admin UI to display,
+  // regardless of email outcome).
+  const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy, password: provisioned.password });
   console.log(
     `[invite/send] sendInviteEmail result ok=${emailResult.ok} dev=${!!emailResult.dev}` +
     (emailResult.error ? ` error=${emailResult.error}` : '')
@@ -2393,9 +2541,10 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
       ok: true,
       inviteLink,
       token,
+      password: provisioned.password,
       emailSent: false,
       emailError: emailResult.error ?? 'Invite email failed to send.',
-      message: 'Invite link created. Email delivery failed — copy the link below and share it manually.',
+      message: 'Invite link and account created. Email delivery failed — share the link and password below manually.',
     });
   }
 
@@ -2403,10 +2552,74 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     ok: true,
     inviteLink,
     token,
+    password: provisioned.password,
     emailSent: !emailResult.dev,
     message: emailResult.dev
-      ? 'Invite link generated (no email sent — RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
-      : 'Invite email sent. You can also copy the link below to share it directly.',
+      ? 'Invite link generated (no email sent — RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link and password to share manually.'
+      : 'Invite email sent with the sign-in password. You can also copy the link and password below to share directly.',
+  });
+});
+
+// ── POST /api/invite/reset-password ───────────────────────────────────────────
+// Admin- or Project-Owner-triggered password reset for an existing team
+// member (accepted or still pending). Mints a fresh default password (same
+// firstname_DDMMYY+suffix format as the original invite, dated today),
+// updates the Supabase account, re-emails it, and returns it to the caller
+// so the admin UI can display it too — mirrors /api/invite/send's password
+// handling exactly, since this is really "re-provision the same account."
+app.post('/api/invite/reset-password', checkToken, inviteSendRateLimit, async (req, res) => {
+  const { projectId, email, projectName } = req.body ?? {};
+  if (!projectId || !email) {
+    return res.status(400).json({ error: 'projectId and email are required' });
+  }
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  // Reuses the same authorization rule as sending an invite (admin or this
+  // project's Project Owner) — resetting someone's password is at least as
+  // sensitive as inviting them in the first place.
+  const auth = await authorizeInviteAction(req, res, { projectId, action: 'reset_password' });
+  if (!auth.ok) return; // response already sent
+
+  if (!dbPool) {
+    return res.status(503).json({ error: 'Project database is unavailable.' });
+  }
+  const { rows } = await dbPool.query(
+    `SELECT id, name, app_role FROM team_members WHERE project_id = $1 AND lower(email) = lower($2) LIMIT 1`,
+    [projectId, normalizedEmail]
+  ).catch(() => ({ rows: [] }));
+  const member = rows[0];
+  if (!member) {
+    return res.status(404).json({ error: 'This person is not a team member on this project.' });
+  }
+
+  let provisioned;
+  try {
+    provisioned = await provisionInviteeAccount({ email: normalizedEmail, name: member.name, actionDate: new Date() });
+  } catch (err) {
+    console.error(`[invite/reset-password] provisionInviteeAccount failed projectId=${projectId}: ${err?.message ?? err}`);
+    return res.status(502).json({ error: 'Could not reset this account\'s password. Please try again.' });
+  }
+
+  await logInviteEvent({ projectId, teamMemberId: member.id, action: 'password_reset', performedBy: auth.callerEmail ?? null }).catch(() => {});
+
+  const emailResult = await sendInviteEmail({
+    to: normalizedEmail,
+    name: member.name,
+    projectName: projectName ?? '',
+    appRole: member.app_role,
+    inviteLink: resolveInviteBaseUrl(req),
+    invitedBy: auth.callerEmail ?? 'Your project admin',
+    password: provisioned.password,
+    isReset: true,
+  });
+
+  return res.json({
+    ok: true,
+    password: provisioned.password,
+    emailSent: emailResult.ok && !emailResult.dev,
+    message: emailResult.ok && !emailResult.dev
+      ? 'Password reset. New sign-in details emailed to the team member.'
+      : 'Password reset. Copy the new password below and share it manually — email delivery is not configured or failed.',
   });
 });
 
@@ -2770,7 +2983,7 @@ app.patch('/api/invite/projects/:projectId', async (req, res) => {
 // (Supabase JWT path + admin-bypass), and getCallerAppRoleForProject already
 // checks BOTH the relational team_members table (invite flow) AND the
 // projects.data->'teamMembers' JSONB roster (normal-session flow), so one
-// authorization helper here correctly covers both session types. Confirmed
+// authorization helper here correctly covers// authorization helper here correctly covers both session types. Confirmed
 // POSTGRES_URL and the Supabase project behind SUPABASE_URL are the same
 // physical database, so this table is visible to every session type without
 // needing a mirrored implementation in server/.
@@ -2997,4 +3210,16 @@ module.exports = {
   isConfiguredAdminEmail,
   // Exported for unit testing only (Document Agent — project_documents):
   validateDocumentUpsertPayload,
+  // Exported for unit testing only (default-password invite/reset flow):
+  generateDefaultPassword,
+  provisionInviteeAccount,
+  findSupabaseUserByEmail,
+  getSupabaseAdmin,
+};
+d,
+  // Exported for unit testing only (default-password invite/reset flow):
+  generateDefaultPassword,
+  provisionInviteeAccount,
+  findSupabaseUserByEmail,
+  getSupabaseAdmin,
 };

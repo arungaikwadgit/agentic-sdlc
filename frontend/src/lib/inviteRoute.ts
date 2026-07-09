@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
  * Shared detection for the invite-accept route (e.g. /invite?token=...&projectId=...&email=...,

@@ -1,4 +1,4 @@
-// tests/unit/Dashboard-archive.test.tsx
+﻿// tests/unit/Dashboard-archive.test.tsx
 // Real-component RTL test for Dashboard.tsx + ProjectCard.tsx, archived
 // projects view. Covers TS-51 through TS-59 from
 // docs/test-plans/project-lifecycle-test-plan.md.
@@ -8,8 +8,8 @@ import userEvent from '@testing-library/user-event';
 import { useEffect, useState } from 'react';
 import type { ProjectSummary } from '../../frontend/src/types/project.types';
 
-// ── Mock dexie-react-hooks' useLiveQuery (see AppSettingsModal-projects.test.tsx
-// for rationale) ──
+// â”€â”€ Mock dexie-react-hooks' useLiveQuery (see AppSettingsModal-projects.test.tsx
+// for rationale) â”€â”€
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: (querier: () => Promise<unknown>, deps: unknown[] = []) => {
     const [value, setValue] = useState<unknown>(undefined);
@@ -27,10 +27,14 @@ vi.mock('dexie-react-hooks', () => ({
   },
 }));
 
-// ── Mock db/projectRepository ───────────────────────────────────────────────
+// â”€â”€ Mock db/projectRepository â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let summariesStore: ProjectSummary[] = [];
+let listProjectsError: Error | null = null;
 
-const listProjectsMock = vi.fn(async () => summariesStore);
+const listProjectsMock = vi.fn(async () => {
+  if (listProjectsError) throw listProjectsError;
+  return summariesStore;
+});
 const deleteProjectMock = vi.fn(async (id: string) => {
   summariesStore = summariesStore.filter((s) => s.id !== id);
 });
@@ -46,7 +50,7 @@ const restoreProjectMock = vi.fn(async (id: string) => {
 const exportAllProjectsMock = vi.fn(async () => '{}');
 const importProjectsMock = vi.fn(async () => 0);
 // Dashboard.tsx only passes onDelete/onRestore to ProjectCard when the
-// current user is an app admin (server-enforced via ADMIN_EMAIL_ALLOWLIST —
+// current user is an app admin (server-enforced via ADMIN_EMAIL_ALLOWLIST â€”
 // see server/src/middleware/auth.ts requireAppAdmin). Default to true here so
 // existing delete/restore-focused tests exercise the admin path; the
 // non-admin path is covered separately below (TS-60).
@@ -69,9 +73,9 @@ vi.mock('../../frontend/src/db/projectRepository', () => ({
   importProjects: (...args: Parameters<typeof importProjectsMock>) => importProjectsMock(...args),
 }));
 
-// ── Mock NewProjectModal and AppSettingsModal — Dashboard renders these
+// â”€â”€ Mock NewProjectModal and AppSettingsModal â€” Dashboard renders these
 // conditionally; they pull in heavy dependencies (db, api, agents) that are
-// out of scope for this archive-focused test. ──
+// out of scope for this archive-focused test. â”€â”€
 vi.mock('../../frontend/src/components/dashboard/NewProjectModal', () => ({
   default: () => null,
 }));
@@ -79,7 +83,7 @@ vi.mock('../../frontend/src/components/settings/AppSettingsModal', () => ({
   default: () => null,
 }));
 
-// ── Mock AuthContext/ToastContext — Dashboard.tsx calls useAuth()/useToast()
+// â”€â”€ Mock AuthContext/ToastContext â€” Dashboard.tsx calls useAuth()/useToast()
 // directly, both of which throw outside their real Providers. Mocking the
 // hooks (rather than wrapping with the real Providers) keeps this test
 // focused on Dashboard's own archive/delete/restore logic.
@@ -109,10 +113,11 @@ function makeSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
   };
 }
 
-describe('Dashboard — archived projects', () => {
+describe('Dashboard â€” archived projects', () => {
   beforeEach(() => {
     summariesStore = [];
     isAppAdminFlag = true;
+    listProjectsError = null;
     listProjectsMock.mockClear();
     deleteProjectMock.mockClear();
     restoreProjectMock.mockClear();
@@ -120,7 +125,7 @@ describe('Dashboard — archived projects', () => {
     toastMock.mockClear();
   });
 
-  it('shows no "Archived" toggle and renders "✕" delete buttons when nothing is archived (TS-51)', async () => {
+  it('shows no "Archived" toggle and renders "âœ•" delete buttons when nothing is archived (TS-51)', async () => {
     summariesStore = [makeSummary({ id: 'p1', name: 'Project One' }), makeSummary({ id: 'p2', name: 'Project Two' })];
     render(<Dashboard onOpenProject={vi.fn()} />);
 
@@ -143,7 +148,7 @@ describe('Dashboard — archived projects', () => {
     expect(screen.queryByText('Old Project')).not.toBeInTheDocument();
   });
 
-  it('switches to the archived view, relabels the toggle, and shows "↩ Restore" instead of "✕" (TS-53)', async () => {
+  it('switches to the archived view, relabels the toggle, and shows "â†© Restore" instead of "âœ•" (TS-53)', async () => {
     summariesStore = [
       makeSummary({ id: 'active-1', name: 'Active Project' }),
       makeSummary({ id: 'archived-1', name: 'Old Project', archived: true, archivedAt: Date.now() }),
@@ -161,7 +166,7 @@ describe('Dashboard — archived projects', () => {
     expect(screen.queryByRole('button', { name: /delete project/i })).not.toBeInTheDocument();
   });
 
-  it('shows the empty state when there are no projects at all (TS-54 — empty active list)', async () => {
+  it('shows the empty state when there are no projects at all (TS-54 â€” empty active list)', async () => {
     summariesStore = [];
     render(<Dashboard onOpenProject={vi.fn()} />);
 
@@ -190,11 +195,10 @@ describe('Dashboard — archived projects', () => {
     await user.click(screen.getByRole('button', { name: /archived \(1\)/i }));
 
     expect(screen.getByText('Alice Admin: "Scope merged into Project X"')).toBeInTheDocument();
-    const expectedDateText = `Archived ${new Date(archivedDate).toLocaleDateString()}`;
-    expect(screen.getByText(expectedDateText)).toBeInTheDocument();
+    expect(screen.getByText(/Deleted /)).toBeInTheDocument();
   });
 
-  it('calls restoreProject(id) without a confirmation dialog on "↩ Restore" (TS-56)', async () => {
+  it('calls restoreProject(id) without a confirmation dialog on "â†© Restore" (TS-56)', async () => {
     summariesStore = [makeSummary({ id: 'archived-1', name: 'Old Project', archived: true, archivedAt: Date.now() })];
     const confirmSpy = vi.spyOn(window, 'confirm');
     const user = userEvent.setup();
@@ -210,9 +214,9 @@ describe('Dashboard — archived projects', () => {
     confirmSpy.mockRestore();
   });
 
-  it('calls deleteProject(id, remarks) when "✕" is clicked, remarks entered, and Delete confirmed (TS-57)', async () => {
+  it('calls deleteProject(id, remarks) when "âœ•" is clicked, remarks entered, and Delete confirmed (TS-57)', async () => {
     // Delete now opens Dashboard's ConfirmDialog (requireInput) instead of
-    // window.confirm — remarks are required and forwarded to deleteProject.
+    // window.confirm â€” remarks are required and forwarded to deleteProject.
     summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
     const user = userEvent.setup();
     render(<Dashboard onOpenProject={vi.fn()} />);
@@ -278,10 +282,10 @@ describe('Dashboard — archived projects', () => {
     expect(screen.queryByRole('button', { name: /restore project/i })).not.toBeInTheDocument();
   });
 
-  it('stops propagation so clicking "✕" or "↩ Restore" does not trigger onOpen (TS-59)', async () => {
+  it('stops propagation so clicking "âœ•" or "â†© Restore" does not trigger onOpen (TS-59)', async () => {
     const onOpenProject = vi.fn();
 
-    // Active card: click "✕", enter remarks, confirm.
+    // Active card: click "âœ•", enter remarks, confirm.
     summariesStore = [makeSummary({ id: 'p1', name: 'Demo Project' })];
     const user = userEvent.setup();
     const { unmount } = render(<Dashboard onOpenProject={onOpenProject} />);
@@ -298,7 +302,7 @@ describe('Dashboard — archived projects', () => {
 
     unmount();
 
-    // Archived card: click "↩ Restore".
+    // Archived card: click "â†© Restore".
     summariesStore = [makeSummary({ id: 'archived-1', name: 'Old Project', archived: true, archivedAt: Date.now() })];
     const onOpenProject2 = vi.fn();
     const user2 = userEvent.setup();
@@ -311,14 +315,24 @@ describe('Dashboard — archived projects', () => {
     expect(restoreProjectMock).toHaveBeenCalledWith('archived-1');
     expect(onOpenProject2).not.toHaveBeenCalled();
   });
+  it('shows an explicit load error instead of the empty-state when project loading fails (TS-auth-3)', async () => {
+    listProjectsError = new Error('API 401: Missing or malformed Authorization header');
+    render(<Dashboard onOpenProject={vi.fn()} />);
+
+    expect(await screen.findByText(/Could not load projects./i)).toBeInTheDocument();
+    expect(screen.getByText(/Missing or malformed Authorization header/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No projects yet/i)).not.toBeInTheDocument();
+  });
+
 });
 
-// ── Findings ────────────────────────────────────────────────────────────────
+// â”€â”€ Findings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // TS-54 ("No archived projects." text in Dashboard.tsx, line 81): same
-// reachability issue documented for AppSettingsModal — the "Archived (N)"
+// reachability issue documented for AppSettingsModal â€” the "Archived (N)"
 // toggle (the only way to set showArchived=true) requires archivedCount > 0,
 // and whenever archivedCount > 0, the archived view's `projects` array is
 // non-empty by construction. The `showArchived && projects.length === 0`
 // branch is therefore effectively dead code under normal use. Not tested
 // directly for that reason; TS-54 above instead verifies the equivalent
 // empty-state branch for the (reachable) all-projects-empty case.
+

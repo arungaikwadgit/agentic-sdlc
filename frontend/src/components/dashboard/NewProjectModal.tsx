@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState } from 'react';
@@ -406,7 +406,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <div className={styles.grid2}>
                 <div>
                   <label className={styles.label}>Project Type *</label>
-                  <select value={projectType} onChange={(e) => setProjectType(e.target.value as ProjectType | '')}>
+                  <select aria-label="Project Type" value={projectType} onChange={(e) => setProjectType(e.target.value as ProjectType | '')}>
                     <option value="">Select a project type…</option>
                     {PROJECT_TYPES.map((t) => (
                       <option key={t.value} value={t.value}>{t.label}</option>
@@ -415,7 +415,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                 </div>
                 <div>
                   <label className={styles.label}>Priority *</label>
-                  <select value={priority} onChange={(e) => setPriority(e.target.value as ProjectPriority)}>
+                  <select aria-label="Priority" value={priority} onChange={(e) => setPriority(e.target.value as ProjectPriority)}>
                     {PRIORITIES.map((p) => (
                       <option key={p.value} value={p.value}>{p.label}</option>
                     ))}
@@ -428,6 +428,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   <label className={styles.label}>Start Date *</label>
                   <input
                     type="date"
+                    aria-label="Start Date"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
                   />
@@ -436,6 +437,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   <label className={styles.label}>Target End Date *</label>
                   <input
                     type="date"
+                    aria-label="Target End Date"
                     value={targetEndDate}
                     onChange={(e) => handleTargetEndDateChange(e.target.value)}
                   />
@@ -444,7 +446,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               </div>
 
               <label className={styles.label}>Domain *</label>
-              <select value={domain} onChange={(e) => handleDomainChange(e.target.value as DomainId)}>
+              <select aria-label="Domain" value={domain} onChange={(e) => handleDomainChange(e.target.value as DomainId)}>
                 {Object.values(DOMAINS).map((d) => (
                   <option key={d.id} value={d.id}>{d.label}</option>
                 ))}

@@ -1,6 +1,6 @@
-/*
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+﻿/*
+ * Â© 2026 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential â€” Unauthorized use prohibited.
  */
 .layout {
   min-height: 100vh;
@@ -57,7 +57,7 @@
   gap: 16px;
 }
 
-/* User identity badge — shows who is logged in, click to switch */
+/* User identity badge â€” shows who is logged in, click to switch */
 .userBadge {
   display: inline-flex;
   align-items: center;
@@ -95,4 +95,24 @@
 .gearBtn:hover {
   color: var(--text);
   border-color: var(--accent);
+}
+
+.errorBanner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+  background: rgba(127, 29, 29, 0.18);
+  color: var(--text);
+}
+
+.errorBannerText {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }

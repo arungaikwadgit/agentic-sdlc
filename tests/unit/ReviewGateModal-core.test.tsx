@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
-import { PHASE_AGENTS, PHASE_LABELS } from '../../frontend/src/agents/constants';
+import { PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES } from '../../frontend/src/agents/constants';
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
 
 // ── Mock heavy/child components ─────────────────────────────────────────────
@@ -62,13 +62,24 @@ import ReviewGateModal from '../../frontend/src/components/reviewGate/ReviewGate
 const GATE_ID = 'gate3' as const;
 const PHASE3_AGENTS = PHASE_AGENTS.phase3;
 const PHASE3B_AGENTS = PHASE_AGENTS.phase3b;
-const ALL_GATE_AGENTS = [...PHASE3_AGENTS, ...PHASE3B_AGENTS];
+const ALL_GATE_AGENTS = REVIEW_GATES[GATE_ID].flatMap((phase) => PHASE_AGENTS[phase] ?? []);
 
 const COMPLETE_AGENT = PHASE3_AGENTS[0]; // 'architecture'
 const IDLE_AGENT = PHASE3_AGENTS[1]; // 'apiDesign'
 
 let currentProject: Project;
 
+
+function projectWithAllGateAgentsComplete(overrides: Partial<Project> = {}): Project {
+  const project = makeProject(overrides);
+  project.agentRuns = Object.fromEntries(
+    ALL_GATE_AGENTS.map((agentId) => [
+      agentId,
+      { agentId, status: 'complete', output: '# Complete Output\n\nReady for approval.', completedAt: Date.now() },
+    ]),
+  ) as Project['agentRuns'];
+  return project;
+}
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
     id: 'proj-1',
@@ -306,7 +317,7 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
 
   // TS-73
   it('"Approve & Continue" calls onApprove with notes and the selected approver id', async () => {
-    renderModal();
+    renderModal(projectWithAllGateAgentsComplete());
 
     const notesBox = screen.getByPlaceholderText('Add notes or feedback for this review gate...');
     await userEvent.type(notesBox, 'Looks good, ship it.');
@@ -320,7 +331,7 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
   });
 
   it('"Approve & Continue" passes undefined approver id when none selected', async () => {
-    renderModal();
+    renderModal(projectWithAllGateAgentsComplete());
     await userEvent.click(screen.getByRole('button', { name: /Approve & Continue/ }));
     expect(onApprove).toHaveBeenCalledWith('', undefined);
   });

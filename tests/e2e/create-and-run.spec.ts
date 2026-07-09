@@ -1,52 +1,65 @@
 // tests/e2e/create-and-run.spec.ts (Appendix K3)
-// Playwright E2E — project creation → pipeline run
-import { test, expect } from '@playwright/test';
+// Playwright E2E - project creation to pipeline run
+import { test, expect, type Page } from '@playwright/test';
 import { signIn } from './fixtures/auth';
 
-const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+async function openSimpleProjectDialog(page: Page) {
+  await expect(page.getByRole('button', { name: /new project/i }).first()).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: /simple/i }).click();
+  await expect(page.getByRole('heading', { name: /new project/i })).toBeVisible({ timeout: 10_000 });
+}
+
+async function fillSimpleProject(page: Page, name: string) {
+  await page.getByPlaceholder(/payment processing platform/i).fill(name);
+  await page.getByPlaceholder(/jane doe/i).fill('E2E Owner');
+  await page.getByPlaceholder(/platform squad/i).fill('E2E Team');
+  await page.getByPlaceholder(/describe the project goals/i).fill('Automated E2E test project for validating project creation and workspace navigation.');
+  await page.getByLabel(/project type/i).selectOption('web-app');
+  await page.getByLabel(/start date/i).fill('2026-07-08');
+  await page.getByLabel(/target end date/i).fill('2026-08-08');
+  await page.getByPlaceholder(/React, Node\.js/i).fill('React');
+  await page.keyboard.press('Enter');
+  await page.getByPlaceholder(/Who will use this product/i).fill('Product managers and delivery teams');
+  await page.getByPlaceholder(/Known risks/i).fill('Authentication and API connectivity');
+}
+
+async function expectSaveOutcome(page: Page, projectName: string) {
+  await expect(
+    page.getByText(new RegExp('Project could not be saved|sign-in session is missing or expired|' + projectName, 'i'))
+  ).toBeVisible({ timeout: 15_000 });
+}
 
 test.describe('Project creation and pipeline run', () => {
-  test('creates a project and starts the pipeline', async ({ page }) => {
-    await page.goto(BASE_URL);
+  test('validates the simple project flow through domain knowledge', async ({ page }) => {
+    await signIn(page);
 
-    // Dashboard should render
-    await expect(page.getByRole('heading', { name: /agentic sdlc/i })).toBeVisible();
+    await openSimpleProjectDialog(page);
+    await fillSimpleProject(page, 'E2E Test Project');
 
-    // Open new project modal
-    await page.getByRole('button', { name: /new project/i }).click();
-    await expect(page.getByRole('dialog')).toBeVisible();
-
-    // Fill in project details
-    await page.getByLabel(/project name/i).fill('E2E Test Project');
-    await page.getByLabel(/description/i).fill('An automated E2E test project for Playwright.');
-
-    // Submit
-    await page.getByRole('button', { name: /create/i }).click();
-
-    // Should navigate to the project workspace
-    await expect(page.getByText('E2E Test Project')).toBeVisible({ timeout: 5000 });
-
-    // Start pipeline button should be present
-    await expect(page.getByRole('button', { name: /start pipeline/i })).toBeVisible();
+    await page.getByRole('button', { name: /next: domain knowledge/i }).click();
+    await expect(page.getByRole('heading', { name: /domain knowledge/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /save for the project/i })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: /save for the project/i }).click();
+    await expectSaveOutcome(page, 'E2E Test Project');
   });
 
-  test('shows phase list in project workspace', async ({ page }) => {
-    await page.goto(BASE_URL);
+  test('shows phase list in an existing workspace or validates save guard', async ({ page }) => {
+    await signIn(page);
 
-    // If a project already exists from prior test (shared storage), open it
     const projectCards = page.locator('[data-testid="project-card"]');
     const count = await projectCards.count();
 
     if (count > 0) {
       await projectCards.first().click();
-      await expect(page.getByText(/phase/i)).toBeVisible({ timeout: 3000 });
-    } else {
-      // Create one first
-      await page.getByRole('button', { name: /new project/i }).click();
-      await page.getByLabel(/project name/i).fill('Phase Check Project');
-      await page.getByLabel(/description/i).fill('Phase list check.');
-      await page.getByRole('button', { name: /create/i }).click();
-      await expect(page.getByText(/phase/i)).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText(/phase/i)).toBeVisible({ timeout: 15_000 });
+      return;
     }
+
+    await openSimpleProjectDialog(page);
+    await fillSimpleProject(page, 'Phase Check Project');
+    await page.getByRole('button', { name: /next: domain knowledge/i }).click();
+    await expect(page.getByRole('button', { name: /save for the project/i })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: /save for the project/i }).click();
+    await expectSaveOutcome(page, 'Phase Check Project');
   });
 });

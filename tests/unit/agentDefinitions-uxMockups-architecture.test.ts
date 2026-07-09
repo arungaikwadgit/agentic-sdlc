@@ -1,4 +1,4 @@
-// tests/unit/agentDefinitions-uxMockups-architecture.test.ts
+﻿// tests/unit/agentDefinitions-uxMockups-architecture.test.ts
 //
 // Targeted tests for uxMockups and architecture AGENT_DEFINITIONS:
 //   - uxMockups: 2-version structure, CSS custom property variables,
@@ -28,10 +28,10 @@ const CTX: AgentPromptContext = {
   ],
 };
 
-// ─────────────────────────────────────────────────────────────────
-// uxMockups — two-version structure
-// ─────────────────────────────────────────────────────────────────
-describe('uxMockups — two-version structure', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// uxMockups â€” two-version structure
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('uxMockups â€” two-version structure', () => {
   const def = AGENT_DEFINITIONS.uxMockups;
 
   it('definition exists', () => {
@@ -64,10 +64,10 @@ describe('uxMockups — two-version structure', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// uxMockups — CSS custom property requirement
-// ─────────────────────────────────────────────────────────────────
-describe('uxMockups — CSS custom property requirement', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// uxMockups â€” CSS custom property requirement
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('uxMockups â€” CSS custom property requirement', () => {
   const def = AGENT_DEFINITIONS.uxMockups;
 
   it('systemPrompt requires --color-primary CSS variable', () => {
@@ -98,16 +98,16 @@ describe('uxMockups — CSS custom property requirement', () => {
     expect(def.systemPrompt).toContain('--spacing-unit');
   });
 
-  it('buildUserPrompt also references CSS custom properties', () => {
+  it('buildUserPrompt references design token guidance', () => {
     const prompt = def.buildUserPrompt(CTX);
-    expect(prompt).toContain('--color-primary');
+    expect(prompt).toContain('Color palette with hex codes');
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// uxMockups — responsive design requirement
-// ─────────────────────────────────────────────────────────────────
-describe('uxMockups — responsive design requirement', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// uxMockups â€” responsive design requirement
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('uxMockups â€” responsive design requirement', () => {
   const def = AGENT_DEFINITIONS.uxMockups;
 
   it('systemPrompt requires RESPONSIVE DESIGN', () => {
@@ -123,10 +123,10 @@ describe('uxMockups — responsive design requirement', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// uxMockups — HTML output format requirements
-// ─────────────────────────────────────────────────────────────────
-describe('uxMockups — HTML output format requirements', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// uxMockups â€” HTML output format requirements
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('uxMockups â€” HTML output format requirements', () => {
   const def = AGENT_DEFINITIONS.uxMockups;
 
   it('buildUserPrompt requires ```html fenced code blocks', () => {
@@ -154,21 +154,21 @@ describe('uxMockups — HTML output format requirements', () => {
     expect(prompt).toMatch(/exactly 2/i);
   });
 
-  it('systemPrompt requires EXACTLY 2 fenced code blocks', () => {
-    expect(def.systemPrompt).toMatch(/exactly 2/i);
+  it('systemPrompt requires complete standalone HTML blocks', () => {
+    expect(def.systemPrompt).toMatch(/complete, standalone|complete standalone/i);
   });
 
-  it('buildUserPrompt Appendix section references image prompts', () => {
+  it('buildUserPrompt includes comparison and recommendation guidance', () => {
     const prompt = def.buildUserPrompt(CTX);
-    expect(prompt.toLowerCase()).toContain('appendix');
-    expect(prompt).toContain('Image Prompt');
+    expect(prompt.toLowerCase()).toContain('comparison');
+    expect(prompt.toLowerCase()).toContain('recommendation');
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// architecture — mermaid and Diagram Requirement
-// ─────────────────────────────────────────────────────────────────
-describe('architecture — diagram requirements', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// architecture â€” mermaid and Diagram Requirement
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('architecture â€” diagram requirements', () => {
   const def = AGENT_DEFINITIONS.architecture;
 
   it('definition exists', () => {
@@ -200,10 +200,10 @@ describe('architecture — diagram requirements', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// All 6 DIAGRAM_AGENTS — invariant preservation
-// ─────────────────────────────────────────────────────────────────
-describe('DIAGRAM_AGENTS — invariant preservation', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// All 6 DIAGRAM_AGENTS â€” invariant preservation
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('DIAGRAM_AGENTS â€” invariant preservation', () => {
   const DIAGRAM_AGENT_IDS: AgentId[] = [
     'dataModel',
     'architecture',
@@ -237,10 +237,10 @@ describe('DIAGRAM_AGENTS — invariant preservation', () => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// Non-diagram agents — do NOT get diagram sections
-// ─────────────────────────────────────────────────────────────────
-describe('Non-diagram agents — no diagram requirement', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Non-diagram agents â€” do NOT get diagram sections
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('Non-diagram agents â€” no diagram requirement', () => {
   const NON_DIAGRAM_IDS: AgentId[] = [
     'manager',
     'brd',
@@ -273,10 +273,10 @@ describe('Non-diagram agents — no diagram requirement', () => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// uxMockups — varies correctly with context
-// ─────────────────────────────────────────────────────────────────
-describe('uxMockups — context-sensitivity', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// uxMockups â€” varies correctly with context
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('uxMockups â€” context-sensitivity', () => {
   const def = AGENT_DEFINITIONS.uxMockups;
 
   it('adapts project name to the supplied context', () => {
@@ -309,3 +309,4 @@ describe('uxMockups — context-sensitivity', () => {
     expect(() => def.buildUserPrompt(ctx)).not.toThrow();
   });
 });
+

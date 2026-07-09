@@ -1,10 +1,22 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
+
+const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+const DEV_BYPASS_USER_ID = '__admin_local__';
+const DEV_BYPASS_EMAIL = (
+  (process.env.ADMIN_EMAIL_ALLOWLIST ?? '')
+    .split(',')
+    .map((e) => e.trim())
+    .find(Boolean) ??
+  process.env.ADMIN_EMAIL ??
+  process.env.VITE_ADMIN_EMAIL ??
+  'admin@local'
+).toLowerCase();
 
 export interface AuthUser {
   id: string;
@@ -27,6 +39,15 @@ declare global {
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
+  if (process.env.NODE_ENV !== 'production' && authHeader === ('Bearer ' + ADMIN_BYPASS_BEARER)) {
+    req.user = {
+      id: DEV_BYPASS_USER_ID,
+      email: DEV_BYPASS_EMAIL,
+      role: 'authenticated',
+    };
+    next();
+    return;
+  }
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Missing or malformed Authorization header' });
     return;

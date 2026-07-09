@@ -1,5 +1,5 @@
 /**
- * Copyright 2025 Arun Gaikwad. All rights reserved.
+ * Copyright 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential - Unauthorized use prohibited.
  *
  * AuthContext wraps Supabase authentication with a local-development-only
@@ -58,6 +58,13 @@ interface AuthContextValue {
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
+  /**
+   * Self-service "forgot password" — sends Supabase's own reset email with
+   * a link back to /reset-password (see ResetPasswordPage.tsx). Always
+   * resolves the same way regardless of whether the email has an account,
+   * by design (Supabase doesn't leak account existence through this call).
+   */
+  sendPasswordReset: (email: string) => Promise<{ error: AuthError | null }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -131,11 +138,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (nextSession) {
         setAdminMode(false);
         setAdminModeState(false);
+        setSession(nextSession);
+        setUser(nextSession.user ?? null);
+        setLoading(false);
+        void refreshAppAdminStatus(true);
+        return;
       }
-      setSession(nextSession);
-      setUser(nextSession?.user ?? null);
+
+      if (isAdminMode()) {
+        const mockSession = makeMockSession();
+        setAdminModeState(true);
+        setSession(mockSession);
+        setUser(mockSession.user);
+        setIsAppAdmin(true);
+        setLoading(false);
+        return;
+      }
+
+      setSession(null);
+      setUser(null);
       setLoading(false);
-      void refreshAppAdminStatus(Boolean(nextSession));
+      void refreshAppAdminStatus(false);
     });
 
     return () => {
@@ -158,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAdminModeState(true);
       setUser(mockSession.user);
       setSession(mockSession);
+      setIsAppAdmin(true);
       return { error: null };
     }
 
@@ -181,6 +205,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: null };
   }, []);
 
+  const sendPasswordReset = useCallback(async (email: string) => {
+    const redirectTo = `${window.location.origin}/reset-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    console.log(`[auth] sendPasswordReset(${email}) -> ${error ? `error: ${error.message}` : 'sent (or silently no-op if no account exists — Supabase does not disclose which)'}`);
+    return { error };
+  }, []);
+
   const signOut = useCallback(async () => {
     try {
       const { clearInviteSession } = await import('@/services/inviteSession');
@@ -202,7 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [adminMode]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, adminMode, isAppAdmin, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, adminMode, isAppAdmin, signUp, signIn, signOut, sendPasswordReset }}>
       {children}
     </AuthContext.Provider>
   );

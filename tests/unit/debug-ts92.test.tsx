@@ -1,4 +1,4 @@
-import { describe, it, vi } from 'vitest';
+﻿import { describe, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { Project } from '../../frontend/src/types/project.types';
 
@@ -10,7 +10,7 @@ vi.mock('../../frontend/src/db/database', () => ({
     transaction: vi.fn(async (_mode: string, _table: unknown, fn: () => Promise<unknown>) => fn()),
   },
 }));
-vi.mock('../../frontend/src/db/projectRepository', () => ({ updateProject: vi.fn(async () => {}) }));
+vi.mock('../../frontend/src/db/projectRepository', () => ({ updateProject: vi.fn(async () => {}), checkIsAppAdmin: vi.fn(async () => true) }));
 vi.mock('../../frontend/src/services/api', () => ({ api: { callAgent: vi.fn(), extractText: vi.fn(), generateDomainKnowledge: vi.fn(), generateBrandingGuidelines: vi.fn(), fetchSiteBranding: vi.fn(), testGithubConnection: vi.fn() } }));
 vi.mock('../../frontend/src/hooks/useIntegrations', () => ({ useIntegrations: () => ({ integrations: [], saveCredential: vi.fn(), loadCredential: vi.fn(async () => null), removeCredential: vi.fn() }) }));
 
@@ -30,7 +30,7 @@ describe('debug TS-92 selector', () => {
       activeAdminId: ADMIN_MEMBER.id,
     };
     const { container } = render(<ProjectSettings project={project} onClose={vi.fn()} />);
-    const daveName = screen.getByText('Dev Dave');
+    const daveName = screen.getAllByText('Dev Dave')[0];
     // Log class hierarchy from text to root
     let el: Element | null = daveName;
     const hierarchy: string[] = [];
@@ -50,3 +50,5 @@ describe('debug TS-92 selector', () => {
     console.log('closest("[class*=memberGrid] > div") class:', byGrid?.className);
   });
 });
+
+

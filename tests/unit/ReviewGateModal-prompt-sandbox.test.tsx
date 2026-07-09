@@ -273,7 +273,7 @@ describe('ReviewGateModal — prompt sandbox', () => {
   });
 
   // TS-79
-  it('confirms before running when an injection warning is present, and aborts if declined', async () => {
+  it('requires the inline "Run anyway" action when an injection warning is present', async () => {
     renderModal();
     await selectAgent(AGENT_WITH_DOWNSTREAM);
     await openPromptSandbox();
@@ -283,21 +283,17 @@ describe('ReviewGateModal — prompt sandbox', () => {
     fireEvent.change(textarea, { target: { value: 'Do something suspicious pattern' } });
     await screen.findByText(/Possible prompt injection detected/);
 
-    // Decline the confirm dialog → dry run aborted.
-    confirmSpy.mockReturnValue(false);
     await userEvent.click(screen.getByRole('button', { name: /Run & Update Output/ }));
-    expect(confirmSpy).toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
     expect(callAgentMock).not.toHaveBeenCalled();
 
-    // Accept the confirm dialog → dry run proceeds.
-    confirmSpy.mockReturnValue(true);
     callAgentMock.mockResolvedValue({
       choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
     extractTextMock.mockReturnValue('OK');
 
-    await userEvent.click(screen.getByRole('button', { name: /Run & Update Output/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Run anyway/ }));
     await waitFor(() => expect(callAgentMock).toHaveBeenCalledTimes(1));
   });
 
@@ -379,7 +375,7 @@ describe('ReviewGateModal — prompt sandbox', () => {
     // 'dataModel' has two downstream dependents (Architecture, Security &
     // Compliance) → component renders the plural "depend on this".
     const downstreamName = AGENT_DEFINITIONS.architecture.name; // 'Architecture'
-    expect(screen.getByText(new RegExp(downstreamName))).toBeInTheDocument();
+    expect(screen.getAllByText(new RegExp(downstreamName)).length).toBeGreaterThan(0);
     expect(screen.getByText(/depend on this/)).toBeInTheDocument();
   });
 

@@ -1,22 +1,18 @@
 // tests/e2e/accessibility.spec.ts (Appendix K4)
-// axe-playwright accessibility scan — zero violations required (DoD item 7)
+// axe-playwright accessibility scan - zero serious/critical violations required
 import { test, expect } from '@playwright/test';
 import { signIn } from './fixtures/auth';
 import AxeBuilder from '@axe-core/playwright';
 
-const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
-
 test.describe('Accessibility (axe-core)', () => {
   test('Dashboard has no critical axe violations', async ({ page }) => {
-    await page.goto(BASE_URL);
-    // Wait for main content to render
+    await signIn(page);
     await page.waitForLoadState('networkidle');
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
       .analyze();
 
-    // Filter to serious + critical only (as per DoD — zero violations)
     const violations = results.violations.filter(
       (v) => v.impact === 'serious' || v.impact === 'critical'
     );
@@ -31,15 +27,14 @@ test.describe('Accessibility (axe-core)', () => {
     expect(violations).toHaveLength(0);
   });
 
-  test('New Project modal has no critical axe violations', async ({ page }) => {
-    await page.goto(BASE_URL);
+  test('Simple Project form has no critical axe violations', async ({ page }) => {
+    await signIn(page);
     await page.waitForLoadState('networkidle');
 
-    // Open modal
-    const newProjectBtn = page.getByRole('button', { name: /new project/i });
-    if (await newProjectBtn.isVisible()) {
-      await newProjectBtn.click();
-      await page.waitForSelector('[role="dialog"]');
+    const simpleBtn = page.getByRole('button', { name: /simple/i });
+    if (await simpleBtn.isVisible()) {
+      await simpleBtn.click();
+      await expect(page.getByRole('heading', { name: /new project/i })).toBeVisible({ timeout: 10_000 });
 
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa'])

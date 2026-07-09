@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**

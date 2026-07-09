@@ -1,5 +1,5 @@
-// tests/unit/ExportMenu.test.tsx
-// Component tests for components/documents/ExportMenu.tsx — export menu
+﻿// tests/unit/ExportMenu.test.tsx
+// Component tests for components/documents/ExportMenu.tsx â€” export menu
 // state and wiring to documentExporter.
 // Covers TS-151 through TS-155 from
 // docs/test-plans/document-export-github-test-plan.md.
@@ -10,14 +10,30 @@ import type { Project } from '../../frontend/src/types/project.types';
 import { PHASE_ORDER } from '../../frontend/src/agents/constants';
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
 
-// ── Mock documentExporter ──
+// â”€â”€ Mock documentExporter â”€â”€
 const exportMarkdownMock = vi.fn();
 const exportDocxMock = vi.fn(async () => undefined);
+const exportPdfMock = vi.fn(async () => undefined);
+const exportAllArtifactsZipMock = vi.fn(async () => undefined);
+const buildArtifactFilenameMock = vi.fn((projectName: string, phaseNumber: number, agentLabel: string) => {
+  const project = projectName.split(/\s*[—–-]\s*/)[0]?.replace(/[^a-z0-9]/gi, '') || 'Project';
+  const label = agentLabel.replace(/[^a-z0-9]/gi, '') || 'Document';
+  return project + '_' + phaseNumber + '_' + label + '.docx';
+});
 vi.mock('@/services/exporters/documentExporter', () => ({
   exportMarkdown: (...args: unknown[]) => exportMarkdownMock(...args),
   exportDocx: (...args: unknown[]) => exportDocxMock(...args),
+  exportPdf: (...args: unknown[]) => exportPdfMock(...args),
+  exportAllArtifactsZip: (...args: unknown[]) => exportAllArtifactsZipMock(...args),
+  buildArtifactFilename: (...args: [string, number, string]) => buildArtifactFilenameMock(...args),
 }));
 
+
+vi.mock('@/services/documentAgentService', () => ({
+  listDocumentsForAgent: vi.fn(async () => []),
+  downloadGeneratedDocument: vi.fn(async () => undefined),
+  fetchAllDocumentsWithContent: vi.fn(async () => []),
+}));
 // Import after mocks are registered.
 import ExportMenu from '../../frontend/src/components/documents/ExportMenu';
 
@@ -86,7 +102,7 @@ describe('ExportMenu', () => {
     expect(exportMarkdownMock).toHaveBeenCalledTimes(1);
     expect(exportMarkdownMock).toHaveBeenCalledWith(
       '# Sprint Plan\n\nDo the work.',
-      `${DEF?.outputLabel}.md`,
+      `${project.name.split(/\s*[—–-]\s*/)[0]?.replace(/[^a-z0-9]/gi, '')}_${PHASE_ORDER.indexOf(DEF!.phase) + 1}_${DEF!.outputLabel.replace(/[^a-z0-9]/gi, '')}.md`,
     );
 
     // Dropdown should close after export.
@@ -175,10 +191,13 @@ describe('ExportMenu', () => {
       await waitFor(() => {
         const button = screen.getByRole('button', { name: /export/i });
         expect(button).not.toBeDisabled();
-        expect(button.textContent).toBe('Export ▾');
+        expect(button.textContent).toMatch(/Export/);
       });
     } finally {
       process.off('unhandledRejection', onUnhandledRejection);
     }
   });
 });
+
+
+

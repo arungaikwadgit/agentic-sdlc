@@ -1,5 +1,5 @@
 // tests/performance/pipeline-load.js (Appendix K5)
-// K6 load test — DoD item: no >10% regression on critical paths
+// K6 load test -- DoD item: no >10% regression on critical paths
 // Run: k6 run tests/performance/pipeline-load.js
 //      (requires k6 installed: https://k6.io/docs/getting-started/installation/)
 import http from 'k6/http';
@@ -8,7 +8,9 @@ import { Trend, Rate } from 'k6/metrics';
 
 // Custom metrics
 const agentCallDuration = new Trend('agent_call_duration', true);
+const catalogDuration = new Trend('catalog_duration', true);
 const agentCallSuccess = new Rate('agent_call_success');
+const catalogSuccess = new Rate('catalog_success');
 
 // Load config: 10 VUs, 30s steady, then ramp down
 export const options = {
@@ -20,8 +22,11 @@ export const options = {
   thresholds: {
     // p95 of agent calls must be under 8s (GPT-4o can be slow)
     agent_call_duration: ['p(95)<8000'],
+    // Startup catalog should stay fast because the app blocks on it in production
+    catalog_duration: ['p(95)<1500'],
     // 99% success rate
     agent_call_success: ['rate>0.99'],
+    catalog_success: ['rate>0.99'],
     // Overall HTTP errors < 1%
     http_req_failed: ['rate<0.01'],
   },
@@ -30,7 +35,7 @@ export const options = {
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:3001';
 const PROXY_TOKEN = __ENV.PROXY_TOKEN || 'MySDLCAI-Key';
 
-// Minimal payload — uses a tiny model call to measure proxy latency
+// Minimal payload -- uses a tiny model call to measure proxy latency
 const agentPayload = JSON.stringify({
   model: 'gpt-4o',
   max_tokens: 50,
@@ -52,7 +57,26 @@ export default function () {
     'health OK': (r) => r.status === 200,
   });
 
-  // 2. Agent call via proxy
+  // 2. Master catalog startup path
+  const catalogStart = Date.now();
+  const catalog = http.get(`${BASE_URL}/api/master-data/catalog`, { headers });
+  const catalogMs = Date.now() - catalogStart;
+  const catalogOk = check(catalog, {
+    'catalog 200': (r) => r.status === 200,
+    'catalog has agents': (r) => {
+      try {
+        const body = JSON.parse(r.body);
+        return Array.isArray(body.agents) && body.agents.length > 0;
+      } catch {
+        return false;
+      }
+    },
+  });
+
+  catalogDuration.add(catalogMs);
+  catalogSuccess.add(catalogOk ? 1 : 0);
+
+  // 3. Agent call via proxy
   const start = Date.now();
   const res = http.post(`${BASE_URL}/api/agent`, agentPayload, { headers });
   const duration = Date.now() - start;
@@ -80,7 +104,9 @@ export function handleSummary(data) {
     stdout: `
 === Pipeline Load Test Summary ===
 Agent call p95: ${data.metrics.agent_call_duration?.values?.['p(95)']?.toFixed(0) ?? 'N/A'}ms
-Success rate:   ${((data.metrics.agent_call_success?.values?.rate ?? 0) * 100).toFixed(1)}%
+Catalog p95:    ${data.metrics.catalog_duration?.values?.['p(95)']?.toFixed(0) ?? 'N/A'}ms
+Agent success:  ${((data.metrics.agent_call_success?.values?.rate ?? 0) * 100).toFixed(1)}%
+Catalog success:${((data.metrics.catalog_success?.values?.rate ?? 0) * 100).toFixed(1)}%
 HTTP fail rate: ${((data.metrics.http_req_failed?.values?.rate ?? 0) * 100).toFixed(2)}%
 ===================================
 `,

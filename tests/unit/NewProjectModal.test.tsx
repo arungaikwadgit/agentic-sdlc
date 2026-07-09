@@ -5,7 +5,7 @@
 // Covers TS-170 through TS-182 from
 // docs/test-plans/dashboard-and-project-creation-test-plan.md.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // ── Mock @/db/projectRepository ──
@@ -37,14 +37,27 @@ function setup() {
   return { ...utils, onClose, onCreated };
 }
 
+async function fillRequiredDetails(user: ReturnType<typeof userEvent.setup>, name: string, description: string) {
+  void user;
+  fireEvent.change(screen.getByPlaceholderText(/payment processing platform/i), { target: { value: name } });
+  fireEvent.change(screen.getByPlaceholderText(/describe the project goals/i), { target: { value: description } });
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), { target: { value: 'Test Owner' } });
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\. Platform Squad/i), { target: { value: 'Platform Squad' } });
+  fireEvent.change(screen.getByDisplayValue(/select a project type/i), { target: { value: 'web-app' } });
+  const dateInputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[];
+  fireEvent.change(dateInputs[0], { target: { value: '2026-07-08' } });
+  fireEvent.change(dateInputs[1], { target: { value: '2026-09-30' } });
+  fireEvent.change(screen.getByPlaceholderText(/react, node\.js, postgresql/i), { target: { value: 'React' } });
+  fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+  fireEvent.change(screen.getByPlaceholderText(/who will use this product/i), { target: { value: 'Operations users and admins' } });
+  fireEvent.change(screen.getByPlaceholderText(/known risks/i), { target: { value: 'Payment integration and compliance risk' } });
+}
+
 async function fillDetailsAndProceed(user: ReturnType<typeof userEvent.setup>, name: string, description: string) {
-  await user.type(screen.getByPlaceholderText(/payment processing platform/i), name);
-  await user.type(screen.getByPlaceholderText(/describe the project goals/i), description);
-  await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
+  await fillRequiredDetails(user, name, description);
   const next = screen.getByRole('button', { name: /next: domain knowledge/i });
   await user.click(next);
 }
-
 describe('NewProjectModal', () => {
   beforeEach(() => {
     createProjectMock.mockReset();
@@ -106,9 +119,9 @@ describe('NewProjectModal', () => {
     expect(next).toBeDisabled();
 
     await user.type(descInput, 'A description');
-    // Owner is also required — still disabled until owner is filled
     expect(next).toBeDisabled();
-    await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
+
+    await fillRequiredDetails(user, 'My Project', 'A description');
     expect(next).not.toBeDisabled();
   });
 
@@ -120,8 +133,7 @@ describe('NewProjectModal', () => {
 
     // On the Domain Knowledge step, type a custom brief.
     const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
-    await user.clear(textarea);
-    await user.type(textarea, 'My custom brief');
+    fireEvent.change(textarea, { target: { value: 'My custom brief' } });
     expect((textarea as HTMLTextAreaElement).value).toBe('My custom brief');
 
     // Go back to Details and change the domain.
@@ -164,8 +176,7 @@ describe('NewProjectModal', () => {
     });
 
     // Edit the brief, then go back and forward again without changing domain.
-    await user.clear(textarea);
-    await user.type(textarea, 'A custom edited brief');
+    fireEvent.change(textarea, { target: { value: 'A custom edited brief' } });
 
     getEffectiveDomainKnowledgeDefaultMock.mockClear();
     await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
@@ -186,8 +197,7 @@ describe('NewProjectModal', () => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
-    await user.clear(textarea);
-    await user.type(textarea, 'Something else entirely');
+    fireEvent.change(textarea, { target: { value: 'Something else entirely' } });
 
     await user.click(screen.getByRole('button', { name: /reset to template/i }));
 
@@ -206,8 +216,7 @@ describe('NewProjectModal', () => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
-    await user.clear(textarea);
-    await user.type(textarea, 'Edited brief content');
+    fireEvent.change(textarea, { target: { value: 'Edited brief content' } });
 
     const createObjectURLSpy = vi.fn(() => 'blob:mock-url');
     const revokeObjectURLSpy = vi.fn();
@@ -261,7 +270,7 @@ describe('NewProjectModal', () => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
-    await user.click(screen.getByRole('button', { name: /create project/i }));
+    await user.click(screen.getByRole('button', { name: /create project|save for the project/i }));
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledTimes(1);
@@ -291,17 +300,17 @@ describe('NewProjectModal', () => {
     await fillDetailsAndProceed(user, 'My Project', 'A description');
     await screen.findByPlaceholderText(/describe the domain context/i);
 
-    const createButton = screen.getByRole('button', { name: /create project/i });
+    const createButton = screen.getByRole('button', { name: /create project|save for the project/i });
     await user.click(createButton);
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /creating|saving/i })).toBeDisabled();
     });
 
     reject(new Error('create failed'));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /create project/i })).not.toBeDisabled();
+      expect(screen.getByRole('button', { name: /create project|save for the project/i })).not.toBeDisabled();
     });
   });
 
@@ -317,7 +326,7 @@ describe('NewProjectModal', () => {
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
     await screen.findByPlaceholderText(/describe the domain context/i);
-    await user.click(screen.getByRole('button', { name: /create project/i }));
+    await user.click(screen.getByRole('button', { name: /create project|save for the project/i }));
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledTimes(1);
@@ -337,3 +346,10 @@ describe('NewProjectModal', () => {
     expect(createProjectMock).not.toHaveBeenCalled();
   });
 });
+
+
+
+
+
+
+

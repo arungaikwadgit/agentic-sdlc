@@ -9,38 +9,42 @@
 //   - No preview tab for agents that are neither uxMockups nor architecture
 //   - No preview tab for uxMockups output that lacks ```html
 //   - No preview tab for architecture output that lacks ```mermaid
-//   - Clicking the tab switches from DocumentViewer → MockupPreview / DiagramPreview
+//   - Clicking the tab switches from DocumentViewer â†’ MockupPreview / DiagramPreview
 //   - Clicking "Spec" switches back to DocumentViewer
 //   - Correct component renders in each tab for each agent
 //
 // Mock strategy: exactly mirrors ProjectWorkspace-controls.test.tsx.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.setConfig({ testTimeout: 15000 });
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
 import type { AgentId } from '../../frontend/src/types/agent.types';
 
-// ── useLiveQuery ──
+// â”€â”€ useLiveQuery â”€â”€
 let currentProject: Project | undefined;
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: () => currentProject,
 }));
 
-// ── database ──
+// â”€â”€ database â”€â”€
 vi.mock('@/db/database', () => ({
   db: { projects: { get: vi.fn() } },
 }));
 
-// ── projectRepository ──
+// â”€â”€ projectRepository â”€â”€
 const updateProjectMock = vi.fn();
 const updateAgentRunMock = vi.fn();
 vi.mock('@/db/projectRepository', () => ({
+  getProject: vi.fn(async () => currentProject),
   updateProject: (...args: unknown[]) => updateProjectMock(...args),
+  subscribeProjectRepositoryChange: vi.fn(() => () => {}),
   updateAgentRun: (...args: unknown[]) => updateAgentRunMock(...args),
 }));
 
-// ── pipelineEngine ──
+// â”€â”€ pipelineEngine â”€â”€
 vi.mock('@/services/pipelineEngine', () => ({
   PipelineEngine: vi.fn().mockImplementation(() => ({
     run: vi.fn().mockResolvedValue(undefined),
@@ -48,8 +52,8 @@ vi.mock('@/services/pipelineEngine', () => ({
   })),
 }));
 
-// ── api ──
-// callAgent must resolve (not return undefined) — ProjectWorkspace pings it
+// â”€â”€ api â”€â”€
+// callAgent must resolve (not return undefined) â€” ProjectWorkspace pings it
 // on mount via `testMode: true` to check API key availability, and chains
 // .then()/.catch() directly off the call.
 vi.mock('@/services/api', () => ({
@@ -62,12 +66,12 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
-// ── exporters / traceability ──
+// â”€â”€ exporters / traceability â”€â”€
 vi.mock('@/services/traceability', () => ({ exportTraceabilityCSV: vi.fn() }));
 vi.mock('@/services/exporters/documentExporter', () => ({ exportAllArtifactsZip: vi.fn() }));
 vi.mock('@/services/exporters/excelExporter', () => ({ exportPipelineMetricsXlsx: vi.fn() }));
 
-// ── Child components: lightweight stubs so we can assert which one renders ──
+// â”€â”€ Child components: lightweight stubs so we can assert which one renders â”€â”€
 vi.mock('../../frontend/src/components/documents/DocumentViewer', () => ({
   default: ({ markdown }: { markdown: string }) => (
     <div data-testid="document-viewer" data-markdown={markdown.slice(0, 20)} />
@@ -102,12 +106,23 @@ vi.mock('../../frontend/src/components/documents/ExportMenu', () => ({
 vi.mock('../../frontend/src/components/documents/GithubPushModal', () => ({
   default: () => <div data-testid="github-push-modal" />,
 }));
+vi.mock('@/hooks/useProject', () => ({
+  useProject: () => ({
+    project: currentProject,
+    loading: false,
+    refreshing: false,
+    error: null,
+    refresh: vi.fn(),
+    save: vi.fn(),
+    remove: vi.fn(),
+  }),
+}));
 
 import ProjectWorkspace from '../../frontend/src/components/pipeline/ProjectWorkspace';
 
-// ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Fixture factories
-// ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function makeProject(
   agentId: AgentId,
@@ -136,7 +151,7 @@ function makeProject(
       {
         id: 'm1',
         name: 'Alice',
-        email: 'alice@example.com',
+        email: 'owner@example.com',
         role: 'Admin',
         isAdmin: true,
         avatarColor: '#fff',
@@ -171,19 +186,19 @@ const PLAIN_OUTPUT = '# Sprint Plan\n\nSome content without any code fences.';
 
 const noop = () => {};
 
-// ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Helper: select an agent by clicking its label in the sidebar
-// ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function clickAgent(agentLabel: string) {
   const user = userEvent.setup();
   const btn = screen.getByRole('button', { name: new RegExp(agentLabel, 'i') });
   await user.click(btn);
 }
 
-// ─────────────────────────────────────────────────────────────────
-// 1. "Preview" tab — uxMockups with HTML output
-// ─────────────────────────────────────────────────────────────────
-describe('ProjectWorkspace — Preview tab for uxMockups', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 1. "Preview" tab â€” uxMockups with HTML output
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('ProjectWorkspace â€” Preview tab for uxMockups', () => {
   beforeEach(() => {
     updateProjectMock.mockClear();
     updateAgentRunMock.mockClear();
@@ -274,10 +289,10 @@ describe('ProjectWorkspace — Preview tab for uxMockups', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// 2. "Diagrams" tab — architecture with mermaid output
-// ─────────────────────────────────────────────────────────────────
-describe('ProjectWorkspace — Diagrams tab for architecture', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 2. "Diagrams" tab â€” architecture with mermaid output
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('ProjectWorkspace â€” Diagrams tab for architecture', () => {
   beforeEach(() => {
     updateProjectMock.mockClear();
   });
@@ -364,10 +379,10 @@ describe('ProjectWorkspace — Diagrams tab for architecture', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
-// 3. Other agents — no preview/diagram tab
-// ─────────────────────────────────────────────────────────────────
-describe('ProjectWorkspace — no preview tab for non-preview agents', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 3. Other agents â€” no preview/diagram tab
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('ProjectWorkspace â€” no preview tab for non-preview agents', () => {
   const NON_PREVIEW_AGENTS: Array<{ agentId: AgentId; label: string }> = [
     { agentId: 'manager', label: 'PRD Agent' },
     { agentId: 'testPlan', label: 'Test Plan' },
@@ -387,10 +402,10 @@ describe('ProjectWorkspace — no preview tab for non-preview agents', () => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────
-// 4. Cross-contamination: mermaid output on uxMockups → no Diagrams tab
-// ─────────────────────────────────────────────────────────────────
-describe('ProjectWorkspace — agent/output type cross checks', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 4. Cross-contamination: mermaid output on uxMockups â†’ no Diagrams tab
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('ProjectWorkspace â€” agent/output type cross checks', () => {
   it('uxMockups with mermaid-only output does NOT show Preview or Diagrams tab', async () => {
     currentProject = makeProject('uxMockups', MERMAID_OUTPUT);
     render(<ProjectWorkspace projectId="proj-tab-test" onBack={noop} />);
@@ -438,10 +453,10 @@ describe('ProjectWorkspace — agent/output type cross checks', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // 5. Tab state resets when switching agents
-// ─────────────────────────────────────────────────────────────────
-describe('ProjectWorkspace — tab state resets on agent change', () => {
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+describe('ProjectWorkspace â€” tab state resets on agent change', () => {
   it('navigating from uxMockups Preview to another agent resets to Spec view', async () => {
     // Create a project with two complete agents
     const proj = makeProject('uxMockups', HTML_OUTPUT);
@@ -471,3 +486,7 @@ describe('ProjectWorkspace — tab state resets on agent change', () => {
     expect(screen.queryByTestId('mockup-preview')).not.toBeInTheDocument();
   });
 });
+
+
+
+

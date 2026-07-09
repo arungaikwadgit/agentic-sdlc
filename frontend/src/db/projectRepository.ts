@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Project repository.
  *
  * Core project data is backend-owned and persisted in Postgres through the
@@ -11,8 +11,11 @@ import type { AgentId, AgentRun } from '@/types/agent.types';
 import type { ProjectDocument } from '@/types/extraction.types';
 import { TOTAL_AGENTS } from '@/agents/constants';
 import { supabase } from '@/lib/supabase';
+import { ADMIN_BYPASS_ENABLED, isAdminMode } from '@/lib/adminMode';
 import { getInviteSession } from '@/services/inviteSession';
-import { getAuthHeader, getProxyToken } from '@/services/api';
+import { getAuthHeader } from '@/services/api';
+
+const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
 
 function getApiBase(raw: string | undefined): string {
   const base = (raw ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -46,7 +49,7 @@ const PROJECT_REPOSITORY_EVENT = 'sdlc:project-repository-change';
  * `Project` (whatever the caller just wrote/read). Passing it lets
  * subscribers that only care about *this* project (e.g. useProject.ts)
  * apply it directly instead of issuing another GET to re-fetch data the
- * caller already has in hand — see useProject.ts for the consuming side.
+ * caller already has in hand â€” see useProject.ts for the consuming side.
  * Callers that don't have a fresh object (delete/restore/import) simply
  * omit it; subscribers fall back to their own refetch in that case.
  */
@@ -69,14 +72,19 @@ export function subscribeProjectRepositoryChange(
 
 async function authHeaders(): Promise<Record<string, string>> {
   const headers = await getAuthHeader();
-  if (!headers.Authorization && !headers['X-API-Token']) {
-    const proxyToken = getProxyToken();
-    if (proxyToken) {
-      return { 'Content-Type': 'application/json', 'X-API-Token': proxyToken };
-    }
-    throw new Error('Not authenticated');
+  if (headers.Authorization) return { 'Content-Type': 'application/json', ...headers };
+
+  // Project CRUD and project-permission routes are user-scoped and must never
+  // silently fall back to X-API-Token. The local admin bypass is the one
+  // valid non-Supabase path in dev mode, so make that explicit here.
+  if (ADMIN_BYPASS_ENABLED && isAdminMode()) {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ADMIN_BYPASS_BEARER}`,
+    };
   }
-  return { 'Content-Type': 'application/json', ...headers };
+
+  throw new Error('Not authenticated');
 }
 
 function hasInviteSession(): boolean {
@@ -357,6 +365,8 @@ export async function restoreProject(id: string): Promise<void> {
  */
 export async function checkIsAppAdmin(): Promise<boolean> {
   try {
+    const { isAdminMode } = await import('@/lib/adminMode');
+    if (isAdminMode()) return true;
     const result = await apiFetch<{ isAppAdmin: boolean }>('/api/projects/permissions/me');
     return !!result?.isAppAdmin;
   } catch {
@@ -465,3 +475,4 @@ export async function deleteProjectDocuments(projectId: string): Promise<void> {
     project.contextDocuments = [];
   });
 }
+

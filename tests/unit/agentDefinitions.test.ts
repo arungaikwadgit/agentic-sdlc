@@ -16,13 +16,13 @@ const MOCK_CTX: AgentPromptContext = {
   ],
 };
 
-// All agent IDs declared across all phases (30 agents, 11 phases including
+// All agent IDs declared across all phases (30 agents, 15 dependency-tiered phases including
 // phase0/SDLC Orchestrator, phase1b, and phase3b)
 const ALL_AGENT_IDS: AgentId[] = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
 
 describe('PHASE_ORDER and PHASE_AGENTS', () => {
-  it('PHASE_ORDER has 11 phases', () => {
-    expect(PHASE_ORDER.length).toBe(11);
+  it('PHASE_ORDER has 15 dependency-tiered phases', () => {
+    expect(PHASE_ORDER.length).toBe(15);
   });
 
   it('starts with phase0 (SDLC Orchestrator)', () => {
@@ -61,7 +61,7 @@ describe('AGENT_DEFINITIONS registry completeness', () => {
     }
   });
 
-  it('has exactly 30 entries — no extra definitions', () => {
+  it('has exactly 30 entries â€” no extra definitions', () => {
     expect(Object.keys(AGENT_DEFINITIONS)).toHaveLength(30);
   });
 
@@ -90,7 +90,7 @@ describe('AGENT_DEFINITIONS registry completeness', () => {
   });
 });
 
-describe('AGENT_DEFINITIONS — buildUserPrompt output', () => {
+describe('AGENT_DEFINITIONS â€” buildUserPrompt output', () => {
   it('every buildUserPrompt produces a non-empty string', () => {
     for (const [id, def] of Object.entries(AGENT_DEFINITIONS)) {
       const prompt = def.buildUserPrompt(MOCK_CTX);

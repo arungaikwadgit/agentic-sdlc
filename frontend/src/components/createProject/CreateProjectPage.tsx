@@ -10,11 +10,11 @@
  * Service layer used:
  *   documentExtractor.ts  — client-side text extraction (PDF / DOCX / TXT)
  *   projectContextAgent.ts — L3 extraction agent + conversational review
- *   projectRepository.ts  — createProject, addProjectDocument
+ *   projectRepository.ts  — createProject
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { createProject, addProjectDocument } from '@/db/projectRepository';
+import { createProject } from '@/db/projectRepository';
 import { inferDocType, extractText } from '@/services/documentExtractor';
 import {
   runProjectContextExtraction,
@@ -361,28 +361,22 @@ export default function CreateProjectPage({ onClose, onCreated }: Props) {
         extractionPackage: finalPkg,
         creationApproval: approvalRecord,
         sourceDocumentIds: files.filter((f) => f.status === 'ready').map((f) => f.id),
+        contextDocuments: files
+          .filter((f) => f.status === 'ready')
+          .map((f) => ({
+            id: f.id,
+            name: f.name,
+            sizeKb: Math.max(1, Math.round(f.size / 1024)),
+            kind: f.type === 'pdf' ? 'pdf'
+              : f.type === 'xlsx' || f.type === 'csv' ? 'spreadsheet'
+              : f.type === 'docx' ? 'document'
+              : 'text',
+            content: f.extractedText,
+          })),
       });
 
-      // Persist document records into the backend-backed project record
-      await Promise.all(
-        files
-          .filter((f) => f.status === 'ready')
-          .map((f) =>
-            addProjectDocument({
-              id: f.id,
-              projectId: project.id,
-              fileName: f.name,
-              fileType: f.type,
-              fileSize: f.size,
-              mimeType: f.file.type,
-              extractedText: f.extractedText,
-              charCount: f.charCount,
-              uploadedAt: Date.now(),
-              documentType: finalPkg.documentClassifications.find((dc) => dc.name === f.name)?.type,
-              classificationConfidence: finalPkg.documentClassifications.find((dc) => dc.name === f.name)?.confidence,
-            })
-          )
-      );
+      // Persist uploaded document metadata in the initial project write to
+      // avoid leaving a half-created project when a second persistence step fails.
 
       onCreated(project.id);
     } catch (err) {

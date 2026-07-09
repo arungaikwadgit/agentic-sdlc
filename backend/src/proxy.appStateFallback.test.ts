@@ -11,6 +11,9 @@ describe('proxy app-state fallback', () => {
       SUPABASE_ANON_KEY: '',
       SUPABASE_SERVICE_KEY: '',
       POSTGRES_URL: '',
+      POSTGRES_URL_LOCAL: '',
+      POSTGRES_URL_PRODUCTION: '',
+      SERVER_API_URL: '',
       NODE_ENV: 'test',
     };
   });
@@ -37,7 +40,7 @@ describe('proxy app-state fallback', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
-  });
+  }, 10_000);
 
   it('serves the project permissions endpoint locally when the server backend is unavailable', async () => {
     const { app } = require('./proxy');

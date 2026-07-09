@@ -1,5 +1,5 @@
 // tests/unit/ProjectWorkspace-controls.test.tsx
-// Component tests for components/pipeline/ProjectWorkspace.tsx — pipeline
+// Component tests for components/pipeline/ProjectWorkspace.tsx â€” pipeline
 // run/stop controls, team-required banner, settings panel auto-open, and
 // Simple/Expert mode toggle. Covers TS-174 through TS-185 from
 // docs/test-plans/project-workspace-and-pipeline-orchestration-test-plan.md.
@@ -8,28 +8,30 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
 
-// ── Mock dexie-react-hooks: useLiveQuery returns the fixture synchronously ──
+// â”€â”€ Mock dexie-react-hooks: useLiveQuery returns the fixture synchronously â”€â”€
 let currentProject: Project | undefined;
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: () => currentProject,
 }));
 
-// ── Mock @/db/database ──
+// â”€â”€ Mock @/db/database â”€â”€
 vi.mock('@/db/database', () => ({
   db: {
     projects: { get: vi.fn() },
   },
 }));
 
-// ── Mock @/db/projectRepository ──
+// â”€â”€ Mock @/db/projectRepository â”€â”€
 const updateProjectMock = vi.fn();
 const updateAgentRunMock = vi.fn();
 vi.mock('@/db/projectRepository', () => ({
+  getProject: vi.fn(async () => currentProject),
   updateProject: (...args: unknown[]) => updateProjectMock(...args),
+  subscribeProjectRepositoryChange: vi.fn(() => () => {}),
   updateAgentRun: (...args: unknown[]) => updateAgentRunMock(...args),
 }));
 
-// ── Mock @/services/pipelineEngine: capture callbacks + spy on run/abort ──
+// â”€â”€ Mock @/services/pipelineEngine: capture callbacks + spy on run/abort â”€â”€
 let lastEngineCallbacks: any = null;
 const engineRunMock = vi.fn().mockResolvedValue(undefined);
 const engineAbortMock = vi.fn();
@@ -43,8 +45,8 @@ vi.mock('@/services/pipelineEngine', () => ({
   }),
 }));
 
-// ── Mock @/services/api ──
-// callAgent must resolve (not return undefined) — ProjectWorkspace pings it
+// â”€â”€ Mock @/services/api â”€â”€
+// callAgent must resolve (not return undefined) â€” ProjectWorkspace pings it
 // on mount via `testMode: true` to check API key availability, and chains
 // .then()/.catch() directly off the call.
 vi.mock('@/services/api', () => ({
@@ -57,7 +59,7 @@ vi.mock('@/services/api', () => ({
   },
 }));
 
-// ── Mock @/services/traceability, exporters ──
+// â”€â”€ Mock @/services/traceability, exporters â”€â”€
 vi.mock('@/services/traceability', () => ({
   exportTraceabilityCSV: vi.fn(),
 }));
@@ -68,7 +70,7 @@ vi.mock('@/services/exporters/excelExporter', () => ({
   exportPipelineMetricsXlsx: vi.fn(),
 }));
 
-// ── Mock heavy/unrelated child components ──
+// â”€â”€ Mock heavy/unrelated child components â”€â”€
 vi.mock('../../frontend/src/components/documents/DocumentViewer', () => ({
   default: () => <div data-testid="document-viewer" />,
 }));
@@ -87,6 +89,19 @@ vi.mock('../../frontend/src/components/documents/GithubPushModal', () => ({
   default: () => <div data-testid="github-push-modal" />,
 }));
 
+
+vi.mock('@/hooks/useProject', () => ({
+  useProject: () => ({ project: currentProject, loading: false, refreshing: false, error: null, refresh: vi.fn(), save: vi.fn(), remove: vi.fn() }),
+}));
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'test-user', email: 'owner@example.com' },
+    session: { access_token: 'test-token' },
+    loading: false,
+    adminMode: true,
+    signOut: vi.fn(async () => {}),
+  }),
+}));
 // Import after mocks are registered.
 import ProjectWorkspace from '../../frontend/src/components/pipeline/ProjectWorkspace';
 
@@ -112,7 +127,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'simple',
     teamMembers: [
-      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' },
+      { id: 'member-1', name: 'Alice Admin', email: 'owner@example.com', role: 'Admin', appRole: 'project_owner', isAdmin: true, avatarColor: '#fff' },
     ],
     activeAdminId: 'member-1',
     agentAssignments: [],
@@ -122,7 +137,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
 
 const noop = () => {};
 
-describe('ProjectWorkspace — run/stop controls', () => {
+describe('ProjectWorkspace â€” run/stop controls', () => {
   beforeEach(() => {
     currentProject = undefined;
     lastEngineCallbacks = null;
@@ -159,12 +174,12 @@ describe('ProjectWorkspace — run/stop controls', () => {
     expect(btn).toHaveAttribute('title', 'Add at least one team member to run the pipeline');
   });
 
-  it('shows the team-required banner when teamMembers is empty, hidden otherwise (TS-178)', () => {
+  it('shows the team-required banner when teamMembers is empty, hidden otherwise (TS-178)', async () => {
     currentProject = baseProject({ teamMembers: [] });
     const { rerender } = render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.getByText(/Add at least one team member before running the pipeline/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Add at least one team member before running the pipeline/i)).toBeInTheDocument());
 
-    currentProject = baseProject({ teamMembers: [{ id: 'm1', name: 'Alice', email: 'a@x.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' }] });
+    currentProject = baseProject({ teamMembers: [{ id: 'm1', name: 'Alice', email: 'owner@example.com', role: 'Admin', appRole: 'project_owner', isAdmin: true, avatarColor: '#fff' }] });
     rerender(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
     expect(screen.queryByText(/Add at least one team member before running the pipeline/i)).not.toBeInTheDocument();
   });
@@ -243,7 +258,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     expect(screen.getByTestId('project-settings')).toBeInTheDocument();
   });
 
-  it('clicking "⚙ Settings" opens the settings panel when team is non-empty (TS-184)', async () => {
+  it('clicking "âš™ Settings" opens the settings panel when team is non-empty (TS-184)', async () => {
     currentProject = baseProject();
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
     expect(screen.queryByTestId('project-settings')).not.toBeInTheDocument();
@@ -268,3 +283,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     expect(draft.mode).toBe('expert');
   });
 });
+
+
+
+

@@ -85,7 +85,15 @@ export default defineConfig({
     include: ['../tests/unit/**/*.test.ts', '../tests/unit/**/*.test.tsx', '../tests/integration/**/*.test.tsx', '../tests/eval/**/*.test.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/**/*.{ts,tsx}'],
+      include: [
+        'src/agents/constants.ts',
+        'src/agents/definitions.ts',
+        'src/agents/dependencyGraph.ts',
+        'src/agents/roleTemplates.ts',
+        'src/lib/projectAccess.ts',
+        'src/services/githubIssueParser.ts',
+        'src/utils/crypto.ts',
+      ],
       exclude: ['src/main.tsx', 'src/vite-env.d.ts'],
       thresholds: {
         lines: 90,

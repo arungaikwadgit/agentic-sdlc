@@ -1,6 +1,6 @@
-/**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+﻿/**
+ * Â© 2026 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential â€” Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
 import {
@@ -44,6 +44,7 @@ export default function Dashboard({ onOpenProject }: Props) {
   const [showWizard, setShowWizard] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [detailsProjectId, setDetailsProjectId] = useState<string | null>(null);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
@@ -72,6 +73,7 @@ export default function Dashboard({ onOpenProject }: Props) {
   useEffect(() => {
     const inviteSession = getInviteSession();
     if (authLoading || (!user && !inviteSession)) {
+      setLoadError(null);
       setAllProjects(undefined);
       return;
     }
@@ -87,9 +89,16 @@ export default function Dashboard({ onOpenProject }: Props) {
             projects = await listVisibleProjects();
           }
         }
-        if (active) setAllProjects(projects);
-      } catch {
-        if (active) setAllProjects([]);
+        if (active) {
+          setLoadError(null);
+          setAllProjects(projects);
+        }
+      } catch (error) {
+        if (active) {
+          const message = error instanceof Error ? error.message : String(error);
+          setLoadError(message || 'Could not load your projects.');
+          setAllProjects([]);
+        }
       }
     }
     loadProjects();
@@ -143,7 +152,7 @@ export default function Dashboard({ onOpenProject }: Props) {
           {userEmail && (
             <span
               className={styles.userBadge}
-              title={`Viewing as ${userEmail} — click to switch`}
+              title={`Viewing as ${userEmail} â€” click to switch`}
               onClick={() => setConfirmSwitchUser(true)}
               role="button"
               tabIndex={0}
@@ -181,6 +190,17 @@ export default function Dashboard({ onOpenProject }: Props) {
       </header>
 
       <main className={styles.main}>
+        {loadError && (
+          <div className={styles.errorBanner} role="alert">
+            <div>
+              <strong>Could not load projects.</strong>
+              <div className={styles.errorBannerText}>{loadError}</div>
+            </div>
+            <button className="btn-secondary" onClick={() => window.location.reload()}>
+              Retry
+            </button>
+          </div>
+        )}
         {isLoading ? (
           <LoadingSkeleton />
         ) : showArchived && projects.length === 0 ? (
@@ -188,7 +208,7 @@ export default function Dashboard({ onOpenProject }: Props) {
             <p>No archived projects.</p>
           </div>
         ) : projects.length === 0 ? (
-          <EmptyState onNew={() => setShowWizard(true)} />
+          loadError ? null : <EmptyState onNew={() => setShowWizard(true)} />
         ) : (
           <div className={styles.grid}>
             {projects.map((p) => (
@@ -306,3 +326,5 @@ function EmptyState({ onNew }: { onNew: () => void }) {
     </div>
   );
 }
+
+

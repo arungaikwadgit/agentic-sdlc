@@ -87,4 +87,19 @@ describe('sanitizeHtml', () => {
     expect(out).not.toContain('<script>');
     expect(out).toContain('safe');
   });
+
+  it('strips javascript and data URLs from allowed links', () => {
+    const html = '<a href="javascript:alert(1)">bad</a><a href="data:text/html,evil">data</a><a href="https://example.com">safe</a>';
+    const out = sanitizeHtml(html);
+    expect(out).not.toContain('javascript:');
+    expect(out).not.toContain('data:text/html');
+    expect(out).toContain('https://example.com');
+  });
+
+  it('removes base tags that could rewrite relative links', () => {
+    const html = '<base href="https://attacker.example/"><p>safe</p>';
+    const out = sanitizeHtml(html);
+    expect(out).not.toContain('<base');
+    expect(out).toContain('safe');
+  });
 });
