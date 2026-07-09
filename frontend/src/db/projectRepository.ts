@@ -41,16 +41,27 @@ export function buildApiUrl(path: string): string {
 
 const PROJECT_REPOSITORY_EVENT = 'sdlc:project-repository-change';
 
-function emitProjectRepositoryChange(projectId?: string): void {
+/**
+ * Emits a change event, optionally carrying the already-fetched fresh
+ * `Project` (whatever the caller just wrote/read). Passing it lets
+ * subscribers that only care about *this* project (e.g. useProject.ts)
+ * apply it directly instead of issuing another GET to re-fetch data the
+ * caller already has in hand — see useProject.ts for the consuming side.
+ * Callers that don't have a fresh object (delete/restore/import) simply
+ * omit it; subscribers fall back to their own refetch in that case.
+ */
+function emitProjectRepositoryChange(projectId?: string, project?: Project): void {
   if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent(PROJECT_REPOSITORY_EVENT, { detail: { projectId } }));
+  window.dispatchEvent(new CustomEvent(PROJECT_REPOSITORY_EVENT, { detail: { projectId, project } }));
 }
 
-export function subscribeProjectRepositoryChange(listener: (projectId?: string) => void): () => void {
+export function subscribeProjectRepositoryChange(
+  listener: (projectId?: string, project?: Project) => void
+): () => void {
   if (typeof window === 'undefined') return () => {};
   const handler = (event: Event) => {
-    const custom = event as CustomEvent<{ projectId?: string }>;
-    listener(custom.detail?.projectId);
+    const custom = event as CustomEvent<{ projectId?: string; project?: Project }>;
+    listener(custom.detail?.projectId, custom.detail?.project);
   };
   window.addEventListener(PROJECT_REPOSITORY_EVENT, handler as EventListener);
   return () => window.removeEventListener(PROJECT_REPOSITORY_EVENT, handler as EventListener);
@@ -294,7 +305,7 @@ export async function updateProject(
     body: JSON.stringify(projectToPayload(updated)),
   });
   const project = rowToProject(row);
-  emitProjectRepositoryChange(project.id);
+  emitProjectRepositoryChange(project.id, project);
   return project;
 }
 

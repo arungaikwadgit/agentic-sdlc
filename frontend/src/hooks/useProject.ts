@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -52,7 +52,21 @@ export function useProject(projectId: string) {
     hasLoadedOnce.current = false;
     setProject(undefined);
     refresh();
-    return subscribeProjectRepositoryChange((changedProjectId) => {
+    return subscribeProjectRepositoryChange((changedProjectId, changedProject) => {
+      if (changedProjectId === projectId && changedProject) {
+        // The writer (updateProject/updateAgentRun) already has the fresh
+        // object — apply it directly instead of firing another GET for
+        // data we already received. This is the common case during a
+        // pipeline run: every agent-run status write would otherwise
+        // trigger a redundant re-fetch of the whole project on top of the
+        // read-then-write GET that updateProject already does internally.
+        setProject(changedProject);
+        hasLoadedOnce.current = true;
+        setError(null);
+        return;
+      }
+      // No payload (delete/restore/import) or a cross-project/global
+      // change (changedProjectId undefined) — fall back to a real refetch.
       if (!changedProjectId || changedProjectId === projectId) {
         refresh();
       }
