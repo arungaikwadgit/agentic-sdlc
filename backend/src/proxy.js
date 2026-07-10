@@ -109,24 +109,18 @@ function getSupabaseAdmin() {
   }
 }
 
-// Ambiguity-free alphabet — excludes 0/O/1/l/i so a spoken or handwritten
-// password can't be misread.
-const PASSWORD_SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-function randomPasswordSuffix(length = 3) {
-  let out = '';
-  for (let i = 0; i < length; i++) {
-    out += PASSWORD_SUFFIX_ALPHABET[Math.floor(Math.random() * PASSWORD_SUFFIX_ALPHABET.length)];
-  }
-  return out;
-}
-
-// Format: firstname_ddmmyy + a 3-char random suffix, e.g. "jane_090726a4c".
+// Format: firstname_ddmmyyyy (4-digit year), e.g. "jane_09072026". Kept
+// simple with no random suffix on purpose — easier to read out loud or hand
+// over directly when email delivery isn't available. NOTE: this makes the
+// password fully guessable by anyone who knows the invitee's first name and
+// the invite date — invitees are forced to change it on first sign-in
+// (must_change_password), which is the real control here.
 function generateDefaultPassword(name, date = new Date()) {
   const firstName = String(name ?? 'user').trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
   const dd = String(date.getDate()).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yy = String(date.getFullYear()).slice(-2);
-  return `${firstName}_${dd}${mm}${yy}${randomPasswordSuffix()}`;
+  const yyyy = String(date.getFullYear());
+  return `${firstName}_${dd}${mm}${yyyy}`;
 }
 
 // supabase-js@^2.45.0 (pinned in backend/package.json) has no getUserByEmail()

@@ -2,7 +2,7 @@
 //
 // Unit tests for the default-password account-provisioning helpers added to
 // proxy.js for the invite/send + admin-triggered reset-password flow:
-//   - generateDefaultPassword: firstname_ddmmyy + random suffix format
+//   - generateDefaultPassword: firstname_ddmmyyyy format (no suffix)
 //   - getSupabaseAdmin: lazy singleton, null when unconfigured
 //   - findSupabaseUserByEmail: paginated listUsers() scan
 //   - provisionInviteeAccount: create-or-update Supabase Auth user
@@ -25,11 +25,11 @@ describe('invite default-password provisioning', () => {
   });
 
   describe('generateDefaultPassword', () => {
-    it('formats as firstname_ddmmyy followed by a 3-character suffix', () => {
+    it('formats as firstname_ddmmyyyy (4-digit year), no suffix', () => {
       const { generateDefaultPassword } = require('./proxy');
       const date = new Date(2026, 6, 9); // July 9, 2026 (month is 0-indexed)
       const password = generateDefaultPassword('Jane Doe', date);
-      expect(password).toMatch(/^jane_090726[abcdefghjkmnpqrstuvwxyz23456789]{3}$/);
+      expect(password).toBe('jane_09072026');
     });
 
     it('uses only the first name when given a full name', () => {
@@ -54,23 +54,15 @@ describe('invite default-password provisioning', () => {
       expect(generateDefaultPassword('   ', date).startsWith('user_')).toBe(true);
     });
 
-    it('produces a different random suffix across calls', () => {
+    it('is deterministic — same name and date always produce the same password', () => {
       const { generateDefaultPassword } = require('./proxy');
       const date = new Date(2026, 0, 1);
-      const suffixes = new Set(
-        Array.from({ length: 20 }, () => generateDefaultPassword('sam', date).slice(-3))
+      const passwords = new Set(
+        Array.from({ length: 20 }, () => generateDefaultPassword('sam', date))
       );
-      // Extremely unlikely all 20 collide if the suffix is genuinely random.
-      expect(suffixes.size).toBeGreaterThan(1);
-    });
-
-    it('never includes visually ambiguous characters (0, O, 1, l, i) in the suffix', () => {
-      const { generateDefaultPassword } = require('./proxy');
-      const date = new Date(2026, 0, 1);
-      for (let i = 0; i < 30; i++) {
-        const suffix = generateDefaultPassword('sam', date).slice(-3);
-        expect(suffix).not.toMatch(/[0O1li]/);
-      }
+      // No random suffix anymore — every call with the same inputs must match.
+      expect(passwords.size).toBe(1);
+      expect([...passwords][0]).toBe('sam_01012026');
     });
   });
 
@@ -174,7 +166,7 @@ describe('invite default-password provisioning', () => {
 
       expect(result.created).toBe(true);
       expect(result.userId).toBe('new-user-id');
-      expect(result.password).toMatch(/^jane_090726/);
+      expect(result.password).toBe('jane_09072026');
       expect(createUser).toHaveBeenCalledWith(expect.objectContaining({
         email: 'jane@example.com',
         email_confirm: true,

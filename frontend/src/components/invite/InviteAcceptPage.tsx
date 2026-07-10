@@ -228,7 +228,7 @@ export default function InviteAcceptPage() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="e.g. jane_080726a4c"
+                placeholder="e.g. jane_08072026"
                 autoFocus
                 disabled={state.status === 'submitting'}
               />
