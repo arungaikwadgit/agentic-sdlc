@@ -1061,21 +1061,33 @@ export default function ProjectSettings({
                   </p>
                   <div className={styles.addForm}>
                     <div className={styles.addRow}>
-                      <input placeholder="Full name *" value={newName} onChange={(e) => setNewName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addMemberWithoutInvite()} disabled={!canAddMember} />
-                      <input placeholder="Email *" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addMemberWithoutInvite()} disabled={!canAddMember} />
+                      <label className={styles.addFieldLabel}>
+                        <span>Full name *</span>
+                        <input placeholder="e.g. Jane Doe" value={newName} onChange={(e) => setNewName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addMemberWithoutInvite()} disabled={!canAddMember} />
+                      </label>
+                      <label className={styles.addFieldLabel}>
+                        <span>Email *</span>
+                        <input placeholder="e.g. jane@company.com" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addMemberWithoutInvite()} disabled={!canAddMember} />
+                      </label>
                     </div>
                     <div className={styles.addRow}>
-                      <select value={newRole} onChange={(e) => setNewRole(e.target.value)} className={styles.roleSelect} disabled={!canAddMember}>
-                        <option value="">Select role *</option>
-                        {visibleRoleTemplates.map((r) => (
-                          <option key={r.id} value={r.title}>{r.title}</option>
-                        ))}
-                        <option value="__custom__">Custom role...</option>
-                      </select>
+                      <label className={styles.addFieldLabel}>
+                        <span>Role *</span>
+                        <select value={newRole} onChange={(e) => setNewRole(e.target.value)} className={styles.roleSelect} disabled={!canAddMember}>
+                          <option value="">Select role *</option>
+                          {visibleRoleTemplates.map((r) => (
+                            <option key={r.id} value={r.title}>{r.title}</option>
+                          ))}
+                          <option value="__custom__">Custom role...</option>
+                        </select>
+                      </label>
                       {newRole === '__custom__' ? (
-                        <input placeholder="Enter custom role *" value={newRoleCustom} onChange={(e) => setNewRoleCustom(e.target.value)} disabled={!canAddMember} />
+                        <label className={styles.addFieldLabel}>
+                          <span>Custom role *</span>
+                          <input placeholder="e.g. QA Lead" value={newRoleCustom} onChange={(e) => setNewRoleCustom(e.target.value)} disabled={!canAddMember} />
+                        </label>
                       ) : (
                         <div className={styles.rolePreview}>
                           {newRole

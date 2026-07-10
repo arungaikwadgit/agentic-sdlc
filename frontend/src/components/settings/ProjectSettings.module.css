@@ -398,6 +398,19 @@
   cursor: not-allowed;
 }
 
+.addFieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.addFieldLabel > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .rolePreview {
   display: flex;
   align-items: center;
