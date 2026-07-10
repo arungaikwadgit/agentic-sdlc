@@ -1351,6 +1351,17 @@ export default function ProjectSettings({
                                       Email wasn't sent — share this password with them directly.
                                     </p>
                                   )}
+                                  {inviteLink.password && (
+                                    <button
+                                      className={styles.actionBtn}
+                                      style={{ marginTop: 6, fontSize: 12 }}
+                                      onClick={() => navigator.clipboard.writeText(
+                                        `You're invited to join ${project.name}. Sign in here: ${inviteLink.link}\nTemporary password: ${inviteLink.password}`
+                                      )}
+                                    >
+                                      📋 Copy invite message (link + password)
+                                    </button>
+                                  )}
                                   <button
                                     className={styles.dismissLink}
                                     onClick={() => { setInviteLink(null); setInviteError(null); }}
