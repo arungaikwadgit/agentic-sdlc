@@ -6,7 +6,7 @@
  * InviteAcceptPage — handles /invite?token=<hex> URLs.
  *
  * Flow:
- *  1. Fetch invite info from GET /api/invite/validate (no auth needed)
+ *  1. Fetch invite info from GET /api/invites/:token (no auth needed)
  *  2. Show a form with the invited email pre-filled and read-only, and a
  *     password field. "Verify My Email" calls supabase.auth.signUp() with
  *     emailRedirectTo pointed back at this exact invite URL. Supabase's
@@ -27,7 +27,7 @@
  *     reload after clicking the link). If found, we skip straight to the
  *     "verified" screen. Until then, the team member stays 'pending' —
  *     nothing marks them 'accepted' before this confirmation happens.
- *  5. A final "Sign In & Join Project" click calls POST /api/invite/accept
+ *  5. A final "Sign In & Join Project" click calls POST /api/invites/:token/accept
  *     (which independently re-verifies the confirmed email server-side)
  *     to activate access scoped to exactly this one project.
  *  6. If the email already belongs to a confirmed account (e.g. invited to
@@ -39,8 +39,6 @@
 import { useEffect, useState } from 'react';
 import styles from './InviteAcceptPage.module.css';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { setInviteSession } from '@/services/inviteSession';
-import { getProject } from '@/db/projectRepository';
 import AppLogo from '@/components/common/AppLogo';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined ?? 'http://localhost:3001').replace(/\/$/, '');
@@ -167,7 +165,7 @@ export default function InviteAcceptPage() {
       });
       return;
     }
-    fetch(`${API_URL}/invite/validate?token=${encodeURIComponent(token)}`)
+    fetch(`${API_URL}/api/invites/${encodeURIComponent(token)}`)
       .then((r) => r.json())
       .then(async (data) => {
         if (data.error) {
@@ -194,13 +192,12 @@ export default function InviteAcceptPage() {
         return;
       }
 
-      const res = await fetch(`${API_URL}/invite/accept`, {
+      const res = await fetch(`${API_URL}/api/invites/${encodeURIComponent(token)}/accept`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
-        body: JSON.stringify({ token }),
       });
 
       const result = await res.json();
@@ -208,19 +205,6 @@ export default function InviteAcceptPage() {
         setState({ status: 'error', message: result.error });
         return;
       }
-
-      setInviteSession({
-        token: result.accessToken ?? token,
-        projectId: result.projectId,
-        email: (result.email ?? invite.invitedEmail ?? '').toLowerCase(),
-        appRole: result.appRole,
-        name: result.name,
-        expiresAt: typeof result.expiresAt === 'string'
-          ? Date.parse(result.expiresAt)
-          : (typeof result.expiresAt === 'number' ? result.expiresAt : undefined),
-      });
-
-      await getProject(result.projectId).catch(() => undefined);
 
       setState({ status: 'done', projectId: result.projectId, projectName: invite.project.name });
     } catch {
