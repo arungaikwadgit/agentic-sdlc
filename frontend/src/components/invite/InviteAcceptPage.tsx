@@ -106,7 +106,7 @@ export default function InviteAcceptPage() {
       });
       return;
     }
-    fetch(buildApiUrl(`/api/invites/${encodeURIComponent(token)}`))
+    fetch(buildApiUrl(`/api/invite/validate?token=${encodeURIComponent(token)}`))
       .then((r) => r.json())
       .then((data) => {
         if (data.error) {
@@ -128,12 +128,13 @@ export default function InviteAcceptPage() {
         return;
       }
 
-      const res = await fetch(buildApiUrl(`/api/invites/${encodeURIComponent(token)}/accept`), {
+      const res = await fetch(buildApiUrl('/api/invite/accept'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${jwt}`,
         },
+        body: JSON.stringify({ token }),
       });
 
       const result = await res.json();
