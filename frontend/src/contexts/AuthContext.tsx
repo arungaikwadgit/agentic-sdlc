@@ -58,6 +58,14 @@ interface AuthContextValue {
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
+  /**
+   * Self-service "forgot password" — sends Supabase's own reset email with
+   * a redirect back to /reset-password (see ResetPasswordPage.tsx and
+   * lib/resetPasswordRoute.ts). Distinct from the admin-triggered reset
+   * (POST /api/invite/reset-password in backend/src/proxy.js), which
+   * generates and emails a new default password directly.
+   */
+  sendPasswordReset: (email: string) => Promise<{ error: AuthError | null }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -181,6 +189,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: null };
   }, []);
 
+  const sendPasswordReset = useCallback(async (email: string) => {
+    const redirectTo = `${window.location.origin}/reset-password`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    console.log(`[auth] sendPasswordReset(${email}) -> ${error ? `error: ${error.message}` : 'sent (or silently no-op if no account exists — Supabase does not disclose which)'}`);
+    return { error };
+  }, []);
+
   const signOut = useCallback(async () => {
     try {
       const { clearInviteSession } = await import('@/services/inviteSession');
@@ -202,7 +217,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [adminMode]);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, adminMode, isAppAdmin, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, adminMode, isAppAdmin, signUp, signIn, signOut, sendPasswordReset }}>
       {children}
     </AuthContext.Provider>
   );

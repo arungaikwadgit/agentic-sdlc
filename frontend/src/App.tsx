@@ -12,14 +12,16 @@ import ProjectWorkspace from './components/pipeline/ProjectWorkspace';
 import ResumeModal from './components/common/ResumeModal';
 import ChatWidget from './chatbot/ChatWidget';
 import InviteAcceptPage from './components/invite/InviteAcceptPage';
+import ResetPasswordPage from './components/auth/ResetPasswordPage';
 import AdminPanel from './components/admin/AdminPanel';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { isAdminMode } from './lib/adminMode';
 import { isInviteRoute } from './lib/inviteRoute';
+import { isResetPasswordRoute } from './lib/resetPasswordRoute';
 import { initializeMasterDataCatalog } from './services/masterDataCatalog';
 import { useAuth } from '@/contexts/AuthContext';
 
-export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' };
+export type View = { page: 'dashboard' } | { page: 'project'; projectId: string } | { page: 'invite' } | { page: 'reset-password' };
 
 /** Apply a default theme to <html data-theme="..."> on startup. */
 function useThemeInit() {
@@ -31,6 +33,9 @@ function useThemeInit() {
 function detectInitialView(): View {
   if (isInviteRoute()) {
     return { page: 'invite' };
+  }
+  if (isResetPasswordRoute()) {
+    return { page: 'reset-password' };
   }
   const projectId = new URLSearchParams(window.location.search).get('project');
   if (projectId) {
@@ -139,6 +144,8 @@ export default function App() {
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {view.page === 'invite' && <InviteAcceptPage />}
+
+      {view.page === 'reset-password' && <ResetPasswordPage />}
 
       {view.page === 'project' && (
         <ErrorBoundary>

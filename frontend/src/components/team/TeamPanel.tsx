@@ -54,7 +54,8 @@ export default function TeamPanel({ project, onClose }: Props) {
   const [appRole, setAppRole]     = useState<AppRole>('viewer');
   const [addError, setAddError]   = useState('');
   const [sending, setSending]     = useState<string | null>(null); // member id being actioned
-  const [inviteLink, setInviteLink] = useState<{ memberId: string; link: string; emailSent?: boolean } | null>(null);
+  const [inviteLink, setInviteLink] = useState<{ memberId: string; link: string; password?: string; emailSent?: boolean } | null>(null);
+  const [resetResult, setResetResult] = useState<{ memberId: string; password: string; emailSent?: boolean } | null>(null);
   const [tab, setTab]             = useState<'members' | 'assign'>('members');
 
   const members = project.teamMembers ?? [];
@@ -91,7 +92,7 @@ export default function TeamPanel({ project, onClose }: Props) {
       const data = await res.json();
       if (data.ok) {
         // Always surface the invite link so admin can copy it regardless of email status
-        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !data.dev });
+        setInviteLink({ memberId: member.id, link: data.inviteLink, password: data.password, emailSent: data.emailSent });
         // Update member invite token in local project
         await updateProject(project.id, (p) => {
           const m = p.teamMembers.find((x) => x.id === member.id);
@@ -130,6 +131,37 @@ export default function TeamPanel({ project, onClose }: Props) {
       setSending(null);
     }
   }, [project.id]);
+
+  const resetPassword = useCallback(async (member: TeamMember) => {
+    if (!window.confirm(`Reset ${member.name}'s password? They'll be emailed a new temporary password and asked to set their own on next sign-in.`)) {
+      return;
+    }
+    setSending(member.id);
+    setResetResult(null);
+    try {
+      const API = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+      const { getAuthHeader } = await import('@/services/api');
+      const res = await fetch(`${API}/invite/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({
+          projectId: project.id,
+          projectName: project.name,
+          email: member.email,
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setResetResult({ memberId: member.id, password: data.password, emailSent: data.emailSent });
+      } else {
+        alert('Password reset failed: ' + (data.error ?? 'Unknown error'));
+      }
+    } catch (e) {
+      alert('Password reset failed: ' + String(e));
+    } finally {
+      setSending(null);
+    }
+  }, [project.id, project.name]);
 
   async function addMember() {
     if (!name.trim()) { setAddError('Name is required'); return; }
@@ -209,18 +241,39 @@ export default function TeamPanel({ project, onClose }: Props) {
 
         {tab === 'members' && (
           <>
-            {/* Invite link banner (dev mode) */}
+            {/* Invite link banner */}
             {inviteLink && (
               <div className={styles.inviteLinkBanner}>
                 {inviteLink.emailSent
-                  ? <p>✅ <strong>Invite email sent.</strong> You can also copy the link to share directly:</p>
-                  : <p>⚠ <strong>Email not configured</strong> — copy this link and share it manually:</p>
+                  ? <p>✅ <strong>Invite email sent.</strong> You can also copy the link and password to share directly:</p>
+                  : <p>⚠ <strong>Email not configured</strong> — copy this link and password and share them manually:</p>
                 }
                 <div className={styles.linkRow}>
                   <input readOnly value={inviteLink.link} className={styles.linkInput} />
-                  <button className={styles.copyBtn} onClick={() => { navigator.clipboard.writeText(inviteLink.link); }}>Copy</button>
+                  <button className={styles.copyBtn} onClick={() => { navigator.clipboard.writeText(inviteLink.link); }}>Copy link</button>
                 </div>
+                {inviteLink.password && (
+                  <div className={styles.linkRow}>
+                    <input readOnly value={inviteLink.password} className={styles.linkInput} />
+                    <button className={styles.copyBtn} onClick={() => { navigator.clipboard.writeText(inviteLink.password!); }}>Copy password</button>
+                  </div>
+                )}
                 <button className={styles.dismissLink} onClick={() => setInviteLink(null)}>Dismiss</button>
+              </div>
+            )}
+
+            {/* Password reset result banner */}
+            {resetResult && (
+              <div className={styles.inviteLinkBanner}>
+                {resetResult.emailSent
+                  ? <p>✅ <strong>Password reset — email sent.</strong> You can also copy the new password to share directly:</p>
+                  : <p>⚠ <strong>Email not configured</strong> — copy this new password and share it manually:</p>
+                }
+                <div className={styles.linkRow}>
+                  <input readOnly value={resetResult.password} className={styles.linkInput} />
+                  <button className={styles.copyBtn} onClick={() => { navigator.clipboard.writeText(resetResult.password); }}>Copy password</button>
+                </div>
+                <button className={styles.dismissLink} onClick={() => setResetResult(null)}>Dismiss</button>
               </div>
             )}
 
@@ -329,6 +382,16 @@ export default function TeamPanel({ project, onClose }: Props) {
                             title="Revoke invite"
                           >
                             Revoke
+                          </button>
+                        )}
+                        {m.inviteStatus !== 'revoked' && (
+                          <button
+                            className={styles.actionBtn}
+                            onClick={() => resetPassword(m)}
+                            disabled={sending === m.id}
+                            title="Reset this member's password"
+                          >
+                            Reset password
                           </button>
                         )}
                         {!m.isAdmin && (

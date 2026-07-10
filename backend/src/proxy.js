@@ -85,6 +85,96 @@ async function fetchSupabaseTable(path) {
   return await response.json();
 }
 
+// ── Default-password account provisioning (invite send + admin reset) ──────
+// A team member's Supabase Auth account is created directly here (Admin API)
+// rather than via the client-side signUp()+email-confirmation flow, so the
+// invitee can sign in immediately with a generated password instead of
+// waiting on a confirmation email. must_change_password in user_metadata
+// forces a password change on first sign-in (enforced in the frontend's
+// AuthGuard) — chosen over a new DB column so this needs no migration and
+// no dependency on a redeploy before it takes effect.
+let _supabaseAdminClient = null;
+function getSupabaseAdmin() {
+  if (_supabaseAdminClient) return _supabaseAdminClient;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    _supabaseAdminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    return _supabaseAdminClient;
+  } catch (err) {
+    console.error(`getSupabaseAdmin(): createClient() threw — name=${err?.name ?? 'Unknown'} message=${err?.message ?? String(err)}`);
+    return null;
+  }
+}
+
+// Ambiguity-free alphabet — excludes 0/O/1/l/i so a spoken or handwritten
+// password can't be misread.
+const PASSWORD_SUFFIX_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+function randomPasswordSuffix(length = 3) {
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += PASSWORD_SUFFIX_ALPHABET[Math.floor(Math.random() * PASSWORD_SUFFIX_ALPHABET.length)];
+  }
+  return out;
+}
+
+// Format: firstname_ddmmyy + a 3-char random suffix, e.g. "jane_090726a4c".
+function generateDefaultPassword(name, date = new Date()) {
+  const firstName = String(name ?? 'user').trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yy = String(date.getFullYear()).slice(-2);
+  return `${firstName}_${dd}${mm}${yy}${randomPasswordSuffix()}`;
+}
+
+// supabase-js@^2.45.0 (pinned in backend/package.json) has no getUserByEmail()
+// — paginate listUsers() instead. Capped at 25 pages (5,000 users at 200/page).
+async function findSupabaseUserByEmail(admin, email) {
+  const target = String(email).trim().toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 25; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) return null;
+    const match = data.users.find((u) => (u.email ?? '').toLowerCase() === target);
+    if (match) return match;
+    if (data.users.length < perPage) return null;
+  }
+  return null;
+}
+
+// Creates (or, if the email is already registered, updates) a Supabase Auth
+// user with a fresh generated password and must_change_password: true.
+// Used by both invite/send (new accounts) and invite/reset-password
+// (existing accounts getting a new default password).
+async function provisionInviteeAccount({ email, name, actionDate }) {
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    throw Object.assign(new Error('Account provisioning is not configured on this server (missing SUPABASE_URL/SUPABASE_SERVICE_KEY).'), { code: 'ADMIN_CLIENT_UNAVAILABLE' });
+  }
+  const password = generateDefaultPassword(name, actionDate);
+  const metadata = { must_change_password: true, name: name ?? undefined };
+
+  const { data: createData, error: createError } = await admin.auth.admin.createUser({
+    email, password, email_confirm: true, user_metadata: metadata,
+  });
+  if (!createError) {
+    return { password, userId: createData?.user?.id ?? null, created: true };
+  }
+  const alreadyExists = createError.status === 422 || /already.?(registered|exists)/i.test(createError.message ?? '');
+  if (!alreadyExists) throw createError;
+
+  const existingUser = await findSupabaseUserByEmail(admin, email);
+  if (!existingUser) throw createError;
+
+  const { error: updateError } = await admin.auth.admin.updateUserById(existingUser.id, {
+    password, email_confirm: true, user_metadata: { ...(existingUser.user_metadata ?? {}), ...metadata },
+  });
+  if (updateError) throw updateError;
+  return { password, userId: existingUser.id, created: false };
+}
+
 // Anthropic (Claude) — optional second provider
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 const ANTHROPIC_MODEL   = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
@@ -2250,7 +2340,7 @@ async function sendViaResend({ to, subject, html }) {
   }
 }
 
-async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy }) {
+async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, invitedBy, password, isReset = false }) {
   const roleLabel = {
     project_owner: 'Project Owner',
     editor: 'Editor',
@@ -2258,7 +2348,27 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
     viewer: 'Viewer',
   }[appRole] ?? appRole;
 
-  const html = `
+  const passwordBlock = password ? `
+      <div style="margin:20px 0;padding:16px 20px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:10px;">
+        <p style="margin:0 0 6px;color:#3730a3;font-size:13px;font-weight:600;">Your temporary password</p>
+        <p style="margin:0;font-family:'SF Mono',Consolas,monospace;font-size:16px;color:#1e1b4b;letter-spacing:0.02em;">${password}</p>
+        <p style="margin:8px 0 0;color:#4338ca;font-size:12px;">You'll be asked to set a new password the first time you sign in.</p>
+      </div>` : '';
+
+  const html = isReset ? `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px;">
+      <h2 style="color:#2E4057;margin-bottom:8px;">Your password has been reset</h2>
+      <p style="color:#444;font-size:15px;">
+        <strong>${invitedBy}</strong> reset your password for <strong>${projectName}</strong>
+        on the Agentic SDLC Framework.
+      </p>
+      ${passwordBlock}
+      <a href="${inviteLink}" style="display:inline-block;margin:24px 0;padding:14px 28px;background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">
+        Sign In
+      </a>
+      <p style="color:#999;font-size:12px;">If you were not expecting this, please contact your project owner.</p>
+    </div>
+  ` : `
     <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px;background:#f9fafb;border-radius:12px;">
       <h2 style="color:#2E4057;margin-bottom:8px;">You're invited to collaborate</h2>
       <p style="color:#444;font-size:15px;">
@@ -2272,13 +2382,14 @@ async function sendInviteEmail({ to, name, projectName, appRole, inviteLink, inv
         ${appRole === 'reviewer' ? 'view all agent outputs and approve review gates.' : ''}
         ${appRole === 'viewer' ? 'view all agent outputs (read-only).' : ''}
       </p>
+      ${passwordBlock}
       <a href="${inviteLink}" style="display:inline-block;margin:24px 0;padding:14px 28px;background:#4f46e5;color:#fff;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">
         Accept Invitation
       </a>
       <p style="color:#999;font-size:12px;">This link is valid for 7 days. If you were not expecting this invite, you can safely ignore this email.</p>
     </div>
   `;
-  const subject = `You're invited to ${projectName}`;
+  const subject = isReset ? `Your password has been reset — ${projectName}` : `You're invited to ${projectName}`;
 
   // 1. Resend (preferred — HTTPS API, works on any Railway plan)
   const resendResult = await sendViaResend({ to, subject, html });
@@ -2346,6 +2457,18 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   const auth = await authorizeInviteAction(req, res, { projectId, action: 'create', requestedAppRole: appRole });
   if (!auth.ok) return; // response already sent
 
+  // Provision the invitee's real Supabase Auth account up front, with a
+  // generated default password, so they can sign in immediately instead of
+  // waiting on a confirmation email. Must happen before any token/DB
+  // bookkeeping below — if this fails there's no usable invite to hand out.
+  let provisioned;
+  try {
+    provisioned = await provisionInviteeAccount({ email: normalizedEmail, name, actionDate: new Date() });
+  } catch (err) {
+    console.error(`[invite/send] provisionInviteeAccount failed: ${err?.message ?? err}`);
+    return res.status(502).json({ error: "Could not create the team member's account. Please try again or contact support." });
+  }
+
   const token = randomUUID();          // returned to the caller once — never persisted raw
   const tokenHash = hashInviteToken(token);
   const baseUrl = resolveInviteBaseUrl(req);
@@ -2382,7 +2505,7 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
   // not the only one: the inviteLink is always returned below so an
   // Admin/Project Owner can copy and share it manually regardless of
   // whether email sending is configured or succeeds).
-  const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy });
+  const emailResult = await sendInviteEmail({ to: normalizedEmail, name, projectName, appRole, inviteLink, invitedBy, password: provisioned.password });
   console.log(
     `[invite/send] sendInviteEmail result ok=${emailResult.ok} dev=${!!emailResult.dev}` +
     (emailResult.error ? ` error=${emailResult.error}` : '')
@@ -2393,6 +2516,7 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
       ok: true,
       inviteLink,
       token,
+      password: provisioned.password,
       emailSent: false,
       emailError: emailResult.error ?? 'Invite email failed to send.',
       message: 'Invite link created. Email delivery failed — copy the link below and share it manually.',
@@ -2403,10 +2527,79 @@ app.post('/api/invite/send', checkToken, inviteSendRateLimit, async (req, res) =
     ok: true,
     inviteLink,
     token,
+    password: provisioned.password,
     emailSent: !emailResult.dev,
     message: emailResult.dev
       ? 'Invite link generated (no email sent — RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set). Copy the link to share manually.'
       : 'Invite email sent. You can also copy the link below to share it directly.',
+  });
+});
+
+// ── POST /api/invite/reset-password ─────────────────────────────────────────
+// Admin/project-owner-triggered password reset for an existing team member.
+// Generates a fresh default-format password (dated to the reset action),
+// updates the member's Supabase Auth account, and re-sets
+// must_change_password so they're forced to pick their own on next sign-in.
+app.post('/api/invite/reset-password', checkToken, async (req, res) => {
+  const { projectId, projectName, email } = req.body ?? {};
+  if (!projectId || !email) {
+    return res.status(400).json({ error: 'projectId and email are required' });
+  }
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+  const auth = await authorizeInviteAction(req, res, { projectId, action: 'reset_password' });
+  if (!auth.ok) return; // response already sent
+
+  let member = null;
+  if (dbPool) {
+    const { rows } = await dbPool.query(
+      `SELECT id, name, email FROM team_members WHERE project_id = $1 AND lower(email) = $2 LIMIT 1`,
+      [projectId, normalizedEmail]
+    ).catch(() => ({ rows: [] }));
+    member = rows[0] ?? null;
+  }
+  if (!member) {
+    return res.status(404).json({ error: 'No team member found with that email on this project.' });
+  }
+
+  let provisioned;
+  try {
+    provisioned = await provisionInviteeAccount({ email: normalizedEmail, name: member.name, actionDate: new Date() });
+  } catch (err) {
+    console.error(`[invite/reset-password] provisionInviteeAccount failed: ${err?.message ?? err}`);
+    return res.status(502).json({ error: "Could not reset this team member's password. Please try again or contact support." });
+  }
+
+  await logInviteEvent({
+    projectId,
+    teamMemberId: member.id,
+    action: 'password_reset',
+    performedBy: auth.callerEmail ?? null,
+  }).catch(() => {});
+
+  const baseUrl = resolveInviteBaseUrl(req);
+  const emailResult = await sendInviteEmail({
+    to: normalizedEmail,
+    name: member.name,
+    projectName: projectName ?? '',
+    appRole: null,
+    inviteLink: baseUrl,
+    invitedBy: auth.callerEmail ?? 'Your project owner',
+    password: provisioned.password,
+    isReset: true,
+  });
+  console.log(
+    `[invite/reset-password] sendInviteEmail result ok=${emailResult.ok} dev=${!!emailResult.dev}` +
+    (emailResult.error ? ` error=${emailResult.error}` : '')
+  );
+
+  return res.json({
+    ok: true,
+    password: provisioned.password,
+    emailSent: !emailResult.dev && emailResult.ok,
+    message: emailResult.dev
+      ? 'Password reset. No email sent (RESEND_API_KEY or GMAIL_USER/GMAIL_APP_PASSWORD not set) — copy the password below and share it manually.'
+      : 'Password reset. An email with the new password has been sent.',
   });
 });
 
@@ -2814,4 +3007,9 @@ module.exports = {
   appRoleRank,
   isInviteExpired,
   isConfiguredAdminEmail,
+  // Exported for unit testing only (default-password invite provisioning):
+  generateDefaultPassword,
+  provisionInviteeAccount,
+  findSupabaseUserByEmail,
+  getSupabaseAdmin,
 };
