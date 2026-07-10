@@ -46,6 +46,7 @@ let currentProject: Project;
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   updateProject: (...args: Parameters<typeof updateProjectMock>) => updateProjectMock(...args),
+  checkIsAppAdmin: vi.fn(async () => false),
 }));
 
 // ── Mock services/api ──
@@ -68,6 +69,18 @@ vi.mock('../../frontend/src/hooks/useIntegrations', () => ({
     loadCredential: vi.fn(async () => null),
     removeCredential: vi.fn(),
   }),
+}));
+
+// ── Mock contexts/AuthContext — ProjectSettings.tsx calls useAuth()
+// unconditionally, which throws outside a real <AuthProvider>. ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
+
+// ── Mock contexts/AlertContext — same reason, useAlert() is called
+// unconditionally at the top of ProjectSettings.tsx. ──
+vi.mock('../../frontend/src/contexts/AlertContext', () => ({
+  useAlert: () => ({ showAlert: vi.fn() }),
 }));
 
 // Import after mocks are registered.

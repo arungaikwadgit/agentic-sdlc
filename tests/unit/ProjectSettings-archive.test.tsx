@@ -92,6 +92,12 @@ vi.mock('../../frontend/src/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
 }));
 
+// ── Mock contexts/AlertContext — same reason, useAlert() is called
+// unconditionally at the top of ProjectSettings.tsx. ──
+vi.mock('../../frontend/src/contexts/AlertContext', () => ({
+  useAlert: () => ({ showAlert: vi.fn() }),
+}));
+
 // Import after mocks are registered.
 import ProjectSettings from '../../frontend/src/components/settings/ProjectSettings';
 

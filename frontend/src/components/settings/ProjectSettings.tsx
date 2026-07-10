@@ -227,6 +227,7 @@ export default function ProjectSettings({
   const [newRole, setNewRole] = useState('');
   const [newRoleCustom, setNewRoleCustom] = useState('');
   const [addError, setAddError] = useState('');
+  const [addingMember, setAddingMember] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   // ── Invite modal state ──
@@ -411,6 +412,7 @@ export default function ProjectSettings({
       if (members.length === 0) setAdminSessionId(newMember.id);
       setInviteTarget(null);
       await sendInvite(newMember);
+      setNewName(''); setNewEmail(''); setNewRole(''); setNewRoleCustom('');
     } else if (inviteTarget) {
       // Existing member — update appRole if changed, then resend
       if (inviteTarget.appRole !== data.appRole || inviteTarget.role !== data.jobRole) {
@@ -603,27 +605,32 @@ export default function ProjectSettings({
     const roleValue = newRole === '__custom__' ? newRoleCustom.trim() : newRole;
     if (!roleValue) { setAddError('Role is required — pick from the list or choose Custom'); return; }
     setAddError('');
-    const isFirstMember = members.length === 0;
-    const newMember: TeamMember = {
-      id: crypto.randomUUID(), name: newName.trim(), email: newEmail.trim(),
-      role: roleValue, avatarColor: AVATAR_COLORS[members.length % AVATAR_COLORS.length],
-      isAdmin: isFirstMember,
-      appRole: isFirstMember ? 'project_owner' : 'editor',
-      inviteStatus: 'accepted',
-    };
-    const template = ROLE_TEMPLATES.find((r) => r.title === roleValue);
-    await updateProject(project.id, (p) => {
-      p.teamMembers = [...(p.teamMembers ?? []), newMember];
-      if (template) {
-        template.suggestedAgents.forEach((agentId) => {
-          const existing = p.agentAssignments.find((a) => a.agentId === agentId);
-          if (existing) { if (!existing.memberIds.includes(newMember.id)) existing.memberIds.push(newMember.id); }
-          else p.agentAssignments.push({ agentId, memberIds: [newMember.id] });
-        });
-      }
-    });
-    if (isFirstMember) setAdminSessionId(newMember.id);
-    setNewName(''); setNewEmail(''); setNewRole(''); setNewRoleCustom('');
+    setAddingMember(true);
+    try {
+      const isFirstMember = members.length === 0;
+      const newMember: TeamMember = {
+        id: crypto.randomUUID(), name: newName.trim(), email: newEmail.trim(),
+        role: roleValue, avatarColor: AVATAR_COLORS[members.length % AVATAR_COLORS.length],
+        isAdmin: isFirstMember,
+        appRole: isFirstMember ? 'project_owner' : 'editor',
+        inviteStatus: 'accepted',
+      };
+      const template = ROLE_TEMPLATES.find((r) => r.title === roleValue);
+      await updateProject(project.id, (p) => {
+        p.teamMembers = [...(p.teamMembers ?? []), newMember];
+        if (template) {
+          template.suggestedAgents.forEach((agentId) => {
+            const existing = p.agentAssignments.find((a) => a.agentId === agentId);
+            if (existing) { if (!existing.memberIds.includes(newMember.id)) existing.memberIds.push(newMember.id); }
+            else p.agentAssignments.push({ agentId, memberIds: [newMember.id] });
+          });
+        }
+      });
+      if (isFirstMember) setAdminSessionId(newMember.id);
+      setNewName(''); setNewEmail(''); setNewRole(''); setNewRoleCustom('');
+    } finally {
+      setAddingMember(false);
+    }
   }
 
   function wouldLeaveNoAdmin(memberId: string): boolean {
@@ -1098,7 +1105,7 @@ export default function ProjectSettings({
                     </div>
                     {/* Two action buttons: Add only, or Add + Send Invite */}
                     <div className={styles.addRow} style={{ gap: 8 }}>
-                      <button className="btn-primary" onClick={() => {
+                      <button className="btn-primary" disabled={!canAddMember || addingMember || inviteTarget !== null} onClick={() => {
                         // Validate then open invite modal pre-filled
                         if (!canAddMember) { setAddError('Select an admin account above to add members.'); return; }
                         if (!newName.trim()) { setAddError('Name is required'); return; }
@@ -1109,10 +1116,10 @@ export default function ProjectSettings({
                         setInvitePrefill({ name: newName.trim(), email: newEmail.trim(), jobRole: rv });
                         setInviteTarget('new');
                       }} style={{ alignSelf: 'flex-start' }}>
-                        ✉ Add &amp; Send Invite
+                        {inviteTarget !== null ? 'Sending…' : '✉ Add & Send Invite'}
                       </button>
-                      <button className={styles.actionBtn} onClick={addMemberWithoutInvite} style={{ alignSelf: 'flex-start' }}>
-                        + Add without invite
+                      <button className={styles.actionBtn} disabled={!canAddMember || addingMember} onClick={addMemberWithoutInvite} style={{ alignSelf: 'flex-start' }}>
+                        {addingMember ? 'Adding…' : '+ Add without invite'}
                       </button>
                     </div>
                     {addError && <p className={styles.error}>{addError}</p>}

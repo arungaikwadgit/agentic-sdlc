@@ -45,6 +45,7 @@ let currentProject: Project;
 
 vi.mock('../../frontend/src/db/projectRepository', () => ({
   updateProject: (...args: Parameters<typeof updateProjectMock>) => updateProjectMock(...args),
+  checkIsAppAdmin: vi.fn(async () => false),
 }));
 
 // ── Mock services/api (named export `api`, imported at module level) ──
@@ -68,6 +69,18 @@ vi.mock('../../frontend/src/hooks/useIntegrations', () => ({
     loadCredential: vi.fn(async () => null),
     removeCredential: vi.fn(),
   }),
+}));
+
+// ── Mock contexts/AuthContext — ProjectSettings.tsx calls useAuth()
+// unconditionally, which throws outside a real <AuthProvider>. ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
+
+// ── Mock contexts/AlertContext — same reason, useAlert() is called
+// unconditionally at the top of ProjectSettings.tsx. ──
+vi.mock('../../frontend/src/contexts/AlertContext', () => ({
+  useAlert: () => ({ showAlert: vi.fn() }),
 }));
 
 // Import after mocks are registered.
@@ -127,8 +140,8 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={onClose} />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText('Full name *'), 'Alice Admin');
-    await user.type(screen.getByPlaceholderText('Email *'), 'alice@example.com');
+    await user.type(screen.getByLabelText('Full name *'), 'Alice Admin');
+    await user.type(screen.getByLabelText('Email *'), 'alice@example.com');
 
     const roleSelect = screen.getByDisplayValue('Select role *');
     await user.selectOptions(roleSelect, 'Product Manager');
@@ -166,7 +179,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText('Email *'), 'alice@example.com');
+    await user.type(screen.getByLabelText('Email *'), 'alice@example.com');
     const roleSelect = screen.getByDisplayValue('Select role *');
     await user.selectOptions(roleSelect, 'Product Manager');
 
@@ -181,8 +194,8 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText('Full name *'), 'Alice Admin');
-    await user.type(screen.getByPlaceholderText('Email *'), 'not-an-email');
+    await user.type(screen.getByLabelText('Full name *'), 'Alice Admin');
+    await user.type(screen.getByLabelText('Email *'), 'not-an-email');
     const roleSelect = screen.getByDisplayValue('Select role *');
     await user.selectOptions(roleSelect, 'Product Manager');
 
@@ -197,8 +210,8 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText('Full name *'), 'Alice Admin');
-    await user.type(screen.getByPlaceholderText('Email *'), 'alice@example.com');
+    await user.type(screen.getByLabelText('Full name *'), 'Alice Admin');
+    await user.type(screen.getByLabelText('Email *'), 'alice@example.com');
 
     await user.click(screen.getByRole('button', { name: /\+ add without invite/i }));
 
@@ -211,13 +224,13 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText('Full name *'), 'Carol Custom');
-    await user.type(screen.getByPlaceholderText('Email *'), 'carol@example.com');
+    await user.type(screen.getByLabelText('Full name *'), 'Carol Custom');
+    await user.type(screen.getByLabelText('Email *'), 'carol@example.com');
 
     const roleSelect = screen.getByDisplayValue('Select role *');
     await user.selectOptions(roleSelect, '__custom__');
 
-    const customInput = screen.getByPlaceholderText('Enter custom role *');
+    const customInput = screen.getByLabelText('Custom role *');
     await user.type(customInput, 'Chief Vibes Officer');
 
     await user.click(screen.getByRole('button', { name: /\+ add without invite/i }));
@@ -241,8 +254,8 @@ describe('ProjectSettings — Team Members tab', () => {
     });
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
-    expect(screen.getByPlaceholderText('Full name *')).toBeDisabled();
-    expect(screen.getByPlaceholderText('Email *')).toBeDisabled();
+    expect(screen.getByLabelText('Full name *')).toBeDisabled();
+    expect(screen.getByLabelText('Email *')).toBeDisabled();
     expect(screen.getByDisplayValue('Select role *')).toBeDisabled();
     expect(
       screen.getByText('🔒 Select an admin identity above to add or remove members.')
@@ -260,7 +273,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    const devCard = screen.getByText('Dev Dave').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const devCard = screen.getAllByText('Dev Dave')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     expect(devCard).toBeTruthy();
     await user.click(within(devCard).getByRole('button', { name: /remove/i }));
 
@@ -284,7 +297,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    const card = screen.getByText('Alice Admin').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const card = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     const removeBtn = within(card).getByRole('button', { name: /remove/i });
     expect(removeBtn).toBeDisabled();
 
@@ -310,7 +323,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    const card = screen.getByText('Alice Admin').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const card = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     const removeBtn = within(card).getByRole('button', { name: /remove/i });
     expect(removeBtn).not.toBeDisabled();
 
@@ -343,7 +356,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    const card = screen.getByText('Bob Backup').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const card = screen.getAllByText('Bob Backup')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     const adminBtn = within(card).getByRole('button', { name: /admin/i });
     expect(adminBtn).not.toBeDisabled();
 
@@ -367,7 +380,7 @@ describe('ProjectSettings — Team Members tab', () => {
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
-    const card = screen.getByText('Alice Admin').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const card = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     const adminBtn = within(card).getByRole('button', { name: /🔑 admin/i });
     expect(adminBtn).toBeDisabled();
 
@@ -385,10 +398,10 @@ describe('ProjectSettings — Team Members tab', () => {
     });
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
-    const devCard = screen.getByText('Dev Dave').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const devCard = screen.getAllByText('Dev Dave')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     expect(within(devCard).getByText('⚠ No agents assigned — pipeline cannot run')).toBeInTheDocument();
 
-    const aliceCard = screen.getByText('Alice Admin').closest('[class*="memberGrid"] > div') as HTMLElement;
+    const aliceCard = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
     expect(within(aliceCard).queryByText('⚠ No agents assigned — pipeline cannot run')).not.toBeInTheDocument();
   });
 
