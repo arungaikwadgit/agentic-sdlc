@@ -2646,7 +2646,7 @@ app.post('/api/invite/accept', async (req, res) => {
 
   if (dbPool) {
     const { rows } = await dbPool.query(`
-      SELECT tm.id, tm.project_id, tm.name, tm.email, tm.app_role, tm.invite_status, p.name AS project_name
+      SELECT tm.id, tm.project_id, tm.name, tm.email, tm.app_role, tm.invite_status, tm.invited_at, p.name AS project_name
       FROM team_members tm
       JOIN projects p ON p.id = tm.project_id
       WHERE tm.invite_token_hash = $1 OR tm.invite_token = $2
