@@ -87,6 +87,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [loading, setLoading] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [enhanceError, setEnhanceError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // Figma pull state
   const [showFigmaPull, setShowFigmaPull] = useState(false);
   const [figmaUrl, setFigmaUrl] = useState('');
@@ -212,6 +213,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
   async function goToKnowledge() {
     if (!detailsValid()) return;
+    setSubmitError(null);
     // Pre-fill from the app-level default (or built-in template) if not yet customized
     if (!domainKnowledge) setDomainKnowledge(await safeGetDomainKnowledgeDefault(domain));
     setStep('domain-knowledge');
@@ -263,10 +265,13 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
    *  no auto-run. Same behavior in both Simple and Expert mode. */
   async function handleCreate() {
     if (!detailsValid()) return;
+    setSubmitError(null);
     setLoading(true);
     try {
       const project = await createProject(buildProjectPayload(domainKnowledge));
       onCreated(project.id);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to create the project.');
     } finally {
       setLoading(false);
     }
@@ -282,6 +287,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
     if (!detailsValid()) return;
     setEnhancing(true);
     setEnhanceError(null);
+    setSubmitError(null);
     try {
       let finalKnowledge = domainKnowledge;
       try {
@@ -645,6 +651,9 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <p className={styles.hint}>
                 You can edit the domain knowledge later in the project's Settings tab.
               </p>
+              {submitError && (
+                <p className={styles.fieldError} style={{ marginTop: -4 }}>{submitError}</p>
+              )}
               {enhanceError && (
                 <p className={styles.fieldError} style={{ marginTop: -4 }}>{enhanceError}</p>
               )}

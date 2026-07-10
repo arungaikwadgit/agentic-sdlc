@@ -1,5 +1,5 @@
 /**
- * © 2026 Arun Gaikwad. All rights reserved.
+ * 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential - Unauthorized use prohibited.
  */
 
@@ -24,12 +24,53 @@ export interface AuthUser {
   role?: string;
 }
 
+let cachedDevBypassResolvedId: string | null = null;
+
 declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
     }
   }
+}
+
+async function resolveDevBypassUserId(): Promise<string> {
+  if (process.env.ADMIN_EMAIL_USER_ID?.trim()) {
+    return process.env.ADMIN_EMAIL_USER_ID.trim();
+  }
+
+  if (cachedDevBypassResolvedId) {
+    return cachedDevBypassResolvedId;
+  }
+
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      console.warn('[auth] Failed to resolve dev bypass user id from Supabase:', error.message);
+      break;
+    }
+
+    const users = data?.users ?? [];
+    const matched = users.find((user) => (user.email ?? '').toLowerCase() === DEV_BYPASS_EMAIL);
+    if (matched?.id) {
+      cachedDevBypassResolvedId = matched.id;
+      return matched.id;
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+    page += 1;
+  }
+
+  console.warn(
+    '[auth] Falling back to synthetic dev bypass user id because no Supabase auth user matched ADMIN_EMAIL_ALLOWLIST / ADMIN_EMAIL / VITE_ADMIN_EMAIL:',
+    DEV_BYPASS_EMAIL,
+  );
+  return DEV_BYPASS_USER_ID;
 }
 
 /**
@@ -41,8 +82,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const authHeader = req.headers.authorization;
 
   if (process.env.NODE_ENV !== 'production' && authHeader === ('Bearer ' + ADMIN_BYPASS_BEARER)) {
+    const resolvedId = await resolveDevBypassUserId();
     req.user = {
-      id: DEV_BYPASS_USER_ID,
+      id: resolvedId,
       email: DEV_BYPASS_EMAIL,
       role: 'authenticated',
     };
@@ -80,9 +122,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
  * App-wide system administrators - distinct from `project_members.role`
  * (which is per-project) and from the frontend's local-dev-only `isAdminMode()`
  * bypass. Configure via the ADMIN_EMAIL_ALLOWLIST env var (comma-separated,
- * case-insensitive) on this service in Railway. If unset, no user is treated
- * as an app admin and admin-gated routes (e.g. project delete/restore) will
- * 403 for everyone until it's configured.
+ * case-insensitive) on this service. If unset, no user is treated as an app admin.
  */
 const ADMIN_EMAIL_ALLOWLIST = new Set(
   (process.env.ADMIN_EMAIL_ALLOWLIST ?? '')
@@ -115,6 +155,11 @@ export function requireProjectRole(...allowedRoles: string[]) {
 
     if (!userId || !projectId) {
       res.status(400).json({ error: 'Missing user or project context' });
+      return;
+    }
+
+    if (isAppAdmin(req.user?.email)) {
+      next();
       return;
     }
 

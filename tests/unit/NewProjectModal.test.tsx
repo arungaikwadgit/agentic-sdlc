@@ -1,28 +1,26 @@
 // tests/unit/NewProjectModal.test.tsx
-// Component tests for components/dashboard/NewProjectModal.tsx — the
+// Component tests for components/dashboard/NewProjectModal.tsx - the
 // two-step project creation wizard (presets, validation, domain knowledge
 // defaults, create flow).
 // Covers TS-170 through TS-182 from
 // docs/test-plans/dashboard-and-project-creation-test-plan.md.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-// ── Mock @/db/projectRepository ──
 const createProjectMock = vi.fn();
 vi.mock('@/db/projectRepository', () => ({
   createProject: (...args: unknown[]) => createProjectMock(...args),
 }));
 
-// ── Mock @/agents/domainKnowledgeDefaults ──
 const getEffectiveDomainKnowledgeDefaultMock = vi.fn();
 vi.mock('@/agents/domainKnowledgeDefaults', () => ({
   getEffectiveDomainKnowledgeDefault: (...args: unknown[]) =>
     getEffectiveDomainKnowledgeDefaultMock(...args),
 }));
 
-// Import after mocks are registered.
 import NewProjectModal from '../../frontend/src/components/dashboard/NewProjectModal';
+import { DOMAIN_KNOWLEDGE_TEMPLATES } from '../../frontend/src/agents/domainKnowledgeTemplates';
 
 const DEFAULT_BY_DOMAIN: Record<string, string> = {
   saas: '# SaaS default brief',
@@ -39,13 +37,39 @@ function setup() {
 
 async function fillDetailsAndProceed(user: ReturnType<typeof userEvent.setup>, name: string, description: string) {
   await user.type(screen.getByPlaceholderText(/payment processing platform/i), name);
-  await user.type(screen.getByPlaceholderText(/describe the project goals/i), description);
   await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
+  await user.type(screen.getByPlaceholderText(/e\.g\. Platform Squad/i), 'Platform Squad');
+  await user.type(screen.getByPlaceholderText(/describe the project goals/i), description);
+
+  const projectTypeSelect = screen.getAllByRole('combobox').find(
+    (el) => (el as HTMLSelectElement).querySelector('option[value="web-app"]') !== null,
+  ) as HTMLSelectElement;
+  await user.selectOptions(projectTypeSelect, 'web-app');
+
+  const dateInputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[];
+  await user.type(dateInputs[0], '2026-07-09');
+  await user.type(dateInputs[1], '2026-07-31');
+
+  const techInput = screen.getByPlaceholderText(/Enter to add/i);
+  await user.type(techInput, 'React');
+  await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+  await user.type(screen.getByPlaceholderText(/Who will use this product day-to-day\?/i), 'Operations teams and merchants');
+  await user.type(screen.getByPlaceholderText(/Known risks, dependencies, or open questions/i), 'Payment gateway integration risk');
+
   const next = screen.getByRole('button', { name: /next: domain knowledge/i });
   await user.click(next);
 }
 
+async function findDomainKnowledgeTextarea() {
+  return screen.findByPlaceholderText(/describe the domain context/i);
+}
+
 describe('NewProjectModal', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
     createProjectMock.mockReset();
     getEffectiveDomainKnowledgeDefaultMock.mockReset();
@@ -65,11 +89,9 @@ describe('NewProjectModal', () => {
     expect(nameInput.value).toBe('');
     expect(descInput.value).toBe('');
 
-    // Multiple selects exist (projectType, priority, domain); find domain select by its default value
     const domainSelect = screen.getAllByRole('combobox').find(
       (el) => (el as HTMLSelectElement).value === 'saas'
     ) as HTMLSelectElement;
-    expect(domainSelect).toBeTruthy();
     expect(domainSelect.value).toBe('saas');
 
     const next = screen.getByRole('button', { name: /next: domain knowledge/i });
@@ -80,8 +102,7 @@ describe('NewProjectModal', () => {
     const user = userEvent.setup();
     setup();
 
-    const finPayPreset = screen.getByRole('button', { name: /finpay/i });
-    await user.click(finPayPreset);
+    await user.click(screen.getByRole('button', { name: /finpay/i }));
 
     const nameInput = screen.getByPlaceholderText(/payment processing platform/i) as HTMLInputElement;
     const descInput = screen.getByPlaceholderText(/describe the project goals/i) as HTMLTextAreaElement;
@@ -94,7 +115,7 @@ describe('NewProjectModal', () => {
     expect(domainSelect.value).toBe('fintech');
   });
 
-  it('Next is disabled unless both name and description are non-empty (TS-172)', async () => {
+  it('Next is disabled until all mandatory fields are filled (TS-172)', async () => {
     const user = userEvent.setup();
     setup();
 
@@ -106,9 +127,23 @@ describe('NewProjectModal', () => {
     expect(next).toBeDisabled();
 
     await user.type(descInput, 'A description');
-    // Owner is also required — still disabled until owner is filled
     expect(next).toBeDisabled();
+
     await user.type(screen.getByPlaceholderText(/e\.g\. Jane Doe/i), 'Test Owner');
+    await user.type(screen.getByPlaceholderText(/e\.g\. Platform Squad/i), 'Platform Squad');
+    const projectTypeSelect = screen.getAllByRole('combobox').find(
+      (el) => (el as HTMLSelectElement).querySelector('option[value="web-app"]') !== null,
+    ) as HTMLSelectElement;
+    await user.selectOptions(projectTypeSelect, 'web-app');
+    const dateInputs = Array.from(document.querySelectorAll('input[type="date"]')) as HTMLInputElement[];
+    await user.type(dateInputs[0], '2026-07-09');
+    await user.type(dateInputs[1], '2026-07-31');
+    const techInput = screen.getByPlaceholderText(/Enter to add/i);
+    await user.type(techInput, 'React');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+    await user.type(screen.getByPlaceholderText(/Who will use this product day-to-day\?/i), 'Operations teams and merchants');
+    await user.type(screen.getByPlaceholderText(/Known risks, dependencies, or open questions/i), 'Payment gateway integration risk');
+
     expect(next).not.toBeDisabled();
   });
 
@@ -118,23 +153,19 @@ describe('NewProjectModal', () => {
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
 
-    // On the Domain Knowledge step, type a custom brief.
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await user.clear(textarea);
     await user.type(textarea, 'My custom brief');
     expect((textarea as HTMLTextAreaElement).value).toBe('My custom brief');
 
-    // Go back to Details and change the domain.
     await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
     const domainSelect = screen.getAllByRole('combobox').find(
       (el) => (el as HTMLSelectElement).querySelector('option[value="healthcare"]') !== null
     ) as HTMLSelectElement;
     await user.selectOptions(domainSelect, 'healthcare');
 
-    // Proceed to Domain Knowledge again — it should now show the
-    // healthcare default, not the custom brief.
     await user.click(screen.getByRole('button', { name: /next: domain knowledge/i }));
-    const textarea2 = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea2 = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea2 as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.healthcare);
     });
@@ -146,7 +177,7 @@ describe('NewProjectModal', () => {
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
 
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
@@ -158,12 +189,11 @@ describe('NewProjectModal', () => {
     setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
-    // Edit the brief, then go back and forward again without changing domain.
     await user.clear(textarea);
     await user.type(textarea, 'A custom edited brief');
 
@@ -171,24 +201,23 @@ describe('NewProjectModal', () => {
     await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
     await user.click(screen.getByRole('button', { name: /next: domain knowledge/i }));
 
-    const textarea2 = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea2 = await findDomainKnowledgeTextarea();
     expect((textarea2 as HTMLTextAreaElement).value).toBe('A custom edited brief');
     expect(getEffectiveDomainKnowledgeDefaultMock).not.toHaveBeenCalled();
   });
 
-  it('"Reset to template" overwrites the textarea with the effective default (TS-176)', async () => {
+  it('Reset to template overwrites the textarea with the effective default (TS-176)', async () => {
     const user = userEvent.setup();
     setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
     await user.clear(textarea);
     await user.type(textarea, 'Something else entirely');
-
     await user.click(screen.getByRole('button', { name: /reset to template/i }));
 
     await waitFor(() => {
@@ -196,12 +225,12 @@ describe('NewProjectModal', () => {
     });
   });
 
-  it('"Download as .md" downloads the current textarea content as domain-knowledge-{domain}.md (TS-177)', async () => {
+  it('Download as .md downloads the current textarea content as domain-knowledge-{domain}.md (TS-177)', async () => {
     const user = userEvent.setup();
     setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
@@ -215,13 +244,11 @@ describe('NewProjectModal', () => {
     (URL as unknown as { revokeObjectURL: typeof revokeObjectURLSpy }).revokeObjectURL = revokeObjectURLSpy;
 
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-
     await user.click(screen.getByRole('button', { name: /download as \.md/i }));
 
     expect(createObjectURLSpy).toHaveBeenCalledTimes(1);
     const blobArg = createObjectURLSpy.mock.calls[0][0] as Blob;
     expect(blobArg.type).toBe('text/markdown');
-    // jsdom's Blob polyfill doesn't implement .text(), so read via FileReader instead.
     const text = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
@@ -229,39 +256,37 @@ describe('NewProjectModal', () => {
       reader.readAsText(blobArg);
     });
     expect(text).toBe('Edited brief content');
-
     expect(clickSpy).toHaveBeenCalledTimes(1);
     clickSpy.mockRestore();
   });
 
-  it('"Back" returns to Details with all values intact (TS-178)', async () => {
+  it('Back returns to Details with all values intact (TS-178)', async () => {
     const user = userEvent.setup();
     setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    await screen.findByPlaceholderText(/describe the domain context/i);
-
+    await findDomainKnowledgeTextarea();
     await user.click(screen.getAllByRole('button', { name: /back/i }).at(-1)!);
 
     expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
-    const nameInput = screen.getByPlaceholderText(/payment processing platform/i) as HTMLInputElement;
-    const descInput = screen.getByPlaceholderText(/describe the project goals/i) as HTMLTextAreaElement;
-    expect(nameInput.value).toBe('My Project');
-    expect(descInput.value).toBe('A description');
+    expect((screen.getByPlaceholderText(/payment processing platform/i) as HTMLInputElement).value).toBe('My Project');
+    expect((screen.getByPlaceholderText(/describe the project goals/i) as HTMLTextAreaElement).value).toBe('A description');
+    expect((screen.getByPlaceholderText(/e\.g\. Jane Doe/i) as HTMLInputElement).value).toBe('Test Owner');
+    expect((screen.getByPlaceholderText(/e\.g\. Platform Squad/i) as HTMLInputElement).value).toBe('Platform Squad');
   });
 
-  it('"Create Project" calls createProject with the expected shape and onCreated with the new id (TS-179)', async () => {
+  it('Create Project calls createProject with the expected shape and onCreated with the new id (TS-179)', async () => {
     const user = userEvent.setup();
     createProjectMock.mockResolvedValue({ id: 'new-proj-1' });
     const { onCreated } = setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    const textarea = await screen.findByPlaceholderText(/describe the domain context/i);
+    const textarea = await findDomainKnowledgeTextarea();
     await waitFor(() => {
       expect((textarea as HTMLTextAreaElement).value).toBe(DEFAULT_BY_DOMAIN.saas);
     });
 
-    await user.click(screen.getByRole('button', { name: /create project/i }));
+    await user.click(screen.getByRole('button', { name: /save for the project/i }));
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledTimes(1);
@@ -275,33 +300,31 @@ describe('NewProjectModal', () => {
         mode: 'simple',
         domainKnowledge: DEFAULT_BY_DOMAIN.saas,
         owner: 'Test Owner',
-      })
+        team: 'Platform Squad',
+        projectType: 'web-app',
+      }),
     );
     expect(onCreated).toHaveBeenCalledWith('new-proj-1');
   });
 
-  it('"Create Project" is disabled while pending and re-enabled after rejection (TS-180)', async () => {
+  it('Save for the project is disabled while pending and re-enabled after rejection (TS-180)', async () => {
     const user = userEvent.setup();
     let reject: (e: Error) => void = () => {};
-    createProjectMock.mockImplementation(
-      () => new Promise((_resolve, rej) => { reject = rej; }),
-    );
+    createProjectMock.mockImplementation(() => new Promise((_resolve, rej) => { reject = rej; }));
     setup();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    await screen.findByPlaceholderText(/describe the domain context/i);
+    await findDomainKnowledgeTextarea();
 
-    const createButton = screen.getByRole('button', { name: /create project/i });
-    await user.click(createButton);
-
+    await user.click(screen.getByRole('button', { name: /save for the project/i }));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /creating/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
     });
 
     reject(new Error('create failed'));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /create project/i })).not.toBeDisabled();
+      expect(screen.getByRole('button', { name: /save for the project/i })).not.toBeDisabled();
     });
   });
 
@@ -311,20 +334,47 @@ describe('NewProjectModal', () => {
     setup();
 
     expect(screen.getByText(/simple mode runs the full pipeline/i)).toBeInTheDocument();
-
     await user.click(screen.getByRole('button', { name: /^expert$/i }));
     expect(screen.getByText(/expert mode enables review gates/i)).toBeInTheDocument();
 
     await fillDetailsAndProceed(user, 'My Project', 'A description');
-    await screen.findByPlaceholderText(/describe the domain context/i);
+    await findDomainKnowledgeTextarea();
     await user.click(screen.getByRole('button', { name: /create project/i }));
 
     await waitFor(() => {
       expect(createProjectMock).toHaveBeenCalledTimes(1);
     });
-    expect(createProjectMock).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: 'expert' }),
-    );
+    expect(createProjectMock).toHaveBeenCalledWith(expect.objectContaining({ mode: 'expert' }));
+  });
+
+  it('falls back to the built-in domain template when the app-level default fetch fails', async () => {
+    const user = userEvent.setup();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getEffectiveDomainKnowledgeDefaultMock.mockRejectedValueOnce(new Error('backend unavailable'));
+    setup();
+
+    await fillDetailsAndProceed(user, 'My Project', 'A description');
+
+    const textarea = await findDomainKnowledgeTextarea();
+    await waitFor(() => {
+      expect((textarea as HTMLTextAreaElement).value).toBe(DOMAIN_KNOWLEDGE_TEMPLATES.saas);
+    });
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('shows an inline error and re-enables save when project creation fails', async () => {
+    const user = userEvent.setup();
+    createProjectMock.mockRejectedValueOnce(new Error('API 503: backend unavailable'));
+    setup();
+
+    await fillDetailsAndProceed(user, 'My Project', 'A description');
+    await findDomainKnowledgeTextarea();
+    await user.click(screen.getByRole('button', { name: /save for the project/i }));
+
+    expect(await screen.findByText(/API 503: backend unavailable/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save for the project/i })).not.toBeDisabled();
+    });
   });
 
   it('Cancel calls onClose without calling createProject (TS-182)', async () => {
@@ -337,3 +387,4 @@ describe('NewProjectModal', () => {
     expect(createProjectMock).not.toHaveBeenCalled();
   });
 });
+
