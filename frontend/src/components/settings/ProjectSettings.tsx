@@ -34,8 +34,9 @@ const INVITE_ROLES: AppRole[] = INVITABLE_APP_ROLES;
 
 export type Tab = 'general' | 'team' | 'assignments' | 'knowledge';
 
-export type InviteLinkInfo = { memberId: string; link: string; emailSent?: boolean } | null;
+export type InviteLinkInfo = { memberId: string; link: string; emailSent?: boolean; password?: string } | null;
 export type InviteErrorInfo = { memberId: string; message: string } | null;
+export type ResetPasswordResult = { memberId: string; password: string; emailSent: boolean } | null;
 
 interface Props {
   project: Project;
@@ -256,6 +257,12 @@ export default function ProjectSettings({
     onInviteErrorChange?.(v);
   }
 
+  // Admin-triggered "Reset Password" for an already-accepted member. Separate
+  // from inviteLink/invSending above (those are for the initial invite flow)
+  // — reset-password has no link, just a freshly generated password.
+  const [resetPasswordResult, setResetPasswordResult] = useState<ResetPasswordResult>(null);
+  const [resetPwSending, setResetPwSending] = useState<string | null>(null);
+
   // ── Assignments tab state ──
   const [roleFilterId, setRoleFilterId] = useState<string>('all');
 
@@ -344,7 +351,7 @@ export default function ProjectSettings({
         // under that member's Resend/Send Invite button — both are scoped to
         // this specific member via memberId, so they show up exactly where
         // the admin clicked, not in a page-level banner or a blocking modal.
-        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !!data.emailSent });
+        setInviteLink({ memberId: member.id, link: data.inviteLink, emailSent: !!data.emailSent, password: data.password });
         if (!data.emailSent && data.emailError) {
           setInviteError({ memberId: member.id, message: data.emailError });
         }
@@ -379,6 +386,34 @@ export default function ProjectSettings({
       });
     } finally {
       setInvSending(null);
+    }
+  }
+
+  // Regenerates this member's Supabase Auth password (same
+  // firstname_ddmmyyyy scheme as a fresh invite) and forces a change on next
+  // sign-in. Email delivery isn't reliable in every environment, so the
+  // plaintext password is always shown back here regardless of emailSent.
+  async function resetMemberPassword(member: TeamMember) {
+    setResetPwSending(member.id);
+    setResetPasswordResult(null);
+    try {
+      const API   = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+      const { getAuthHeader } = await import('@/services/api');
+      const res  = await fetch(`${API}/invite/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({ projectId: project.id, projectName: project.name, email: member.email }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok && data.password) {
+        setResetPasswordResult({ memberId: member.id, password: data.password, emailSent: !!data.emailSent });
+      } else {
+        showAlert('Reset failed: ' + (data.error ?? 'Unknown error'), { kind: 'error' });
+      }
+    } catch (e) {
+      showAlert('Reset failed: ' + String(e), { kind: 'error' });
+    } finally {
+      setResetPwSending(null);
     }
   }
 
@@ -1240,6 +1275,16 @@ export default function ProjectSettings({
                                     {m.isAdmin ? '🔑 Admin' : '○ Make admin'}
                                   </button>
                                 )}
+                                {isAdmin && invStatus === 'accepted' && (
+                                  <button
+                                    className={styles.actionBtn}
+                                    onClick={() => resetMemberPassword(m)}
+                                    disabled={resetPwSending === m.id}
+                                    title="Generate a new password for this member and force them to change it on next sign-in"
+                                  >
+                                    {resetPwSending === m.id ? '…' : '🔑 Reset Password'}
+                                  </button>
+                                )}
                                 {isAdmin && (
                                   <button
                                     className={`${styles.actionBtn} ${styles.removeBtn}`}
@@ -1261,9 +1306,12 @@ export default function ProjectSettings({
                                 </p>
                               )}
 
-                              {/* Invite link for this member — shown right on their
-                                  tile as soon as an invite is created, whether or not
-                                  the email itself sent. */}
+                              {/* Invite link + generated password for this member —
+                                  shown right on their tile as soon as an invite is
+                                  created. The password is always shown here since
+                                  email delivery isn't reliable in every environment —
+                                  it's the primary way an admin learns the actual
+                                  generated credential to hand off manually. */}
                               {inviteLink?.memberId === m.id && (
                                 <div style={{ marginTop: 6 }}>
                                   <div className={styles.inviteLinkRow}>
@@ -1280,9 +1328,66 @@ export default function ProjectSettings({
                                       Copy
                                     </button>
                                   </div>
+                                  {inviteLink.password && (
+                                    <div className={styles.inviteLinkRow} style={{ marginTop: 4 }}>
+                                      <input
+                                        readOnly
+                                        value={inviteLink.password}
+                                        className={styles.inviteLinkInput}
+                                        style={{ fontFamily: 'monospace' }}
+                                        onFocus={(e) => e.currentTarget.select()}
+                                        aria-label="Generated password"
+                                      />
+                                      <button
+                                        className={styles.copyBtn}
+                                        onClick={() => navigator.clipboard.writeText(inviteLink.password!)}
+                                      >
+                                        Copy
+                                      </button>
+                                    </div>
+                                  )}
+                                  {inviteLink.password && !inviteLink.emailSent && (
+                                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                                      Email wasn't sent — share this password with them directly.
+                                    </p>
+                                  )}
                                   <button
                                     className={styles.dismissLink}
                                     onClick={() => { setInviteLink(null); setInviteError(null); }}
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* Result of an admin-triggered password reset — same
+                                  treatment as the invite-link block above. */}
+                              {resetPasswordResult?.memberId === m.id && (
+                                <div style={{ marginTop: 6 }}>
+                                  <div className={styles.inviteLinkRow}>
+                                    <input
+                                      readOnly
+                                      value={resetPasswordResult.password}
+                                      className={styles.inviteLinkInput}
+                                      style={{ fontFamily: 'monospace' }}
+                                      onFocus={(e) => e.currentTarget.select()}
+                                      aria-label="New password"
+                                    />
+                                    <button
+                                      className={styles.copyBtn}
+                                      onClick={() => navigator.clipboard.writeText(resetPasswordResult.password)}
+                                    >
+                                      Copy
+                                    </button>
+                                  </div>
+                                  {!resetPasswordResult.emailSent && (
+                                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                                      Email wasn't sent — share this password with them directly.
+                                    </p>
+                                  )}
+                                  <button
+                                    className={styles.dismissLink}
+                                    onClick={() => setResetPasswordResult(null)}
                                   >
                                     Dismiss
                                   </button>
