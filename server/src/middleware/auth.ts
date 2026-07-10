@@ -1,10 +1,22 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * � 2026 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
+
+const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+const DEV_BYPASS_USER_ID = '__admin_local__';
+const DEV_BYPASS_EMAIL = (
+  (process.env.ADMIN_EMAIL_ALLOWLIST ?? '')
+    .split(',')
+    .map((e) => e.trim())
+    .find(Boolean) ??
+  process.env.ADMIN_EMAIL ??
+  process.env.VITE_ADMIN_EMAIL ??
+  'admin@local'
+).toLowerCase();
 
 export interface AuthUser {
   id: string;
@@ -12,7 +24,6 @@ export interface AuthUser {
   role?: string;
 }
 
-// Extend Express Request to carry the authenticated user
 declare global {
   namespace Express {
     interface Request {
@@ -23,10 +34,22 @@ declare global {
 
 /**
  * Verifies the Supabase JWT from the Authorization header.
- * Sets req.user if valid, returns 401 otherwise.
+ * In local development only, also accepts the admin-bypass bearer token so
+ * frontend admin-mode can exercise the real /api/projects server routes.
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
+
+  if (process.env.NODE_ENV !== 'production' && authHeader === ('Bearer ' + ADMIN_BYPASS_BEARER)) {
+    req.user = {
+      id: DEV_BYPASS_USER_ID,
+      email: DEV_BYPASS_EMAIL,
+      role: 'authenticated',
+    };
+    next();
+    return;
+  }
+
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Missing or malformed Authorization header' });
     return;
@@ -54,7 +77,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
- * App-wide system administrators — distinct from `project_members.role`
+ * App-wide system administrators - distinct from `project_members.role`
  * (which is per-project) and from the frontend's local-dev-only `isAdminMode()`
  * bypass. Configure via the ADMIN_EMAIL_ALLOWLIST env var (comma-separated,
  * case-insensitive) on this service in Railway. If unset, no user is treated
@@ -95,7 +118,6 @@ export function requireProjectRole(...allowedRoles: string[]) {
       return;
     }
 
-    // Check ownership first (owners always have full access)
     const { data: project } = await supabaseAdmin
       .from('projects')
       .select('owner_id')
@@ -107,7 +129,6 @@ export function requireProjectRole(...allowedRoles: string[]) {
       return;
     }
 
-    // Then check membership role
     const { data: member } = await supabaseAdmin
       .from('project_members')
       .select('role')
