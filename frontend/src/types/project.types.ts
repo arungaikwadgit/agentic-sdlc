@@ -19,11 +19,37 @@ export interface TeamMember {
   role: string;           // job title / functional role (e.g. "Product Manager")
   appRole: AppRole;       // access control role within the app
   avatarColor: string;
-  isAdmin: boolean;
+  /**
+   * @deprecated No longer authoritative. Settings/edit access is derived
+   * solely from `appRole === 'project_owner'` (see
+   * frontend/src/lib/projectAccess.ts's `isProjectAdminUser`) —
+   * historically this was a second, independently-toggleable flag that
+   * could drift from `appRole` (e.g. a 'viewer' with isAdmin:true), which
+   * is exactly the duplicated-authorization bug this deprecation closes.
+   * May still be present on persisted project JSON from before this
+   * change; do not read or write it in new code.
+   */
+  isAdmin?: boolean;
   inviteStatus: InviteStatus;
   inviteToken?: string;   // generated at invite time, cleared after acceptance
   invitedAt?: number;     // ms timestamp
   acceptedAt?: number;    // ms timestamp, set when invite is accepted
+  /**
+   * When true, this member's ability to run/edit agents is restricted to
+   * whatever's in project.agentAssignments for their id (see
+   * ProjectWorkspace.tsx's per-agent gating and backend/src/proxy.js's
+   * authorizeAgentRun()) -- every other agent is read-only for them
+   * (status/output viewable, no run, no prompt edit). Project Owners are
+   * exempt regardless of this flag (always full access).
+   *
+   * Set to true only by the mandatory-agent-assignment invite flow
+   * (InviteModal, appRole === 'editor') introduced 2026-07-11. Left
+   * undefined/false for every member created before that change so existing
+   * Editors keep today's full-project-access behavior until an admin
+   * explicitly opts them in by re-inviting or narrowing their assignments --
+   * this is the grandfathering rule; do not default this to true elsewhere.
+   */
+  agentAccessScoped?: boolean;
 }
 
 /** Permissions matrix per role */
@@ -39,7 +65,7 @@ export const ROLE_PERMISSIONS: Record<AppRole, {
 }> = {
   project_owner: {
     label: 'Project Owner',
-    description: 'Full control — can invite/remove members, change roles, run agents, and delete the project.',
+    description: 'Full control of this project — can invite/remove members (including other Project Owners), change roles, run agents, and edit settings. Deleting a project is reserved for app administrators.',
     canRunAgents: true,
     canEditSettings: true,
     canInvite: true,
@@ -49,9 +75,9 @@ export const ROLE_PERMISSIONS: Record<AppRole, {
   },
   editor: {
     label: 'Editor',
-    description: 'Can run agents, upload documents, and edit project settings.',
+    description: 'Can run agents and upload documents, but cannot change project settings — only the Project Owner (or an app administrator) can.',
     canRunAgents: true,
-    canEditSettings: true,
+    canEditSettings: false,
     canInvite: false,
     canRemoveMembers: false,
     canViewOutputs: true,
@@ -84,7 +110,7 @@ export const ROLE_PERMISSIONS: Record<AppRole, {
  * Elevated project ownership/admin authority must be assigned explicitly
  * inside the project after membership exists, never via email link.
  */
-export const INVITABLE_APP_ROLES: AppRole[] = ['editor', 'reviewer', 'viewer'];
+export const INVITABLE_APP_ROLES: AppRole[] = ['project_owner', 'editor', 'reviewer', 'viewer'];
 
 /** Many-to-many: one agent can have multiple assigned members */
 export interface AgentAssignment {

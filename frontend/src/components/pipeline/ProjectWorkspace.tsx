@@ -31,7 +31,7 @@ import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
 import { getInviteSession } from '@/services/inviteSession';
-import { getProjectExportPermission, getProjectMember, isProjectAdminUser } from '@/lib/projectAccess';
+import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
@@ -433,13 +433,30 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     const def = AGENT_DEFINITIONS[rerunAgent];
     if (!def) return;
 
+    // Defense-in-depth: the buttons that reach here already disable
+    // themselves via canRunThisAgent(), but guard here too in case this is
+    // ever invoked another way. The actual enforcement backstop is
+    // authorizeAgentRun() in backend/src/proxy.js.
+    if (!canRunThisAgent(rerunAgent)) {
+      setRerunError('You are not assigned to run this agent for this project.');
+      return;
+    }
+
     const agentIdToRun = rerunAgent;
 
     // ── Full restart when re-running Phase 0 (sdlcOrchestrator) ──────────────
     // Clear all agent runs and review gates, save the (possibly edited) prompt
     // override, reset project status to draft, then kick off the full pipeline
-    // from scratch so all phases re-run in sequence.
+    // from scratch so all phases re-run in sequence. This is itself a
+    // whole-pipeline action (like startPipeline elsewhere), so it's off-limits
+    // for agent-access-scoped members even if 'sdlcOrchestrator' happens to be
+    // in their assignment — restarting from Phase 0 would run every
+    // downstream agent regardless of who's assigned to it.
     if (agentIdToRun === 'sdlcOrchestrator') {
+      if (isAgentAccessScoped) {
+        setRerunError('Your access is scoped to specific agents — restarting the full pipeline from Phase 0 is not available.');
+        return;
+      }
       setRerunning(true);
       setRerunError(null);
       try {
@@ -633,10 +650,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           }
         });
         setPendingGate(coveringGate);
-      } else if (downstream.length > 0) {
+      } else if (downstream.length > 0 && !isAgentAccessScoped) {
         // No review gate after this phase — auto-continue the pipeline from
         // this phase so the reset downstream agents re-run immediately.
         // PipelineEngine skips agents still 'complete'; runs the idle ones.
+        // Skipped for agent-access-scoped members: the reset downstream
+        // agents were left idle above, but auto-continuing here would run
+        // ALL of them via the full sequential engine regardless of whether
+        // they're in this member's assignment — they stay idle/reset instead,
+        // for an unscoped member (Owner/legacy Editor) to pick up.
         startPipeline(agentPhase);
       }
 
@@ -660,6 +682,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     const agentId = 'uxMockups' as AgentId;
     const def = AGENT_DEFINITIONS[agentId];
     if (!def) return;
+
+    // Defense-in-depth — see the matching guard in confirmRerun().
+    if (!canRunThisAgent(agentId)) {
+      setRerunError('You are not assigned to run this agent for this project.');
+      return;
+    }
 
     setRerunning(true);
     setRerunError(null);
@@ -723,6 +751,30 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   });
   const canRunProjectAgents = !!(adminMode || currentPermissions?.canRunAgents);
   const canEditProjectSettings = !!(adminMode || currentPermissions?.canEditSettings);
+  // Per-agent access scoping (mandatory-agent-assignment invites, 2026-07-11)
+  // — see getAgentRunPermission() in lib/projectAccess.ts for the full rule
+  // (Owners always full access; Reviewer/Viewer unaffected since
+  // canRunAgents is already false for them; only a scoped Editor is
+  // restricted to project.agentAssignments). That function is the single
+  // source of truth so it can be unit-tested independent of this component;
+  // backend/src/proxy.js's authorizeAgentRun() is the enforced backstop.
+  const accessCtx = {
+    adminMode,
+    userEmail: user?.email ?? inviteSession?.email ?? null,
+    userId: user?.id ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  };
+  function canRunThisAgent(agentId: AgentId | null | undefined): boolean {
+    if (!agentId) return false;
+    return getAgentRunPermission(project, accessCtx, agentId).canRun;
+  }
+  // Whether the current member is agent-access-scoped at all (independent of
+  // any specific agentId) — used to hide/disable the whole-pipeline actions
+  // (Run Pipeline, Retry Pipeline, Run All, gate-approval auto-resume) that
+  // don't make sense for a member restricted to a subset of agents.
+  const isAgentAccessScoped = !!(
+    !adminMode && currentMember?.agentAccessScoped && currentMember.appRole !== 'project_owner'
+  );
   const exportPermission = getProjectExportPermission(project, {
     adminMode,
     userEmail: user?.email ?? inviteSession?.email ?? null,
@@ -843,13 +895,15 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             <button
               className="btn-primary"
               onClick={() => startPipeline(project.currentPhase)}
-              disabled={project.status === 'complete' || !teamReady || !canRunProjectAgents}
+              disabled={project.status === 'complete' || !teamReady || !canRunProjectAgents || isAgentAccessScoped}
               title={
                 !teamReady
                   ? 'Add at least one team member to run the pipeline'
                   : !canRunProjectAgents
                     ? 'Your assigned project role cannot run agents.'
-                    : undefined
+                    : isAgentAccessScoped
+                      ? 'Your access is scoped to specific agents — use Re-run on each assigned agent instead of the full pipeline.'
+                      : undefined
               }
             >
               {project.status === 'draft' ? 'Run Pipeline' :
@@ -1008,8 +1062,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       {hasCustomPrompt && (
                         <span className={styles.customPromptBadge} title="Custom prompt saved">&#x270F;</span>
                       )}
-                      {/* U4 — inline retry button on errored rows */}
-                      {status === 'error' && !isPhaseGateLocked && (
+                      {/* U4 — inline retry button on errored rows. Hidden for
+                          agent-access-scoped members: this triggers the full
+                          sequential engine from this agent's phase onward,
+                          which could touch agents outside their assignment —
+                          they use the per-agent Re-run panel instead. */}
+                      {status === 'error' && !isPhaseGateLocked && !isAgentAccessScoped && (
                         <button
                           className={styles.agentRetryBtn}
                           onClick={(e) => { e.stopPropagation(); startPipeline(def?.phase as PhaseId); }}
@@ -1018,8 +1076,9 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                           ↻
                         </button>
                       )}
-                      {/* F4 — run-from-here button (visible on hover, hidden when locked/running) */}
-                      {status !== 'error' && (
+                      {/* F4 — run-from-here button (visible on hover, hidden when locked/running).
+                          Same scoping rationale as the retry button above. */}
+                      {status !== 'error' && !isAgentAccessScoped && (
                         <button
                           className={styles.agentRunFromBtn}
                           onClick={(e) => { e.stopPropagation(); startPipeline(def?.phase as PhaseId); }}
@@ -1262,7 +1321,8 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   <button
                     className={styles.rerunBtn}
                     onClick={() => openRerun(selectedAgent!)}
-                    title="Re-run this agent with an editable prompt"
+                    disabled={!canRunThisAgent(selectedAgent)}
+                    title={canRunThisAgent(selectedAgent) ? 'Re-run this agent with an editable prompt' : 'You are not assigned to run this agent for this project.'}
                   >
                     Re-run
                   </button>
@@ -1302,7 +1362,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 <OrchestratorView
                   markdown={selectedRun.output ?? ''}
                   projectId={projectId}
-                  onRunAll={() => startPipeline('phase1')}
+                  onRunAll={isAgentAccessScoped ? undefined : () => startPipeline('phase1')}
                   isRunning={engineRunning}
                   canExport={canExportArtifacts}
                   exportDisabledReason={exportDisabledReason}
@@ -1371,8 +1431,22 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             <div className={styles.placeholder} style={{ color: 'var(--error)' }}>
               <p>Error: {selectedRun.error}</p>
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button className="btn-primary" onClick={() => startPipeline(project.currentPhase)}>Retry Pipeline</button>
-                <button className="btn-secondary" onClick={() => openRerun(selectedAgent!)}>Re-run with edited prompt</button>
+                <button
+                  className="btn-primary"
+                  disabled={isAgentAccessScoped}
+                  title={isAgentAccessScoped ? 'Your access is scoped to specific agents — use Re-run with edited prompt instead.' : undefined}
+                  onClick={() => startPipeline(project.currentPhase)}
+                >
+                  Retry Pipeline
+                </button>
+                <button
+                  className="btn-secondary"
+                  disabled={!canRunThisAgent(selectedAgent)}
+                  title={!canRunThisAgent(selectedAgent) ? 'You are not assigned to run this agent for this project.' : undefined}
+                  onClick={() => openRerun(selectedAgent!)}
+                >
+                  Re-run with edited prompt
+                </button>
               </div>
             </div>
           ) : !rerunAgent ? (
@@ -1383,13 +1457,16 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                     <button
                       className="btn-primary"
-                      disabled={engineRunning || !teamReady || (apiReady === false)}
+                      disabled={engineRunning || !teamReady || (apiReady === false) || isAgentAccessScoped}
+                      title={isAgentAccessScoped ? 'Your access is scoped to specific agents — use "Edit prompt and run" instead.' : undefined}
                       onClick={() => { if (selectedDef) startPipeline(selectedDef.phase); }}
                     >
                       Run {selectedDef!.name}
                     </button>
                     <button
                       className="btn-secondary"
+                      disabled={!canRunThisAgent(selectedAgent)}
+                      title={!canRunThisAgent(selectedAgent) ? 'You are not assigned to run this agent for this project.' : undefined}
                       onClick={() => { if (selectedAgent) openRerun(selectedAgent); }}
                     >
                       Edit prompt and run
@@ -1415,6 +1492,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               gate3: 'phase4',
               gate5: 'phase6',
             };
+            const nextPhase = gateToNext[pendingGate] as PhaseId | undefined;
             await updateProject(projectId, (p) => {
               p.reviewGates[pendingGate] = {
                 id: pendingGate,
@@ -1424,11 +1502,22 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 approvedBy: approvedById,
                 notes,
               };
-              p.status = 'running';
+              // Agent-access-scoped members can approve gates (canCommentApprove
+              // is independent of agent scoping) but must not auto-resume the
+              // full sequential pipeline afterward — that would run every
+              // downstream agent regardless of their assignment. Leave the
+              // project paused (parked at nextPhase) for an unscoped member
+              // (Owner/legacy Editor) to resume via the normal Run/Resume
+              // Pipeline button instead.
+              if (isAgentAccessScoped) {
+                p.status = 'paused';
+                if (nextPhase) p.currentPhase = nextPhase;
+              } else {
+                p.status = 'running';
+              }
             });
-            const nextPhase = gateToNext[pendingGate] as PhaseId | undefined;
             setPendingGate(null);
-            if (nextPhase) startPipeline(nextPhase);
+            if (nextPhase && !isAgentAccessScoped) startPipeline(nextPhase);
           }}
           onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}

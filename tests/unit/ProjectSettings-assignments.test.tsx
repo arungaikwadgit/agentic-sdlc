@@ -112,7 +112,7 @@ const ADMIN_MEMBER = {
   email: 'alice@example.com',
   role: 'Product Manager',
   avatarColor: '#4f46e5',
-  isAdmin: true,
+  appRole: 'project_owner' as const,
 };
 
 const NON_ADMIN_MEMBER = {
@@ -121,7 +121,7 @@ const NON_ADMIN_MEMBER = {
   email: 'dave@example.com',
   role: 'Engineer',
   avatarColor: '#0891b2',
-  isAdmin: false,
+  appRole: 'editor' as const,
 };
 
 async function openAssignmentsTab(user: ReturnType<typeof userEvent.setup>) {

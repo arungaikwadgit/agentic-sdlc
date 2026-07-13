@@ -18,7 +18,7 @@ cd backend && npm install
 cd ../frontend && npm install && cd ..
 ```
 
-### Backend (`backend/`) — local dev with PROXY_TOKEN auth
+### Backend (`backend/`) — local dev, three auth paths
 
 Copy and fill the backend env file:
 
@@ -26,7 +26,7 @@ Copy and fill the backend env file:
 copy backend\.env.example backend\.env
 ```
 
-Edit `backend\.env`:
+Minimal `backend\.env` to run agent calls only (no invite/team features):
 ```
 OPENAI_API_KEY=sk-proj-...
 OPENAI_MODEL=gpt-4o
@@ -34,7 +34,41 @@ PROXY_TOKEN=your-secret-token
 PORT=3001
 ```
 
-> **Note:** `backend/` uses a simple PROXY_TOKEN for local development. For production (Railway + Vercel), use `server/` with Supabase JWT auth instead — see the [Deployment Guide](./deployment-and-agentic-assessment.md).
+`checkToken()` in `backend/src/proxy.js` accepts, in order: (1) the
+`admin@local` / `admin` local-dev bypass (see below) — never available when
+`NODE_ENV=production`; (2) a real Supabase JWT, if `SUPABASE_URL`/
+`SUPABASE_ANON_KEY` are set; (3) the shared `PROXY_TOKEN` secret. With none of
+`PROXY_TOKEN`/`SUPABASE_URL` set, auth is effectively open (local/dev-only).
+
+**To exercise invite/team/password features locally**, also set in
+`backend\.env`:
+```
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_KEY=eyJ...        # service_role key — admin account provisioning
+ADMIN_EMAIL_ALLOWLIST=you@example.com   # comma-separated app admins (in addition to the admin@local bypass)
+# Invite emails — either one enables real sending; leave both unset for "dev
+# mode" (invite link/password still returned in the API response and UI, just
+# no email sent):
+RESEND_API_KEY=re_...
+GMAIL_USER=you@gmail.com
+GMAIL_APP_PASSWORD=xxxxxxxxxxxxxxxx   # 16-char Google App Password, not your account password
+APP_URL=http://localhost:5173
+```
+See `backend/.env.example` for the full list with inline explanations, and
+`docs/owner-capability-checklist.md` for what each role can do once this is
+configured.
+
+**Admin bypass for local testing** — sign in on the login screen with
+`admin@local` / `admin` (see `frontend/src/lib/adminMode.ts`,
+`ADMIN_BYPASS_ENABLED = import.meta.env.DEV`) to get full app-admin
+capabilities (including granting `project_owner` via invite) without needing
+a real Supabase session. This only works in dev builds — production always
+requires real Supabase auth. `tests/e2e/fixtures/auth.ts` uses the same
+bypass for Playwright E2E runs via `CI_ADMIN_BYPASS=true` (alternative:
+`CI_SUPABASE_EMAIL` + `CI_SUPABASE_PASSWORD` for a real-auth E2E run).
+
+> For production (Railway + Vercel), use `server/` with Supabase JWT auth instead of `backend/`'s PROXY_TOKEN fallback — see the [Deployment Guide](./deployment-and-agentic-assessment.md).
 
 ### Frontend (`frontend/`)
 
@@ -146,27 +180,67 @@ root cause of the `GET /api/projects/:id 404` bug where a bookmarked project
 ID stopped resolving after a `nodemon` auto-restart wiped the in-memory
 project store.
 
-## Invite Links (manual sharing + security model)
+## Invite Links (default-password accounts + security model)
 
-The email-invite feature is on hold. The supported way to add someone to a
-project today is the **manual invite link**: an Admin or Project Owner
-generates a link in Project Settings → Team, copies it, and shares it however
-they like (Slack, chat, in person). Email sending (Resend/Gmail) still runs
-automatically if configured on the backend, but it's best-effort — invite
-creation always succeeds and always returns a copyable link, whether or not
-the email actually sends. If email delivery fails, the UI shows the failure
-reason and the link is still there to copy and share by hand.
+Adding someone to a project is a 3-step flow: an Admin or Project Owner sends
+an invite from Project Settings → Team; the invitee signs in immediately with
+a generated default password (no confirmation-email wait); the app then
+forces them to set their own password before they can use anything else.
+
+**Account provisioning (`POST /api/invite/send`)**
+- The invitee's real Supabase Auth account is created up front —
+  `provisionInviteeAccount()` in `backend/src/proxy.js` — with
+  `email_confirm: true` and a generated default password in the format
+  `firstname_ddmmyyyy` (e.g. `arun_11072026`). No separate email-confirmation
+  step is needed: the password itself, delivered out of band via the invite
+  email/link, is the proof of mailbox ownership.
+- The invite link, raw token, and generated password are always returned in
+  the API response, whether or not the notification email actually sends —
+  email delivery (Resend/Gmail) is best-effort. If it fails, the UI shows the
+  failure reason and the admin can still copy the link/password to share
+  manually.
+- If the email was already registered (a re-invite, or someone removed and
+  re-added), the existing Supabase account's password is reset instead of
+  creating a duplicate.
+
+**Forced password change**
+- Both a fresh invite accept and an admin-triggered reset
+  (`POST /api/invite/reset-password`) set
+  `user_metadata.must_change_password = true`. `AuthGuard.tsx` blocks the
+  entire app behind `ForcedPasswordChange` until it's cleared.
+- Clearing it is self-service and client-only:
+  `supabase.auth.updateUser({ password, data: { must_change_password: false
+  } })` in `ForcedPasswordChange.tsx` — no server route involved.
+  `AuthContext`'s `onAuthStateChange` listener picks up the resulting
+  `USER_UPDATED` event and the gate lifts automatically.
 
 **Who can create/revoke/view invites for a project**
 - Any app Admin (`ADMIN_EMAIL_ALLOWLIST`, checked in `backend/src/proxy.js`),
-  for any project.
+  for any project — **including granting `project_owner`**.
 - The project's own Project Owner (the project creator, or anyone with an
-  accepted `app_role='project_owner'` `team_members` row for that project).
-- A Project Owner can only grant `editor`, `reviewer`, or `viewer` —
-  `project_owner` itself is never grantable through an invite link, by anyone.
+  accepted `app_role='project_owner'` `team_members` row for that project) —
+  **including granting `project_owner`** to someone else (delegating full
+  ownership). `authorizeInviteAction()`'s role-ceiling check only rejects a
+  requested role ranked *strictly higher* than `project_owner`
+  (`appRoleRank(requestedAppRole) > appRoleRank('project_owner')`), which is
+  impossible today since `project_owner` is the top rank — this was changed
+  from an earlier `>=` comparison specifically so a Project Owner can
+  delegate. See `docs/owner-capability-checklist.md` for the full capability
+  matrix and for a note on a stale code comment near `INVITABLE_APP_ROLES`
+  that still claims `project_owner` is "already excluded" — the array itself
+  contradicts that comment.
+- **Client-side note**: the Team Settings UI (`ProjectSettings.tsx` and
+  `TeamPanel.tsx`) used to have a hardcoded block preventing anyone —
+  including Admins — from sending a `project_owner` invite at all, left over
+  from before this was allowed server-side. That block was removed
+  2026-07-11 after being caught live; the server has always been the actual
+  authority.
 - Everyone else gets `403 Forbidden`. Denied attempts are logged (best-effort,
   non-blocking) to `invite_log` when a team_members row exists to attach the
   log entry to, or to the server console otherwise.
+- Removing/downgrading the project's last remaining Project Owner is blocked
+  client-side (`wouldLeaveNoOwner()` in `ProjectSettings.tsx`) so a project
+  can never end up with zero owners.
 
 **How the token is protected**
 - The invite token is a random UUID, shown to the caller exactly once (in the
@@ -196,11 +270,60 @@ None of this is enforced client-side only — the invite-accept page
 server endpoints and only shows "you're in" after the server confirms; it
 never grants access based on URL parameters alone.
 
-**Testing**: `backend/src/proxy.inviteSecurity.test.ts` covers the token
-hashing / role-ranking / expiry / admin-allowlist logic without a database.
-`backend/src/proxy.inviteFlow.integration.test.ts` covers the full
+**Automated tests**: `backend/src/proxy.inviteSecurity.test.ts` covers the
+token hashing / role-ranking / expiry / admin-allowlist logic without a
+database. `backend/src/proxy.inviteFlow.integration.test.ts` covers the full
 create → accept/revoke → authorization HTTP flow against a real Postgres and
 is skipped automatically if `POSTGRES_URL_TEST` isn't set.
+`backend/src/proxy.inviteDefaultPassword.test.ts` and
+`backend/src/proxy.sendInviteEmail.test.ts` cover default-password generation/
+provisioning and the email-send path specifically;
+`backend/src/proxy.inviteAccept.integration.test.ts` covers the sign-in-with-
+default-password → accept flow. See `docs/owner-capability-checklist.md` for
+a source-verified capability matrix and what's still unverified against a
+live browser session.
+
+**Manual testing flow (real browser, local dev)**
+
+Prerequisite: `backend/.env` has `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` set
+(see Backend Setup above) — invite send needs a real Supabase project to
+create the invitee's account against, even in local dev.
+
+1. Start both servers: `npm run dev` (backend on :3001, frontend on :5173).
+2. Open http://localhost:5173 and sign in as `admin@local` / `admin` (the
+   local admin-bypass login — gives you full admin rights without a real
+   Supabase session for your own account).
+3. Open or create a project, go to **Project Settings → Team**, and click
+   **Invite**. Enter a real email address you control and pick a role —
+   try `project_owner` first, since that's the case that changed (an app
+   admin can now grant it; a Project Owner still cannot — see the
+   capability table above).
+4. The invite modal shows the generated invite link, the raw token, and the
+   default password (`firstname_ddmmyyyy`, e.g. `arun_11072026`) — copy the
+   password down, you'll need it in the next step. If Resend/Gmail is
+   configured, an email also goes out with the same info; check the
+   inbox to confirm delivery, but don't rely on it arriving to keep testing.
+5. Open the invite link in a **new incognito window** (so you don't clobber
+   your `admin@local` session) and sign in with the invitee's email + the
+   default password from step 4.
+6. Confirm you land on **`ForcedPasswordChange`** — the app should not let
+   you navigate anywhere else. Set a new password (8+ characters).
+7. Confirm the app unlocks automatically after saving (no manual redirect
+   needed — `AuthContext`'s listener clears the gate) and that you land in
+   the project with the role you were invited as.
+8. Back in the `admin@local` window, refresh Project Settings → Team and
+   confirm the new member shows up with the correct role, and that
+   re-inviting the same email now resets their password instead of erroring.
+9. As a negative check, sign in as that non-admin invitee and try to invite
+   someone else as `project_owner` from Team settings — it should be
+   rejected (button hidden, or a `403` if forced via API), confirming the
+   role-ceiling check actually holds in a live session, not just in tests.
+10. Clean up: `node backend/scripts/cleanupInviteTestUsers.js <email>` to
+    delete the real Supabase Auth user(s) you created while testing.
+
+Steps 1-8 confirm the money-path (send → default-password sign-in → forced
+change); step 9 is the specific case the RBAC consolidation this doc
+describes was meant to fix, so don't skip it.
 
 ## Running Locally
 
@@ -238,7 +361,7 @@ docker-compose -f docker/docker-compose.yml up
 | `cd frontend && npm test` | Run Vitest unit tests |
 | `cd frontend && npm run build` | Production build |
 | `cd frontend && npm run test:coverage` | Tests with coverage report |
-| `cd frontend && npm run test:e2e` | Playwright E2E tests (needs running dev server) |
+| `cd frontend && npm run test:e2e` | Playwright E2E tests (needs running dev server). Auth is handled by `tests/e2e/fixtures/auth.ts`: set `CI_ADMIN_BYPASS=true` to sign in as `admin@local` (no Supabase needed), or `CI_SUPABASE_EMAIL` + `CI_SUPABASE_PASSWORD` for a real-auth run. Neither set → no-op if the app has no login requirement. |
 | `k6 run tests/performance/pipeline-load.js` | K6 load test (needs k6 installed) |
 
 ## Project Structure

@@ -240,6 +240,7 @@ export class PipelineEngine {
           userPrompt,
           agentId,
           provider,
+          projectId: this.projectId,
         });
         output = l3Result.output;
         tokensUsed = l3Result.tokensUsed;
@@ -249,7 +250,7 @@ export class PipelineEngine {
       } else {
         // ── L2 path (original single-shot call) ─────────────────────────────
         // H-07 fix: 120s per-agent timeout
-        const resp = await api.callAgent({ systemPrompt, userPrompt, agentId, provider, signal: AbortSignal.timeout(120_000) });
+        const resp = await api.callAgent({ systemPrompt, userPrompt, agentId, provider, projectId: this.projectId, signal: AbortSignal.timeout(120_000) });
         output = api.extractText(resp);
         tokensUsed = resp.usage?.total_tokens ?? 0;
         respProvider = resp.provider;
@@ -259,7 +260,7 @@ export class PipelineEngine {
       // ── Corrective check for uxMockups — fires for BOTH L3 and L2 paths ──
       if (agentId === 'uxMockups') {
         const desiredHtmlCount = Math.min(Math.max(ctx.mockupVersionCount ?? 2, 1), 4);
-        const corrected = await applyUxMockupsCorrectiveCheck(systemPrompt, userPrompt, output, desiredHtmlCount, provider);
+        const corrected = await applyUxMockupsCorrectiveCheck(systemPrompt, userPrompt, output, desiredHtmlCount, provider, this.projectId);
         if (corrected.output !== output) {
           output = corrected.output;
           tokensUsed += corrected.extraTokens;
@@ -355,6 +356,7 @@ async function applyUxMockupsCorrectiveCheck(
   existingOutput: string,
   desiredHtmlCount: number,
   provider?: 'openai' | 'claude',
+  projectId?: string,
 ): Promise<{ output: string; extraTokens: number; provider?: 'openai' | 'claude'; model?: string }> {
   const htmlBlockCount = (existingOutput.match(/```html/g) ?? []).length;
   if (htmlBlockCount >= desiredHtmlCount) {
@@ -371,6 +373,7 @@ async function applyUxMockupsCorrectiveCheck(
       userPrompt: correctivePrompt,
       agentId: 'uxMockups',
       provider,
+      projectId,
       signal: AbortSignal.timeout(180_000),
     });
     const retryOutput = api.extractText(retryResp);
@@ -476,6 +479,7 @@ ${userPromptExtra.trim()}` : '');
         userPrompt,
         agentId,
         provider,
+        projectId,
       });
       output = l3Result.output;
       tokensUsed = l3Result.tokensUsed;
@@ -489,6 +493,7 @@ ${userPromptExtra.trim()}` : '');
         userPrompt,
         agentId,
         provider,
+        projectId,
         signal: AbortSignal.timeout(120_000),
       });
 
@@ -501,7 +506,7 @@ ${userPromptExtra.trim()}` : '');
     // ── Corrective check for uxMockups — fires for BOTH L3 and L2 paths ──
     if (agentId === 'uxMockups') {
       const desiredHtmlCount = Math.min(Math.max(ctx.mockupVersionCount ?? 2, 1), 4);
-      const corrected = await applyUxMockupsCorrectiveCheck(systemPromptOverride, userPrompt, output, desiredHtmlCount, provider);
+      const corrected = await applyUxMockupsCorrectiveCheck(systemPromptOverride, userPrompt, output, desiredHtmlCount, provider, projectId);
       if (corrected.output !== output) {
         output = corrected.output;
         tokensUsed += corrected.extraTokens;

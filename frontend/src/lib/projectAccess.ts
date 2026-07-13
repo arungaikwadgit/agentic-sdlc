@@ -1,4 +1,6 @@
 import type { AppRole, Project, TeamMember } from '@/types/project.types';
+import { ROLE_PERMISSIONS } from '@/types/project.types';
+import type { AgentId } from '@/types/agent.types';
 
 export interface ProjectAccessContext {
   adminMode?: boolean;
@@ -22,7 +24,7 @@ function norm(value?: string | null): string {
  * Synthesizes a virtual project_owner TeamMember for the Postgres row owner
  * (project.ownerId, set once at creation and immutable) when data.teamMembers
  * has no matching entry for them. This is a safety net for projects created
- * before creator-seeding existed (or any partial write) — the person who
+ * before creator-seeding existed (or any partial write) -- the person who
  * created the project should never be locked out of their own Settings tab.
  */
 function ownerFallbackMember(project: Project, ctx: ProjectAccessContext): TeamMember | null {
@@ -35,7 +37,6 @@ function ownerFallbackMember(project: Project, ctx: ProjectAccessContext): TeamM
     role: 'Owner',
     appRole: 'project_owner',
     avatarColor: '#6366F1',
-    isAdmin: true,
     inviteStatus: 'accepted',
   };
 }
@@ -54,10 +55,17 @@ export function getProjectMember(project: Project, ctx: ProjectAccessContext): T
   return ownerFallbackMember(project, ctx);
 }
 
+/**
+ * The ONE place "can this person administer this project" is decided.
+ * Authoritative source is appRole === 'project_owner' -- there used to be
+ * a second, independent TeamMember.isAdmin boolean that could drift from
+ * appRole (see the @deprecated note on that field in project.types.ts);
+ * that duplication is retired as of this function.
+ */
 export function isProjectAdminUser(project: Project, ctx: ProjectAccessContext): boolean {
   if (ctx.adminMode) return true;
   const member = getProjectMember(project, ctx);
-  return !!member?.isAdmin;
+  return member?.appRole === 'project_owner';
 }
 
 export function getProjectExportPermission(project: Project, ctx: ProjectAccessContext): ExportPermissionState {
@@ -88,5 +96,56 @@ export function getProjectExportPermission(project: Project, ctx: ProjectAccessC
     reason: allowed
       ? null
       : 'Your role does not currently have download/export access for this project.',
+  };
+}
+
+export interface AgentRunPermissionState {
+  canRun: boolean;
+  /** True when this member is restricted to a specific agent set (agentAccessScoped) — as opposed to being denied for a role-level reason (e.g. Reviewer/Viewer). */
+  isScoped: boolean;
+  member: TeamMember | null;
+  reason: string | null;
+}
+
+/**
+ * Per-agent run/edit permission — the UI half of the mandatory-agent-
+ * assignment feature (2026-07-11; see InviteModal in ProjectSettings.tsx and
+ * authorizeAgentRun() in backend/src/proxy.js, which is the enforced half).
+ *
+ * Project Owners and admin-mode always get canRun: true regardless of
+ * assignment. Reviewer/Viewer are denied here for the ordinary role-level
+ * reason (ROLE_PERMISSIONS.canRunAgents === false), unrelated to scoping.
+ * An Editor is restricted to project.agentAssignments entries that include
+ * their member id only when TeamMember.agentAccessScoped is true; legacy/
+ * grandfathered Editors (agentAccessScoped falsy) keep full access, same as
+ * before this feature existed.
+ */
+export function getAgentRunPermission(
+  project: Project,
+  ctx: ProjectAccessContext,
+  agentId: AgentId
+): AgentRunPermissionState {
+  if (ctx.adminMode) return { canRun: true, isScoped: false, member: null, reason: null };
+
+  const member = getProjectMember(project, ctx);
+  if (!member) {
+    return { canRun: false, isScoped: false, member: null, reason: 'You are not a member of this project.' };
+  }
+
+  if (!ROLE_PERMISSIONS[member.appRole].canRunAgents) {
+    return { canRun: false, isScoped: false, member, reason: 'Your assigned project role cannot run agents.' };
+  }
+
+  if (member.appRole === 'project_owner' || !member.agentAccessScoped) {
+    return { canRun: true, isScoped: false, member, reason: null };
+  }
+
+  const assignments = project.agentAssignments ?? [];
+  const assigned = assignments.some((a) => a.agentId === agentId && a.memberIds.includes(member.id));
+  return {
+    canRun: assigned,
+    isScoped: true,
+    member,
+    reason: assigned ? null : 'You are not assigned to run this agent for this project.',
   };
 }

@@ -2,7 +2,7 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { updateProject, deleteProject, restoreProject as restoreProjectApi, checkIsAppAdmin } from '@/db/projectRepository';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
@@ -83,23 +83,80 @@ function parseTechTags(value: string | undefined): string[] {
 interface InviteModalProps {
   existingMember?: TeamMember;   // set when inviting / re-inviting an existing member
   prefill?: { name: string; email: string; jobRole: string };  // pre-fill for new member flow
-  onSubmit: (data: { name: string; email: string; jobRole: string; appRole: AppRole }) => void;
+  /** Current project.agentAssignments — used to seed the agent picker for an existing member being resent an invite, and to find role-template suggestions. */
+  assignments: AgentAssignment[];
+  onSubmit: (data: { name: string; email: string; jobRole: string; appRole: AppRole; agentIds: AgentId[] }) => void;
   onClose: () => void;
   sending: boolean;
 }
 
-function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: InviteModalProps) {
+// Exported (named export) so it's independently unit-testable without
+// mounting the rest of ProjectSettings (which needs AuthContext/AlertContext
+// and a live project) — InviteModal itself is pure props-in/callback-out,
+// no context hooks. See tests/unit/InviteModal-agentPicker.test.tsx.
+export function InviteModal({ existingMember, prefill, assignments, onSubmit, onClose, sending }: InviteModalProps) {
   const [name,    setName]    = useState(existingMember?.name  ?? prefill?.name    ?? '');
   const [email,   setEmail]   = useState(existingMember?.email ?? prefill?.email   ?? '');
   const [jobRole, setJobRole] = useState(existingMember?.role  ?? prefill?.jobRole ?? '');
   const [appRole, setAppRole] = useState<AppRole>(existingMember?.appRole ?? 'viewer');
   const [err,     setErr]     = useState('');
 
+  // Agents this member will be able to run/edit once appRole === 'editor'.
+  // Every other agent stays view-only for them — see authorizeAgentRun() in
+  // backend/src/proxy.js and the per-agent gating in ProjectWorkspace.tsx.
+  // Seeded from the member's existing assignment when resending/editing an
+  // already-invited member; empty for a brand-new invite.
+  const [selectedAgents, setSelectedAgents] = useState<Set<AgentId>>(() => {
+    if (!existingMember) return new Set<AgentId>();
+    return new Set(
+      assignments.filter((a) => a.memberIds.includes(existingMember.id)).map((a) => a.agentId)
+    );
+  });
+
+  // Pre-checks a role template's suggestedAgents the first time the current
+  // Job title text matches a known template (e.g. "Tech Lead"). Only ADDS
+  // suggestions, never removes a selection the admin already made, and only
+  // fires once per distinct matched template so unchecking a suggested agent
+  // sticks instead of reappearing on the next keystroke. Custom job titles
+  // (typed via "Custom role..." in the inline Add Team Member form, or any
+  // free text with no matching template) simply never match here, so the
+  // picker starts/stays empty and relies entirely on manual selection — same
+  // mandatory-at-least-one rule applies either way (see submit() below).
+  const appliedTemplateRef = useRef<string | null>(null);
+  useEffect(() => {
+    const template = ROLE_TEMPLATES.find((r) => r.title.toLowerCase() === jobRole.trim().toLowerCase());
+    if (!template || appliedTemplateRef.current === template.id) return;
+    appliedTemplateRef.current = template.id;
+    setSelectedAgents((prev) => {
+      const next = new Set(prev);
+      template.suggestedAgents.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [jobRole]);
+
+  function toggleAgent(agentId: AgentId) {
+    setSelectedAgents((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId); else next.add(agentId);
+      return next;
+    });
+  }
+
+  const needsAgents = appRole === 'editor';
+  const agentSelectionMissing = needsAgents && selectedAgents.size === 0;
+
   function submit() {
     if (!name.trim())                              { setErr('Name is required'); return; }
     if (!email.trim() || !email.includes('@'))     { setErr('Valid email is required'); return; }
+    if (agentSelectionMissing) { setErr('Select at least one agent this Editor can run before sending the invite.'); return; }
     setErr('');
-    onSubmit({ name: name.trim(), email: email.trim().toLowerCase(), jobRole: jobRole.trim(), appRole });
+    onSubmit({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      jobRole: jobRole.trim(),
+      appRole,
+      agentIds: Array.from(selectedAgents),
+    });
   }
 
   const isResend = !!existingMember;
@@ -144,7 +201,7 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
           {appRole && (
             <p className={styles.roleHint}>{ROLE_PERMISSIONS[appRole].description}</p>
           )}
-          <p className={styles.fieldHint}>Invite links are unique, locked to this project, and cannot grant Project Owner access.</p>
+          <p className={styles.fieldHint}>Invite links are unique and locked to this project. Project Owner grants full control, including inviting others.</p>
         </div>
 
         {/* Role permissions mini-grid */}
@@ -171,10 +228,44 @@ function InviteModal({ existingMember, prefill, onSubmit, onClose, sending }: In
           ))}
         </div>
 
+        {/* Mandatory agent picker for Editor invites — governs what this
+            member can actually run/edit (see authorizeAgentRun() in
+            backend/src/proxy.js and per-agent gating in ProjectWorkspace.tsx).
+            Not shown for Project Owner (always full access regardless of
+            assignment) or Reviewer/Viewer (can't run any agent regardless of
+            assignment — canRunAgents is false for both at the appRole level). */}
+        {needsAgents && (
+          <div className={styles.formGroup}>
+            <label>Agents this Editor can run *</label>
+            <p className={styles.fieldHint}>
+              Required — this Editor will only be able to run and edit the agents checked below.
+              Every other agent stays view-only for them (they can still see its output, just can't run or edit it).
+            </p>
+            <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px' }}>
+              {PHASE_ORDER.map((phase) => (
+                <div key={phase}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', margin: '8px 0 4px' }}>
+                    {PHASE_LABELS[phase]}
+                  </div>
+                  {PHASE_AGENTS[phase].map((agentId) => (
+                    <label key={agentId} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, padding: '2px 0', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={selectedAgents.has(agentId)} onChange={() => toggleAgent(agentId)} />
+                      {AGENT_DEFINITIONS[agentId]?.name ?? agentId}
+                    </label>
+                  ))}
+                </div>
+              ))}
+            </div>
+            {agentSelectionMissing && (
+              <p className={styles.error}>Select at least one agent.</p>
+            )}
+          </div>
+        )}
+
         {err && <p className={styles.error}>{err}</p>}
 
         <div className={styles.addRow} style={{ marginTop: 4 }}>
-          <button className="btn-primary" onClick={submit} disabled={sending}>
+          <button className="btn-primary" onClick={submit} disabled={sending || agentSelectionMissing}>
             {sending ? 'Sending…' : isResend ? 'Resend Invite' : 'Send Invite'}
           </button>
           <button className={styles.actionBtn} onClick={onClose} disabled={sending}>Cancel</button>
@@ -198,7 +289,7 @@ export default function ProjectSettings({
   }
 
   const [adminSessionId, setAdminSessionId] = useState<string>(
-    project.activeAdminId ?? project.teamMembers?.find((m) => m.isAdmin)?.id ?? ''
+    project.activeAdminId ?? project.teamMembers?.find((m) => m.appRole === 'project_owner')?.id ?? ''
   );
 
   const members = project.teamMembers ?? [];
@@ -210,7 +301,12 @@ export default function ProjectSettings({
     userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
-  const isAdmin = !!adminMode || !!currentMember?.isAdmin;
+  // The ONE place this panel decides "can the current viewer edit anything
+  // here" — derived solely from appRole === 'project_owner' (see
+  // frontend/src/lib/projectAccess.ts's isProjectAdminUser, which this
+  // mirrors). There used to be a second, independent `currentMember.isAdmin`
+  // boolean that could disagree with appRole; that duplication is retired.
+  const isAdmin = !!adminMode || currentMember?.appRole === 'project_owner';
 
   // App-wide admin (ADMIN_EMAIL_ALLOWLIST on the server) — separate from the
   // per-project `isAdmin` above. Only app admins may soft-delete or restore a
@@ -314,10 +410,12 @@ export default function ProjectSettings({
 
   // ─── Invite logic ──────────────────────────────────────────────────────────
   async function sendInvite(member: TeamMember) {
-    if (member.appRole === 'project_owner') {
-      showAlert('Invite links cannot grant Project Owner access. Assign Editor, Reviewer, or Viewer first.', { kind: 'warning' });
-      return;
-    }
+    // No client-side block on appRole here — the server is the source of
+    // truth (authorizeInviteAction() in backend/src/proxy.js): an app Admin
+    // or this project's own Project Owner may grant project_owner too (a
+    // Project Owner delegating full ownership). A stale unconditional block
+    // used to live here from before that was allowed; removed so the "Send
+    // invite granting project_owner" path actually reaches the server.
     setInvSending(member.id);
     setInviteLink(null);
     setInviteError(null);
@@ -333,7 +431,7 @@ export default function ProjectSettings({
           name:        member.name,
           email:       member.email,
           appRole:     member.appRole ?? 'viewer',
-          invitedBy:   members.find((m) => m.isAdmin)?.name ?? 'Project Owner',
+          invitedBy:   members.find((m) => m.appRole === 'project_owner')?.name ?? 'Project Owner',
         }),
       });
       const data = await res.json();
@@ -417,19 +515,41 @@ export default function ProjectSettings({
     }
   }
 
-  async function changeAppRole(memberId: string, role: AppRole) {
-    await updateProject(project.id, (p) => {
-      const m = p.teamMembers.find((x) => x.id === memberId);
-      if (m) m.appRole = role;
+  // Reconciles project.agentAssignments so memberId ends up assigned to
+  // exactly `agentIds` — adding it to newly-selected agents and removing it
+  // from ones that were unchecked (needed for the resend/edit path, where an
+  // admin may narrow or widen an already-invited Editor's assignment).
+  // Mutates the Immer draft `p` in place; call inside updateProject().
+  function applyAgentAssignments(p: Project, memberId: string, agentIds: AgentId[]) {
+    const selected = new Set(agentIds);
+    p.agentAssignments = p.agentAssignments.map((a) => {
+      const has = a.memberIds.includes(memberId);
+      const shouldHave = selected.has(a.agentId);
+      if (has && !shouldHave) return { ...a, memberIds: a.memberIds.filter((id) => id !== memberId) };
+      if (!has && shouldHave) return { ...a, memberIds: [...a.memberIds, memberId] };
+      return a;
     });
+    for (const agentId of selected) {
+      if (!p.agentAssignments.find((a) => a.agentId === agentId)) {
+        p.agentAssignments.push({ agentId, memberIds: [memberId] });
+      }
+    }
   }
 
   /**
    * Called when the invite modal submits.
    * If inviteTarget === 'new': create the member first, then send invite.
    * If inviteTarget is a TeamMember: update role if changed, then send invite.
+   *
+   * data.agentIds is mandatory (>=1) from the modal whenever data.appRole is
+   * 'editor' (see InviteModal's needsAgents/agentSelectionMissing) — every
+   * Editor invited through this path gets agentAccessScoped: true, meaning
+   * ProjectWorkspace.tsx and backend/src/proxy.js's authorizeAgentRun() will
+   * restrict them to just these agents. Project Owner/Reviewer/Viewer are
+   * never scoped (Owner always has full access; Reviewer/Viewer can't run
+   * any agent regardless, per ROLE_PERMISSIONS.canRunAgents).
    */
-  async function handleInviteSubmit(data: { name: string; email: string; jobRole: string; appRole: AppRole }) {
+  async function handleInviteSubmit(data: { name: string; email: string; jobRole: string; appRole: AppRole; agentIds: AgentId[] }) {
     if (inviteTarget === 'new') {
       // Create new member then invite
       const newMember: TeamMember = {
@@ -439,11 +559,14 @@ export default function ProjectSettings({
         role:         data.jobRole || 'Team Member',
         appRole:      data.appRole,
         avatarColor:  AVATAR_COLORS[members.length % AVATAR_COLORS.length],
-        isAdmin:      members.length === 0,
         inviteStatus: 'pending',
         invitedAt:    Date.now(),
+        agentAccessScoped: data.appRole === 'editor',
       };
-      await updateProject(project.id, (p) => { p.teamMembers = [...(p.teamMembers ?? []), newMember]; });
+      await updateProject(project.id, (p) => {
+        p.teamMembers = [...(p.teamMembers ?? []), newMember];
+        if (data.appRole === 'editor') applyAgentAssignments(p, newMember.id, data.agentIds);
+      });
       if (members.length === 0) setAdminSessionId(newMember.id);
       setInviteTarget(null);
       await sendInvite(newMember);
@@ -451,10 +574,24 @@ export default function ProjectSettings({
     } else if (inviteTarget) {
       // Existing member — update appRole if changed, then resend
       if (inviteTarget.appRole !== data.appRole || inviteTarget.role !== data.jobRole) {
+        if (
+          inviteTarget.appRole === 'project_owner' &&
+          data.appRole !== 'project_owner' &&
+          wouldLeaveNoOwner(inviteTarget.id)
+        ) {
+          setRemoveError(
+            `Cannot change ${inviteTarget.name}'s role — they are the only Project Owner. Make another member Project Owner first.`
+          );
+          setInviteTarget(null);
+          return;
+        }
         await updateProject(project.id, (p) => {
           const m = p.teamMembers.find((x) => x.id === (inviteTarget as TeamMember).id);
-          if (m) { m.appRole = data.appRole; if (data.jobRole) m.role = data.jobRole; }
+          if (m) { m.appRole = data.appRole; if (data.jobRole) m.role = data.jobRole; m.agentAccessScoped = data.appRole === 'editor'; }
         });
+      }
+      if (data.appRole === 'editor') {
+        await updateProject(project.id, (p) => { applyAgentAssignments(p, (inviteTarget as TeamMember).id, data.agentIds); });
       }
       const updated = { ...inviteTarget, appRole: data.appRole, role: data.jobRole || inviteTarget.role };
       setInviteTarget(null);
@@ -646,7 +783,6 @@ export default function ProjectSettings({
       const newMember: TeamMember = {
         id: crypto.randomUUID(), name: newName.trim(), email: newEmail.trim(),
         role: roleValue, avatarColor: AVATAR_COLORS[members.length % AVATAR_COLORS.length],
-        isAdmin: isFirstMember,
         appRole: isFirstMember ? 'project_owner' : 'editor',
         inviteStatus: 'accepted',
       };
@@ -668,16 +804,20 @@ export default function ProjectSettings({
     }
   }
 
-  function wouldLeaveNoAdmin(memberId: string): boolean {
-    return members.filter((m) => m.isAdmin && m.id !== memberId).length === 0;
+  // Guards against ever leaving a project with zero Project Owners (which
+  // would lock everyone out of Settings, since that's now the sole edit
+  // gate). Used by removeMember below and by the role-change guard in
+  // handleInviteSubmit.
+  function wouldLeaveNoOwner(memberId: string): boolean {
+    return members.filter((m) => m.appRole === 'project_owner' && m.id !== memberId).length === 0;
   }
 
   async function removeMember(memberId: string) {
     if (!isAdmin) return;
     setRemoveError(null);
     const target = members.find((m) => m.id === memberId);
-    if (target?.isAdmin && wouldLeaveNoAdmin(memberId)) {
-      setRemoveError(`Cannot remove ${target.name} — they are the only admin. Assign another admin first.`);
+    if (target?.appRole === 'project_owner' && wouldLeaveNoOwner(memberId)) {
+      setRemoveError(`Cannot remove ${target.name} — they are the only Project Owner. Make another member Project Owner first.`);
       return;
     }
     await updateProject(project.id, (p) => {
@@ -686,20 +826,6 @@ export default function ProjectSettings({
       if (p.activeAdminId === memberId) p.activeAdminId = undefined;
     });
     if (adminSessionId === memberId) setAdminSessionId('');
-  }
-
-  async function toggleAdmin(memberId: string) {
-    if (!isAdmin) return;
-    setRemoveError(null);
-    const target = members.find((m) => m.id === memberId);
-    if (target?.isAdmin && wouldLeaveNoAdmin(memberId)) {
-      setRemoveError(`Cannot revoke admin from ${target.name} — they are the only admin. Grant admin to another member first.`);
-      return;
-    }
-    await updateProject(project.id, (p) => {
-      const m = p.teamMembers.find((x) => x.id === memberId);
-      if (m) m.isAdmin = !m.isAdmin;
-    });
   }
 
   async function toggleAgentMember(agentId: AgentId, memberId: string) {
@@ -813,6 +939,7 @@ export default function ProjectSettings({
         <InviteModal
           existingMember={inviteTarget !== 'new' ? inviteTarget : undefined}
           prefill={inviteTarget === 'new' ? invitePrefill : undefined}
+          assignments={assignments}
           onSubmit={handleInviteSubmit}
           onClose={() => { setInviteTarget(null); setInvitePrefill(undefined); }}
           sending={invSending !== null}
@@ -837,7 +964,7 @@ export default function ProjectSettings({
             <select value={adminSessionId} onChange={(e) => selectAdminSession(e.target.value)} className={styles.adminSelect}>
               <option value="">— Select your identity —</option>
               {members.map((m) => (
-                <option key={m.id} value={m.id}>{m.name} ({m.role}){m.isAdmin ? ' 🔑' : ''}</option>
+                <option key={m.id} value={m.id}>{m.name} ({m.role}){m.appRole === 'project_owner' ? ' 🔑' : ''}</option>
               ))}
             </select>
             {!isAdmin && members.length > 0 && (
@@ -1182,7 +1309,7 @@ export default function ProjectSettings({
                         const roleTemplate     = ROLE_TEMPLATES.find((r) => r.title === m.role);
                         const isCurrentSession = adminSessionId === m.id;
                         const hasUnmapped      = assignedAgents.length === 0;
-                        const isLastAdmin      = m.isAdmin && wouldLeaveNoAdmin(m.id);
+                        const isLastOwner      = m.appRole === 'project_owner' && wouldLeaveNoOwner(m.id);
                         const appRole          = m.appRole ?? 'viewer';
                         const invStatus        = m.inviteStatus;
                         const rc               = roleColors[appRole]   ?? '#6b7280';
@@ -1195,7 +1322,7 @@ export default function ProjectSettings({
                               <div className={styles.memberInfo}>
                                 <div className={styles.memberNameRow}>
                                   <span className={styles.memberName}>{m.name}</span>
-                                  {m.isAdmin && <span className={styles.adminBadge}>Admin</span>}
+                                  {m.appRole === 'project_owner' && <span className={styles.adminBadge}>Owner</span>}
                                   {isCurrentSession && <span className={styles.youBadge}>You</span>}
                                   {/* Access role badge */}
                                   <span style={{ fontSize: 11, padding: '1px 7px', borderRadius: 10, background: rc + '22', color: rc, marginLeft: 2 }}>
@@ -1265,16 +1392,6 @@ export default function ProjectSettings({
                                     Revoke
                                   </button>
                                 )}
-                                {isAdmin && (
-                                  <button
-                                    className={styles.actionBtn}
-                                    onClick={() => toggleAdmin(m.id)}
-                                    title={isLastAdmin ? 'Cannot revoke — only admin' : m.isAdmin ? 'Revoke admin' : 'Grant admin'}
-                                    disabled={isLastAdmin && m.isAdmin}
-                                  >
-                                    {m.isAdmin ? '🔑 Admin' : '○ Make admin'}
-                                  </button>
-                                )}
                                 {isAdmin && invStatus === 'accepted' && (
                                   <button
                                     className={styles.actionBtn}
@@ -1289,8 +1406,8 @@ export default function ProjectSettings({
                                   <button
                                     className={`${styles.actionBtn} ${styles.removeBtn}`}
                                     onClick={() => removeMember(m.id)}
-                                    title={isLastAdmin ? 'Cannot remove — only admin' : 'Remove member'}
-                                    disabled={isLastAdmin}
+                                    title={isLastOwner ? 'Cannot remove — only Project Owner' : 'Remove member'}
+                                    disabled={isLastOwner}
                                   >
                                     Remove
                                   </button>
@@ -1444,14 +1561,14 @@ export default function ProjectSettings({
                       <div className={styles.exportAccessGrid}>
                         {members.map((m) => {
                           const active = enabledExportMembers.includes(m.id);
-                          const alwaysAllowed = m.isAdmin;
+                          const alwaysAllowed = m.appRole === 'project_owner';
                           return (
                             <button
                               key={m.id}
                               className={styles.exportAccessMember + (active ? ' ' + styles.exportAccessMemberActive : '')}
                               onClick={() => !alwaysAllowed && toggleExportMemberAccess(m.id)}
                               disabled={alwaysAllowed}
-                              title={alwaysAllowed ? 'Admins already have export access' : (active ? 'Remove this member export access' : 'Grant this member export access')}
+                              title={alwaysAllowed ? 'Project Owners already have export access' : (active ? 'Remove this member export access' : 'Grant this member export access')}
                             >
                               <span className={styles.exportAccessMemberMain}>
                                 <span className={styles.avatarSmall} style={{ background: m.avatarColor }}>{initials(m.name)}</span>

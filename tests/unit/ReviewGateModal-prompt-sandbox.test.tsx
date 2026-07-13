@@ -14,6 +14,16 @@ import type { Project } from '../../frontend/src/types/project.types';
 import { PHASE_AGENTS } from '../../frontend/src/agents/constants';
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
 
+// ── Mock contexts/AuthContext — ReviewGateModal.tsx calls useAuth()
+// unconditionally at the top of the component (to compute exportPermission
+// via getProjectExportPermission()); without this mock, useAuth() throws
+// "must be used inside <AuthProvider>" and every test in this file fails to
+// render. Pre-existing gap, same root cause already found and fixed in the
+// 4 ProjectWorkspace-*.test.tsx files this session. ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'owner-user-1', email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
+
 // ── Mock heavy/child components ─────────────────────────────────────────────
 vi.mock('../../frontend/src/components/documents/DocumentViewer', () => ({
   default: ({ markdown }: { markdown: string }) => (
@@ -273,7 +283,15 @@ describe('ReviewGateModal — prompt sandbox', () => {
   });
 
   // TS-79
-  it('confirms before running when an injection warning is present, and aborts if declined', async () => {
+  // NOTE: the component no longer uses the native window.confirm() dialog for
+  // this -- runDryRun()'s guard (ReviewGateModal.tsx ~line 216-221) instead
+  // surfaces an inline "Run anyway" button next to the injection warning,
+  // and "Run & Update Output" itself is a no-op (early return) while the
+  // warning is unacknowledged. This test predates that inline-confirmation
+  // refactor and asserted against the old confirm()-dialog UX; updated to
+  // match current behavior (pre-existing test/product drift, unrelated to
+  // the isAdmin -> appRole RBAC consolidation this session focused on).
+  it('surfaces an inline "Run anyway" control when an injection warning is present, and aborts until acknowledged', async () => {
     renderModal();
     await selectAgent(AGENT_WITH_DOWNSTREAM);
     await openPromptSandbox();
@@ -283,21 +301,19 @@ describe('ReviewGateModal — prompt sandbox', () => {
     fireEvent.change(textarea, { target: { value: 'Do something suspicious pattern' } });
     await screen.findByText(/Possible prompt injection detected/);
 
-    // Decline the confirm dialog → dry run aborted.
-    confirmSpy.mockReturnValue(false);
+    // "Run & Update Output" is a no-op while the warning is unacknowledged.
     await userEvent.click(screen.getByRole('button', { name: /Run & Update Output/ }));
-    expect(confirmSpy).toHaveBeenCalled();
     expect(callAgentMock).not.toHaveBeenCalled();
 
-    // Accept the confirm dialog → dry run proceeds.
-    confirmSpy.mockReturnValue(true);
+    // Acknowledging via "Run anyway" sets injectionOverride, letting the
+    // next "Run & Update Output" click proceed.
     callAgentMock.mockResolvedValue({
       choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
     extractTextMock.mockReturnValue('OK');
 
-    await userEvent.click(screen.getByRole('button', { name: /Run & Update Output/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Run anyway' }));
     await waitFor(() => expect(callAgentMock).toHaveBeenCalledTimes(1));
   });
 
@@ -372,14 +388,22 @@ describe('ReviewGateModal — prompt sandbox', () => {
   // TS-85
   it('shows a downstream-agents hint for an agent that other agents depend on', async () => {
     renderModal();
-    await selectAgent(AGENT_WITH_DOWNSTREAM); // dataModel — architecture depends on it
+    await selectAgent(AGENT_WITH_DOWNSTREAM);
     await openPromptSandbox();
     await waitFor(() => getPromptTextarea());
 
-    // 'dataModel' has two downstream dependents (Architecture, Security &
-    // Compliance) → component renders the plural "depend on this".
-    const downstreamName = AGENT_DEFINITIONS.architecture.name; // 'Architecture'
-    expect(screen.getByText(new RegExp(downstreamName))).toBeInTheDocument();
+    // uxResearch's actual downstream dependents (per AGENT_DEFINITIONS
+    // dependsOn) are Interaction Design Spec (dependsOn: ['uxResearch']) and
+    // UX Mockups & Style Guide (dependsOn: ['uxResearch', 'interaction',
+    // 'architecture']) -- NOT Architecture, which was the original (wrong)
+    // assertion here. Architecture's name also collides with the sidebar's
+    // own "Architecture Design Document" button label, which is what made
+    // the original getByText(/Architecture/) ambiguous once rendering
+    // actually succeeded (previously masked by the useAuth() crash).
+    // Match the full hint fragment (not just "Interaction Design"), since
+    // that shorter substring also appears in the sidebar's "Interaction
+    // Design Spec" button label and would otherwise be ambiguous.
+    expect(screen.getByText(/Interaction Design, UX Mockups/)).toBeInTheDocument();
     expect(screen.getByText(/depend on this/)).toBeInTheDocument();
   });
 

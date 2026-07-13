@@ -11,6 +11,125 @@ import { requireAuth, requireProjectRole, requireAppAdmin, isAppAdmin } from '..
 
 const router = Router();
 
+// team_members is the ONE place project roles/access live now (see
+// backend/migrations/006_consolidate_team_members.sql -- project_members was
+// dropped, it was a leftover from an earlier, abandoned design that nothing
+// in this project's real migration history ever wrote to consistently).
+const TEAM_ROLES = ['project_owner', 'editor', 'reviewer', 'viewer'] as const;
+type TeamRole = (typeof TEAM_ROLES)[number];
+
+function isTeamRole(value: unknown): value is TeamRole {
+  return typeof value === 'string' && (TEAM_ROLES as readonly string[]).includes(value);
+}
+
+/** Scans all Supabase auth users to find one by email (case-insensitive).
+ * There's no direct "get user by email" in the admin API, so this pages
+ * through listUsers() the same way backend/src/proxy.js's
+ * findSupabaseUserByEmail() does. Only called for team members who don't
+ * already have a user_id on save, so the volume is small in practice. */
+async function findUserIdByEmail(email: string): Promise<string | null> {
+  const target = email.trim().toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 25; page++) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) return null;
+    const match = data.users.find((u) => (u.email ?? '').toLowerCase() === target);
+    if (match) return match.id;
+    if (data.users.length < perPage) return null;
+  }
+  return null;
+}
+
+interface JsonTeamMember {
+  email?: unknown;
+  name?: unknown;
+  role?: unknown;        // job title (e.g. "Product Manager") -- maps to team_members.job_role
+  appRole?: unknown;     // RBAC role -- maps to team_members.app_role
+  avatarColor?: unknown;
+  inviteStatus?: unknown;
+}
+
+/**
+ * Keeps the real team_members table in sync with whatever the Team panel
+ * just saved into data.teamMembers (add without invite, role change,
+ * removal -- all of which save through PATCH /:id below, which is the only
+ * place data.teamMembers is written from). team_members is what
+ * requireProjectRole(), the projects list below, and the database's own RLS
+ * policies all check -- without this sync, an edit made here would show up
+ * in the UI (since the UI reads data.teamMembers back) but never actually
+ * change anyone's real access, which is the exact bug this whole
+ * consolidation was meant to close.
+ *
+ * Removed members are marked invite_status='revoked' rather than deleted,
+ * to keep invite_log's audit trail intact (it references team_member_id).
+ *
+ * Best-effort: failures here are logged but never fail the save itself.
+ */
+async function syncTeamMembersFromProjectData(
+  projectId: string,
+  ownerId: string,
+  teamMembers: unknown,
+): Promise<void> {
+  if (!Array.isArray(teamMembers)) return;
+
+  const members = (teamMembers as JsonTeamMember[]).filter(
+    (m): m is JsonTeamMember & { email: string } =>
+      !!m && typeof m === 'object' && typeof m.email === 'string' && m.email.trim() !== '' && isTeamRole(m.appRole),
+  );
+
+  const { data: currentRows } = await supabaseAdmin
+    .from('team_members')
+    .select('id, email, user_id')
+    .eq('project_id', projectId);
+
+  const currentByEmail = new Map((currentRows ?? []).map((r) => [r.email.toLowerCase(), r]));
+  const jsonEmails = new Set(members.map((m) => m.email.trim().toLowerCase()));
+
+  for (const m of members) {
+    const email = m.email.trim().toLowerCase();
+    const existing = currentByEmail.get(email);
+    const accepted = m.inviteStatus === 'accepted';
+
+    let userId = existing?.user_id ?? null;
+    if (!userId && accepted) {
+      userId = await findUserIdByEmail(email).catch(() => null);
+    }
+
+    try {
+      await supabaseAdmin
+        .from('team_members')
+        .upsert(
+          {
+            project_id: projectId,
+            email,
+            name: typeof m.name === 'string' && m.name.trim() ? m.name : email.split('@')[0],
+            app_role: m.appRole,
+            job_role: typeof m.role === 'string' ? m.role : null,
+            avatar_color: typeof m.avatarColor === 'string' ? m.avatarColor : null,
+            invite_status: accepted ? 'accepted' : (existing ? undefined : 'pending'),
+            user_id: userId,
+          },
+          { onConflict: 'project_id,email' },
+        );
+    } catch (err) {
+      console.error(`[syncTeamMembersFromProjectData] upsert failed for ${email}:`, err);
+    }
+  }
+
+  // Revoke anyone no longer present in the saved teamMembers array -- never
+  // the project's actual owner, even if they were somehow edited out.
+  for (const row of currentRows ?? []) {
+    if (row.user_id === ownerId) continue;
+    if (!jsonEmails.has(row.email.toLowerCase())) {
+      try {
+        await supabaseAdmin.from('team_members').update({ invite_status: 'revoked' }).eq('id', row.id);
+      } catch (err) {
+        console.error(`[syncTeamMembersFromProjectData] revoke failed for ${row.email}:`, err);
+      }
+    }
+  }
+}
+
 // ── Validation schemas ────────────────────────────────────────────────────────
 
 const CreateProjectSchema = z.object({
@@ -54,43 +173,46 @@ router.get('/permissions/me', requireAuth, (req, res) => {
   res.json({ isAppAdmin: isAppAdmin(req.user?.email) });
 });
 
-/** GET /api/projects — list all projects the authenticated user has access to */
+/** GET /api/projects — list all projects the authenticated user has access to.
+ * Every project (including one you created) has a team_members row for you
+ * now -- see 006_consolidate_team_members.sql's backfill and POST / below --
+ * so this is a single query instead of a separate owned/member-projects
+ * dance that then had to be de-duplicated. */
 router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = req.user!.id;
 
-    // Owned projects
-    const { data: owned, error: e1 } = await supabaseAdmin
-      .from('projects')
-      .select('id, name, description, domain, status, data, created_at, updated_at, owner_id')
-      .eq('owner_id', userId)
-      .order('updated_at', { ascending: false });
+    // PGRST201 fix (2026-07-11): `projects` has two FKs pointing at
+    // team_members -- team_members_project_id_fkey (team_members.project_id
+    // -> projects.id, the one we actually want) and fk_projects_active_admin
+    // (projects.active_admin_id -> team_members.id). Plain `projects(...)`
+    // is ambiguous between them and PostgREST 500s on every call with
+    // "Could not embed because more than one relationship was found" --
+    // silently, since the frontend just renders that as an empty project
+    // list ("No projects yet") instead of surfacing the error. Naming the
+    // constraint explicitly (the exact fix PostgREST's own error message
+    // suggests) resolves it.
+    const { data: memberOf, error } = await supabaseAdmin
+      .from('team_members')
+      .select('app_role, projects!team_members_project_id_fkey(id, name, description, domain, status, data, created_at, updated_at, owner_id)')
+      .eq('user_id', userId)
+      .eq('invite_status', 'accepted');
 
-    if (e1) throw e1;
+    if (error) throw error;
 
-    // Member projects
-    const { data: memberOf, error: e2 } = await supabaseAdmin
-      .from('project_members')
-      .select('role, projects(id, name, description, domain, status, data, created_at, updated_at, owner_id)')
-      .eq('user_id', userId);
-
-    if (e2) throw e2;
-
-    const memberProjects = (memberOf ?? [])
+    const projects = (memberOf ?? [])
       .filter((m) => m.projects)
-      .map((m) => ({ ...(m.projects as object), userRole: m.role }));
+      .map((m) => ({
+        ...(m.projects as object),
+        userRole: (m.projects as { owner_id?: string }).owner_id === userId ? 'owner' : m.app_role,
+      }))
+      .sort((a, b) => {
+        const au = (a as { updated_at?: string }).updated_at ?? '';
+        const bu = (b as { updated_at?: string }).updated_at ?? '';
+        return bu.localeCompare(au);
+      });
 
-    const ownedWithRole = (owned ?? []).map((p) => ({ ...p, userRole: 'owner' }));
-    const deduped = new Map<string, unknown>();
-    for (const project of [...ownedWithRole, ...memberProjects]) {
-      const id = (project as { id?: string }).id;
-      if (!id) continue;
-      if (!deduped.has(id) || (project as { userRole?: string }).userRole === 'owner') {
-        deduped.set(id, project);
-      }
-    }
-
-    res.json(Array.from(deduped.values()));
+    res.json(projects);
   } catch (err) {
     console.error('[GET /projects]', err);
     res.status(500).json({ error: 'Failed to fetch projects' });
@@ -98,7 +220,7 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 /** GET /api/projects/:id — get a single project with full data */
-router.get('/:id', requireAuth, requireProjectRole('owner', 'admin', 'member', 'viewer'), async (req, res) => {
+router.get('/:id', requireAuth, requireProjectRole('project_owner', 'editor', 'reviewer', 'viewer'), async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('projects')
@@ -108,10 +230,14 @@ router.get('/:id', requireAuth, requireProjectRole('owner', 'admin', 'member', '
 
     if (error || !data) return res.status(404).json({ error: 'Project not found' });
 
-    // Attach team members
+    // Attach team members from the canonical team_members table (not
+    // data.teamMembers -- that JSONB blob is still what the frontend renders
+    // today for backward compatibility, but team_members is the real,
+    // access-control-relevant list; exposing both lets a future frontend
+    // pass switch over without another schema change).
     const { data: members } = await supabaseAdmin
-      .from('project_members')
-      .select('user_id, role, joined_at, invited_email')
+      .from('team_members')
+      .select('id, user_id, email, name, app_role, job_role, avatar_color, invite_status, invited_at, accepted_at')
       .eq('project_id', req.params.id);
 
     res.json({ ...data, members: members ?? [] });
@@ -124,15 +250,29 @@ router.get('/:id', requireAuth, requireProjectRole('owner', 'admin', 'member', '
 /** POST /api/projects — create a new project */
 router.post('/', requireAuth, async (req, res) => {
   try {
+    // Invited-only accounts (see AuthUser.isInvitedOnly) are scoped to the
+    // project(s) they were invited to -- they don't get to create separate
+    // projects of their own. This mirrors the frontend hiding the
+    // "+ New Project" button for the same users, but enforced server-side
+    // so it's a real boundary, not just a hidden button.
+    if (req.user?.isInvitedOnly) {
+      res.status(403).json({ error: 'Your account only has access to the project(s) you were invited to.' });
+      return;
+    }
+
     const body = CreateProjectSchema.parse(req.body);
     const userId = req.user!.id;
     const userEmail = req.user!.email || '';
 
-    // Seed the creator as project_owner/admin directly in `data.teamMembers`.
-    // The frontend's Settings-button gate (getProjectMember -> ROLE_PERMISSIONS)
-    // reads project.data.teamMembers, NOT the project_members table below — so
-    // without this, the creator would have `owner_id` + a 'admin' project_members
-    // row but still show no team member, leaving Settings disabled for them.
+    // Seed the creator as project_owner directly in `data.teamMembers`.
+    // The frontend's Settings-edit gate (getProjectMember -> appRole ===
+    // 'project_owner', see frontend/src/lib/projectAccess.ts) reads
+    // project.data.teamMembers, NOT the team_members table synced below — so
+    // without this, the creator would have `owner_id` + a team_members row
+    // but still show no entry here, leaving Settings disabled for them.
+    // (No `isAdmin` field is set — that boolean is deprecated in favor of
+    // appRole === 'project_owner' as the sole authority; see the
+    // @deprecated note on TeamMember.isAdmin in project.types.ts.)
     const existingData = (body.data ?? {}) as Record<string, unknown>;
     const existingTeamMembers = Array.isArray(existingData.teamMembers) ? existingData.teamMembers : [];
     const ownerMember = {
@@ -142,7 +282,6 @@ router.post('/', requireAuth, async (req, res) => {
       role: 'Owner',
       appRole: 'project_owner' as const,
       avatarColor: '#6366F1',
-      isAdmin: true,
       inviteStatus: 'accepted' as const,
       acceptedAt: Date.now(),
     };
@@ -167,15 +306,28 @@ router.post('/', requireAuth, async (req, res) => {
 
     if (error || !data) throw error ?? new Error('Insert failed');
 
+    // The ACTUAL bug this consolidation started from: this used to only
+    // insert into project_members (now dropped) + the data.teamMembers JSONB
+    // blob above -- never into team_members itself. Confirmed against
+    // production before this change: 4 of 5 existing projects had zero
+    // team_members row for their own creator. team_members is the one place
+    // this needs to exist now (requireProjectRole, GET / above, and the
+    // database's own RLS all read it).
     const { error: membershipError } = await supabaseAdmin
-      .from('project_members')
-      .upsert({
-        project_id: data.id,
-        user_id: userId,
-        role: 'admin',
-        invited_email: req.user!.email || null,
-        joined_at: new Date().toISOString(),
-      }, { onConflict: 'project_id,user_id' });
+      .from('team_members')
+      .upsert(
+        {
+          project_id: data.id,
+          user_id: userId,
+          email: userEmail,
+          name: ownerMember.name,
+          app_role: 'project_owner',
+          invite_status: 'accepted',
+          invited_at: new Date().toISOString(),
+          accepted_at: new Date().toISOString(),
+        },
+        { onConflict: 'project_id,email' },
+      );
 
     if (membershipError) {
       await supabaseAdmin.from('projects').delete().eq('id', data.id);
@@ -197,13 +349,18 @@ router.post('/', requireAuth, async (req, res) => {
  * app-admin gated) may change them. This closes off a path where any project
  * owner/admin could otherwise silently un-delete or delete-without-remarks a
  * project through a routine edit. */
-router.patch('/:id', requireAuth, requireProjectRole('owner', 'admin'), async (req, res) => {
+/** Only Project Owner (or an app admin, via requireProjectRole's bypass) may
+ * save changes -- Editor/Reviewer/Viewer can view everything in Settings but
+ * cannot change anything, per the confirmed requirement: "Project
+ * Owner/Admin can see and change anything. others can view but cant
+ * change." */
+router.patch('/:id', requireAuth, requireProjectRole('project_owner'), async (req, res) => {
   try {
     const body = UpdateProjectSchema.parse(req.body);
 
     const { data: existing, error: fetchError } = await supabaseAdmin
       .from('projects')
-      .select('data')
+      .select('data, owner_id')
       .eq('id', req.params.id)
       .single();
 
@@ -222,6 +379,12 @@ router.patch('/:id', requireAuth, requireProjectRole('owner', 'admin'), async (r
       .single();
 
     if (error || !data) throw error ?? new Error('Update failed');
+
+    // Keep team_members in sync with whatever the Team panel just saved into
+    // data.teamMembers (add without invite, role change, removal). Fire-and-
+    // log: never blocks the response, since the project itself already saved.
+    syncTeamMembersFromProjectData(req.params.id, existing.owner_id as string, mergedData.teamMembers)
+      .catch((err) => console.error('[PATCH /projects/:id] syncTeamMembersFromProjectData failed:', err));
 
     res.json(data);
   } catch (err) {

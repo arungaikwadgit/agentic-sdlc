@@ -33,6 +33,14 @@ export default function Dashboard({ onOpenProject }: Props) {
   const { toast } = useToast();
   const { user, loading: authLoading, signOut } = useAuth();
 
+  // Accounts created purely from an invite (see is_invited_user in
+  // backend/src/proxy.js's provisionInviteeAccount) are scoped to just the
+  // project(s) they're a member of -- no creating separate projects of their
+  // own. GET /api/projects already only returns owned + member projects, so
+  // this only needs to hide the creation entry points; server/src/routes/
+  // projects.ts's POST / enforces the same restriction if bypassed.
+  const isInvitedOnly = user?.user_metadata?.is_invited_user === true;
+
   async function handleSignOut() {
     try {
       await signOut();
@@ -157,8 +165,12 @@ export default function Dashboard({ onOpenProject }: Props) {
               {showArchived ? 'Active Projects' : `Archived (${archivedCount})`}
             </button>
           )}
-          <button className="btn-secondary" onClick={() => setShowNew(true)}>+ Simple</button>
-          <button className="btn-primary" onClick={() => setShowWizard(true)}>+ New Project</button>
+          {!isInvitedOnly && (
+            <>
+              <button className="btn-secondary" onClick={() => setShowNew(true)}>+ Simple</button>
+              <button className="btn-primary" onClick={() => setShowWizard(true)}>+ New Project</button>
+            </>
+          )}
           <button
             className={styles.gearBtn}
             onClick={() => setShowSettings(true)}
@@ -188,7 +200,7 @@ export default function Dashboard({ onOpenProject }: Props) {
             <p>No archived projects.</p>
           </div>
         ) : projects.length === 0 ? (
-          <EmptyState onNew={() => setShowWizard(true)} />
+          <EmptyState onNew={() => setShowWizard(true)} canCreate={!isInvitedOnly} />
         ) : (
           <div className={styles.grid}>
             {projects.map((p) => (
@@ -294,15 +306,21 @@ function LoadingSkeleton() {
   );
 }
 
-function EmptyState({ onNew }: { onNew: () => void }) {
+function EmptyState({ onNew, canCreate = true }: { onNew: () => void; canCreate?: boolean }) {
   return (
     <div style={{ textAlign: 'center', padding: '80px 20px', color: 'var(--text-muted)' }}>
       <div style={{ fontSize: 48, marginBottom: 16 }}>&#128640;</div>
       <h2 style={{ color: 'var(--text)', marginBottom: 8 }}>No projects yet</h2>
-      <p style={{ marginBottom: 24 }}>Create your first project to generate SDLC documentation with AI agents.</p>
-      <button className="btn-primary" onClick={onNew} style={{ fontSize: 15, padding: '10px 24px' }}>
-        + New Project
-      </button>
+      <p style={{ marginBottom: 24 }}>
+        {canCreate
+          ? 'Create your first project to generate SDLC documentation with AI agents.'
+          : "You haven't been added to a project yet. Ask whoever invited you to add you as a team member."}
+      </p>
+      {canCreate && (
+        <button className="btn-primary" onClick={onNew} style={{ fontSize: 15, padding: '10px 24px' }}>
+          + New Project
+        </button>
+      )}
     </div>
   );
 }

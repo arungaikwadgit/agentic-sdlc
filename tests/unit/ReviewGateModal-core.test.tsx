@@ -10,8 +10,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
-import { PHASE_AGENTS, PHASE_LABELS } from '../../frontend/src/agents/constants';
+import { PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES } from '../../frontend/src/agents/constants';
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
+
+// ── Mock contexts/AuthContext — ReviewGateModal.tsx calls useAuth()
+// unconditionally at the top of the component (to compute exportPermission
+// via getProjectExportPermission()); without this mock, useAuth() throws
+// "must be used inside <AuthProvider>" and every test in this file fails to
+// render. Pre-existing gap, same root cause already found and fixed in the
+// 4 ProjectWorkspace-*.test.tsx files this session. ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'owner-user-1', email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
 
 // ── Mock heavy/child components ─────────────────────────────────────────────
 vi.mock('../../frontend/src/components/documents/DocumentViewer', () => ({
@@ -96,8 +106,12 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'expert',
     teamMembers: [
-      { id: 'm1', name: 'Asha Patel', email: 'asha@example.com', role: 'Product Manager', avatarColor: '#4f46e5', isAdmin: true },
-      { id: 'm2', name: 'Raj Kumar', email: 'raj@example.com', role: 'Engineering Lead', avatarColor: '#16a34a', isAdmin: false },
+      // appRole is the sole authority for admin gating now (isAdmin is
+      // deprecated) -- these fixtures used to carry only isAdmin, which
+      // does not match real DB data shape (every real teamMember has
+      // appRole set).
+      { id: 'm1', name: 'Asha Patel', email: 'asha@example.com', role: 'Product Manager', appRole: 'project_owner', avatarColor: '#4f46e5' },
+      { id: 'm2', name: 'Raj Kumar', email: 'raj@example.com', role: 'Engineering Lead', appRole: 'editor', avatarColor: '#16a34a' },
     ],
     agentAssignments: [
       { agentId: COMPLETE_AGENT, memberIds: ['m1'] },
@@ -304,9 +318,35 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(screen.queryByText('Assigned:')).not.toBeInTheDocument();
   });
 
+  // "Approve & Continue" is disabled while any agent in this gate's phases is
+  // incomplete (ReviewGateModal.tsx: `disabled={!allAgentsComplete}`) -- the
+  // shared makeProject() fixture only completes 1 of the 6 ALL_GATE_AGENTS
+  // (by design, so TS-62/65/66's idle-agent assertions have something to
+  // point at), so these two "Approve & Continue" tests need every gate
+  // agent completed or the click below is a no-op and onApprove never fires
+  // (pre-existing fixture gap, unrelated to the isAdmin -> appRole RBAC
+  // consolidation, previously masked by the useAuth() crash).
+  //
+  // Note this must use the REAL agent set the component computes --
+  // REVIEW_GATES.gate3 actually covers 4 phases (phase3, phase3a, phase3c,
+  // phase3b), not just phase3+phase3b as ALL_GATE_AGENTS (and this file's
+  // header comment) assumed. Completing only ALL_GATE_AGENTS left the
+  // phase3a/phase3c agents incomplete, so allAgentsComplete stayed false
+  // and the button stayed disabled -- another pre-existing staleness
+  // unrelated to the RBAC consolidation, surfaced now that useAuth() no
+  // longer crashes before render.
+  const REAL_GATE3_AGENTS = REVIEW_GATES.gate3.flatMap((p) => PHASE_AGENTS[p] ?? []);
+
+  function allGateAgentsCompleteProject(overrides: Partial<Project> = {}): Project {
+    const agentRuns = Object.fromEntries(
+      REAL_GATE3_AGENTS.map((agentId) => [agentId, { agentId, status: 'complete', output: `# ${agentId} output` }])
+    ) as Project['agentRuns'];
+    return makeProject({ agentRuns, ...overrides });
+  }
+
   // TS-73
   it('"Approve & Continue" calls onApprove with notes and the selected approver id', async () => {
-    renderModal();
+    renderModal(allGateAgentsCompleteProject());
 
     const notesBox = screen.getByPlaceholderText('Add notes or feedback for this review gate...');
     await userEvent.type(notesBox, 'Looks good, ship it.');
@@ -320,7 +360,7 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
   });
 
   it('"Approve & Continue" passes undefined approver id when none selected', async () => {
-    renderModal();
+    renderModal(allGateAgentsCompleteProject());
     await userEvent.click(screen.getByRole('button', { name: /Approve & Continue/ }));
     expect(onApprove).toHaveBeenCalledWith('', undefined);
   });

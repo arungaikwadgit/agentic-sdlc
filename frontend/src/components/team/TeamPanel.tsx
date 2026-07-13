@@ -68,10 +68,9 @@ export default function TeamPanel({ project, onClose }: Props) {
   }
 
   const sendInvite = useCallback(async (member: TeamMember) => {
-    if (member.appRole === 'project_owner') {
-      alert('Invite links cannot grant Project Owner access. Use Editor, Reviewer, or Viewer.');
-      return;
-    }
+    // No client-side block on appRole — the server (authorizeInviteAction()
+    // in backend/src/proxy.js) is the source of truth and now allows an app
+    // Admin or this project's Project Owner to grant project_owner too.
     setSending(member.id);
     setInviteLink(null);
     try {
@@ -86,7 +85,7 @@ export default function TeamPanel({ project, onClose }: Props) {
           name: member.name,
           email: member.email,
           appRole: member.appRole,
-          invitedBy: members.find((m) => m.isAdmin)?.name ?? 'Project Owner',
+          invitedBy: members.find((m) => m.appRole === 'project_owner')?.name ?? 'Project Owner',
         }),
       });
       const data = await res.json();
@@ -190,7 +189,22 @@ export default function TeamPanel({ project, onClose }: Props) {
     await sendInvite(newMember);
   }
 
+  // A project must always keep at least one project_owner. This mirrors
+  // ProjectSettings.tsx's wouldLeaveNoOwner() — this panel used to rely on
+  // the deprecated TeamMember.isAdmin flag (disabled={m.isAdmin}) to protect
+  // the project creator, but new members never set isAdmin (only appRole),
+  // so that guard silently stopped doing anything: the last remaining owner
+  // could be demoted or removed from here with zero protection.
+  function wouldLeaveNoOwner(memberId: string): boolean {
+    return members.filter((m) => m.appRole === 'project_owner' && m.id !== memberId).length === 0;
+  }
+
   async function changeRole(memberId: string, newRole: AppRole) {
+    const target = members.find((m) => m.id === memberId);
+    if (target?.appRole === 'project_owner' && newRole !== 'project_owner' && wouldLeaveNoOwner(memberId)) {
+      alert(`Cannot change ${target.name}'s role — they are the only Project Owner. Make another member Project Owner first.`);
+      return;
+    }
     await updateProject(project.id, (p) => {
       const m = p.teamMembers.find((x) => x.id === memberId);
       if (m) m.appRole = newRole;
@@ -198,6 +212,11 @@ export default function TeamPanel({ project, onClose }: Props) {
   }
 
   async function removeMember(memberId: string) {
+    const target = members.find((m) => m.id === memberId);
+    if (target?.appRole === 'project_owner' && wouldLeaveNoOwner(memberId)) {
+      alert(`Cannot remove ${target.name} — they are the only Project Owner. Make another member Project Owner first.`);
+      return;
+    }
     await updateProject(project.id, (p) => {
       p.teamMembers = p.teamMembers.filter((m) => m.id !== memberId);
       p.agentAssignments = p.agentAssignments.map((a) => ({
@@ -335,7 +354,9 @@ export default function TeamPanel({ project, onClose }: Props) {
               <section className={styles.section}>
                 <h3>Team Members ({members.length})</h3>
                 <ul className={styles.memberList}>
-                  {members.map((m) => (
+                  {members.map((m) => {
+                    const isLastOwner = m.appRole === 'project_owner' && wouldLeaveNoOwner(m.id);
+                    return (
                     <li key={m.id} className={styles.memberRow}>
                       <div className={styles.avatar} style={{ background: m.avatarColor }}>
                         {initials(m.name)}
@@ -359,8 +380,8 @@ export default function TeamPanel({ project, onClose }: Props) {
                           value={m.appRole ?? 'viewer'}
                           onChange={(e) => changeRole(m.id, e.target.value as AppRole)}
                           className={styles.roleSelectSmall}
-                          disabled={m.isAdmin}
-                          title={m.isAdmin ? 'Project creator cannot be changed' : 'Change role'}
+                          disabled={isLastOwner}
+                          title={isLastOwner ? 'Only Project Owner — make another member Project Owner first' : 'Change role'}
                         >
                           {ROLES.map((r) => <option key={r} value={r}>{ROLE_PERMISSIONS[r].label}</option>)}
                         </select>
@@ -394,7 +415,7 @@ export default function TeamPanel({ project, onClose }: Props) {
                             Reset password
                           </button>
                         )}
-                        {!m.isAdmin && (
+                        {!isLastOwner && (
                           <button
                             className={styles.removeBtn}
                             onClick={() => removeMember(m.id)}
@@ -403,7 +424,8 @@ export default function TeamPanel({ project, onClose }: Props) {
                         )}
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </section>
             )}

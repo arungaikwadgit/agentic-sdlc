@@ -8,25 +8,58 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
 
-// ── Mock dexie-react-hooks: useLiveQuery returns the fixture synchronously ──
+// ── Mock dexie-react-hooks: unused by the current ProjectWorkspace.tsx
+// (it now fetches via the useProject() hook, not useLiveQuery directly),
+// but left as a harmless no-op since nothing imports it anymore. ──
 let currentProject: Project | undefined;
 vi.mock('dexie-react-hooks', () => ({
   useLiveQuery: () => currentProject,
 }));
 
-// ── Mock @/db/database ──
+// ── Mock @/db/database: also unused by the current component; see above. ──
 vi.mock('@/db/database', () => ({
   db: {
     projects: { get: vi.fn() },
   },
 }));
 
+// ── ProjectWorkspace.tsx now loads its project via the useProject() hook
+// (frontend/src/hooks/useProject.ts), which calls getProject +
+// subscribeProjectRepositoryChange from @/db/projectRepository -- neither
+// of which this file's @/db/projectRepository mock (below) used to define,
+// so useProject's effect threw "No subscribeProjectRepositoryChange export
+// is defined on the mock" and every test in this file failed to render
+// (pre-existing gap from the useLiveQuery -> useProject refactor, unrelated
+// to the isAdmin -> appRole RBAC consolidation, but it blocks verifying
+// that consolidation via this suite, so fixing it here too). repoListener
+// lets a test simulate a repository-change push (as real updateProject
+// calls do via emitProjectRepositoryChange) by re-running getProject.
+// Because loading is now genuinely async (a resolved Promise, not a
+// synchronous useLiveQuery return), assertions right after render must use
+// findBy*/waitFor instead of a bare getBy* on the very first check. ──
+let repoListener: ((projectId?: string) => void) | null = null;
+
+// ── Mock contexts/AuthContext — ProjectWorkspace.tsx calls useAuth()
+// unconditionally at the top of the component; without this mock,
+// useAuth() throws "must be used inside <AuthProvider>" and every test in
+// this file fails to render (pre-existing gap, unrelated to the
+// isAdmin -> appRole RBAC consolidation, but must be fixed for any of these
+// tests to actually exercise real component behavior). ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'owner-user-1', email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
+
 // ── Mock @/db/projectRepository ──
 const updateProjectMock = vi.fn();
 const updateAgentRunMock = vi.fn();
 vi.mock('@/db/projectRepository', () => ({
+  getProject: (...args: unknown[]) => Promise.resolve(currentProject),
   updateProject: (...args: unknown[]) => updateProjectMock(...args),
   updateAgentRun: (...args: unknown[]) => updateAgentRunMock(...args),
+  subscribeProjectRepositoryChange: (listener: (projectId?: string) => void) => {
+    repoListener = listener;
+    return () => { repoListener = null; };
+  },
 }));
 
 // ── Mock @/services/pipelineEngine: capture callbacks + spy on run/abort ──
@@ -101,6 +134,12 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     version: 1,
     createdAt: 1000,
     updatedAt: 1000,
+    // Every real project always has ownerId set (immutable, seeded at
+    // creation server-side) -- it's the safety-net fallback
+    // (ownerFallbackMember in projectAccess.ts) that resolves "who am I"
+    // when teamMembers has no matching entry, e.g. a brand-new project with
+    // no team added yet (TS-178). Matches the mocked useAuth() user id above.
+    ownerId: 'owner-user-1',
     agentRuns: {},
     reviewGates: {
       gate1: { id: 'gate1', approved: true, afterPhases: [] },
@@ -112,7 +151,13 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'simple',
     teamMembers: [
-      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' },
+      // appRole is the sole authority for admin gating now (isAdmin is
+      // deprecated) -- this fixture used to carry only isAdmin: true, which
+      // would silently disable "Run Pipeline"/"Settings" once AuthContext
+      // is mocked and the component actually renders, since
+      // canRunProjectAgents/canEditProjectSettings derive from
+      // ROLE_PERMISSIONS[currentMember.appRole].
+      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', appRole: 'project_owner', avatarColor: '#fff' },
     ],
     activeAdminId: 'member-1',
     agentAssignments: [],
@@ -125,6 +170,7 @@ const noop = () => {};
 describe('ProjectWorkspace — run/stop controls', () => {
   beforeEach(() => {
     currentProject = undefined;
+    repoListener = null;
     lastEngineCallbacks = null;
     updateProjectMock.mockClear();
     updateAgentRunMock.mockClear();
@@ -132,41 +178,52 @@ describe('ProjectWorkspace — run/stop controls', () => {
     engineAbortMock.mockClear();
   });
 
-  it('shows "Run Pipeline" when status is draft (TS-174)', () => {
+  it('shows "Run Pipeline" when status is draft (TS-174)', async () => {
     currentProject = baseProject({ status: 'draft' });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.getByRole('button', { name: 'Run Pipeline' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Run Pipeline' })).toBeInTheDocument();
   });
 
-  it('shows "Resume Pipeline" when status is paused (TS-175)', () => {
+  it('shows "Resume Pipeline" when status is paused (TS-175)', async () => {
     currentProject = baseProject({ status: 'paused' });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.getByRole('button', { name: 'Resume Pipeline' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Resume Pipeline' })).toBeInTheDocument();
   });
 
-  it('shows "Complete" and disables the button when status is complete (TS-176)', () => {
+  it('shows "Complete" and disables the button when status is complete (TS-176)', async () => {
     currentProject = baseProject({ status: 'complete' });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    const btn = screen.getByRole('button', { name: 'Complete' });
+    const btn = await screen.findByRole('button', { name: 'Complete' });
     expect(btn).toBeDisabled();
   });
 
-  it('disables the run button with a tooltip when there are no team members (TS-177)', () => {
+  it('disables the run button with a tooltip when there are no team members (TS-177)', async () => {
     currentProject = baseProject({ status: 'draft', teamMembers: [] });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    const btn = screen.getByRole('button', { name: 'Run Pipeline' });
+    const btn = await screen.findByRole('button', { name: 'Run Pipeline' });
     expect(btn).toBeDisabled();
     expect(btn).toHaveAttribute('title', 'Add at least one team member to run the pipeline');
   });
 
-  it('shows the team-required banner when teamMembers is empty, hidden otherwise (TS-178)', () => {
+  it('shows the team-required banner when teamMembers is empty, hidden otherwise (TS-178)', async () => {
     currentProject = baseProject({ teamMembers: [] });
-    const { rerender } = render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.getByText(/Add at least one team member before running the pipeline/i)).toBeInTheDocument();
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+    expect(
+      await screen.findByText(/Add at least one team member before running the pipeline/i)
+    ).toBeInTheDocument();
 
-    currentProject = baseProject({ teamMembers: [{ id: 'm1', name: 'Alice', email: 'a@x.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' }] });
-    rerender(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.queryByText(/Add at least one team member before running the pipeline/i)).not.toBeInTheDocument();
+    // useProject() only refetches on a repository-change push (or a
+    // projectId change) -- simulate the push a real updateProject() call
+    // would emit, the same way production code picks up team-member edits
+    // made in the Settings panel while this view stays mounted.
+    currentProject = baseProject({
+      teamMembers: [{ id: 'm1', name: 'Alice', email: 'a@x.com', role: 'Admin', appRole: 'project_owner', avatarColor: '#fff' }],
+    });
+    repoListener?.();
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Add at least one team member before running the pipeline/i)).not.toBeInTheDocument();
+    });
   });
 
   it('clicking "Run Pipeline" constructs a PipelineEngine and calls run(currentPhase) (TS-179)', async () => {
@@ -174,7 +231,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Run Pipeline' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Pipeline' }));
 
     await waitFor(() => {
       expect(engineRunMock).toHaveBeenCalledWith('phase1');
@@ -189,7 +246,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Run Pipeline' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Pipeline' }));
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
@@ -201,7 +258,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Run Pipeline' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Pipeline' }));
     await waitFor(() => screen.getByRole('button', { name: 'Stop' }));
 
     await user.click(screen.getByRole('button', { name: 'Stop' }));
@@ -219,7 +276,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Run Pipeline' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Pipeline' }));
     await waitFor(() => expect(lastEngineCallbacks).toBeTruthy());
 
     // Simulate the engine reaching a gate.
@@ -237,15 +294,18 @@ describe('ProjectWorkspace — run/stop controls', () => {
     });
   });
 
-  it('auto-opens the settings panel on first render when teamMembers is empty (TS-183)', () => {
+  it('auto-opens the settings panel on first render when teamMembers is empty (TS-183)', async () => {
     currentProject = baseProject({ teamMembers: [] });
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
-    expect(screen.getByTestId('project-settings')).toBeInTheDocument();
+    expect(await screen.findByTestId('project-settings')).toBeInTheDocument();
   });
 
   it('clicking "⚙ Settings" opens the settings panel when team is non-empty (TS-184)', async () => {
     currentProject = baseProject();
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+    // Wait for the loaded state before asserting the settings panel is
+    // absent — otherwise this could pass trivially while still loading.
+    await screen.findByRole('button', { name: /settings/i });
     expect(screen.queryByTestId('project-settings')).not.toBeInTheDocument();
 
     const user = userEvent.setup();
@@ -259,7 +319,7 @@ describe('ProjectWorkspace — run/stop controls', () => {
     render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /expert mode/i }));
+    await user.click(await screen.findByRole('button', { name: /expert mode/i }));
 
     expect(updateProjectMock).toHaveBeenCalledWith('proj-1', expect.any(Function));
     const mutator = updateProjectMock.mock.calls[updateProjectMock.mock.calls.length - 1][1];

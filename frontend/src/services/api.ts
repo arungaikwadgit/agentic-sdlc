@@ -89,6 +89,16 @@ export interface AgentRequest {
   provider?: 'openai' | 'claude';
   /** Used by the backend for per-agent provider routing hints when `provider` is not set. */
   agentId?: string;
+  /**
+   * Project this run belongs to. Optional because some callers (app-wide
+   * "Test Connection" checks, one-off meta prompts unrelated to a specific
+   * project) have no project context at all -- those are left unaffected.
+   * When both projectId and agentId ARE present, the backend's
+   * authorizeAgentRun() (see backend/src/proxy.js) enforces per-agent
+   * access scoping; omitting either one skips that check, so real
+   * pipeline/rerun call sites must always pass this.
+   */
+  projectId?: string;
   /** Optional AbortSignal for request cancellation / timeout (H-06 fix). */
   signal?: AbortSignal;
 }

@@ -22,6 +22,13 @@ export interface AuthUser {
   id: string;
   email: string;
   role?: string;
+  /** Supabase user_metadata.is_invited_user -- set (see
+   * backend/src/proxy.js's provisionInviteeAccount) only on accounts that
+   * were created purely because someone invited them, never on an organic
+   * self-signup. Used to scope invited-only users to just the project(s)
+   * they're a member of (no project creation, no visibility into anyone
+   * else's projects). Undefined for the dev admin-bypass session. */
+  isInvitedOnly?: boolean;
 }
 
 let cachedDevBypassResolvedId: string | null = null;
@@ -110,6 +117,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       id: data.user.id,
       email: data.user.email ?? '',
       role: data.user.role,
+      isInvitedOnly: data.user.user_metadata?.is_invited_user === true,
     };
 
     next();
@@ -146,7 +154,14 @@ export function requireAppAdmin(req: Request, res: Response, next: NextFunction)
 
 /**
  * Check that the current user has one of the allowed roles on a project.
- * Usage: requireProjectRole('owner', 'admin')
+ * Usage: requireProjectRole('project_owner', 'editor')
+ *
+ * team_members is the ONE place project-level roles live (see
+ * backend/migrations/006_consolidate_team_members.sql) -- this used to check
+ * a separate project_members table that nothing else in the app wrote to
+ * consistently, which is what let an accepted invitee pass team_members-based
+ * RLS but still get "Project not found" from this Express-layer check (or
+ * vice versa). There is exactly one membership table now.
  */
 export function requireProjectRole(...allowedRoles: string[]) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -163,25 +178,15 @@ export function requireProjectRole(...allowedRoles: string[]) {
       return;
     }
 
-    const { data: project } = await supabaseAdmin
-      .from('projects')
-      .select('owner_id')
-      .eq('id', projectId)
-      .single();
-
-    if (project?.owner_id === userId) {
-      next();
-      return;
-    }
-
     const { data: member } = await supabaseAdmin
-      .from('project_members')
-      .select('role')
+      .from('team_members')
+      .select('app_role, invite_status')
       .eq('project_id', projectId)
       .eq('user_id', userId)
-      .single();
+      .eq('invite_status', 'accepted')
+      .maybeSingle();
 
-    if (!member || !allowedRoles.includes(member.role)) {
+    if (!member || !allowedRoles.includes(member.app_role)) {
       res.status(403).json({
         error: `Access denied. Required role: ${allowedRoles.join(' or ')}`,
       });

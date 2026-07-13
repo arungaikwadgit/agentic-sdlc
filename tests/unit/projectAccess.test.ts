@@ -10,8 +10,10 @@ import {
   getProjectMember,
   isProjectAdminUser,
   getProjectExportPermission,
+  getAgentRunPermission,
 } from '../../frontend/src/lib/projectAccess';
-import type { Project, TeamMember } from '../../frontend/src/types/project.types';
+import type { Project, TeamMember, AgentAssignment } from '../../frontend/src/types/project.types';
+import type { AgentId } from '../../frontend/src/types/agent.types';
 
 function baseProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -73,8 +75,10 @@ describe('getProjectMember', () => {
     const proj = baseProject({ teamMembers: [], ownerId: 'auth-user-42' });
     const found = getProjectMember(proj, { userEmail: 'creator@example.com', userId: 'auth-user-42' });
     expect(found).not.toBeNull();
+    // appRole is the sole authority for admin/edit access now -- isAdmin is
+    // deprecated and intentionally no longer set (see the @deprecated note
+    // on TeamMember.isAdmin in project.types.ts).
     expect(found?.appRole).toBe('project_owner');
-    expect(found?.isAdmin).toBe(true);
     expect(found?.email).toBe('creator@example.com');
   });
 
@@ -156,5 +160,94 @@ describe('getProjectExportPermission', () => {
     const perm = getProjectExportPermission(proj, { userEmail: 'alice@example.com', userId: 'irrelevant' });
     expect(perm.canExport).toBe(false);
     expect(perm.reason).toMatch(/does not currently have/i);
+  });
+});
+
+describe('getAgentRunPermission', () => {
+  const ARCH = 'architecture' as AgentId;
+  const API_DESIGN = 'apiDesign' as AgentId;
+
+  function scopedEditor(overrides: Partial<TeamMember> = {}): TeamMember {
+    return member({ id: 'editor-1', appRole: 'editor', agentAccessScoped: true, ...overrides });
+  }
+
+  it('admin mode always allows, regardless of assignment', () => {
+    const proj = baseProject({ teamMembers: [scopedEditor()], agentAssignments: [] });
+    const perm = getAgentRunPermission(proj, { adminMode: true }, ARCH);
+    expect(perm.canRun).toBe(true);
+    expect(perm.isScoped).toBe(false);
+  });
+
+  it('denies with a reason when the caller is not a project member at all', () => {
+    const proj = baseProject({ teamMembers: [scopedEditor({ email: 'scoped@example.com' })] });
+    const perm = getAgentRunPermission(proj, { userEmail: 'stranger@example.com' }, ARCH);
+    expect(perm.canRun).toBe(false);
+    expect(perm.isScoped).toBe(false);
+    expect(perm.reason).toMatch(/not a member/i);
+  });
+
+  it('denies Reviewer/Viewer for the ordinary role reason, not scoping — even if agentAccessScoped were somehow set', () => {
+    const proj = baseProject({
+      teamMembers: [member({ id: 'r-1', email: 'rev@example.com', appRole: 'reviewer', agentAccessScoped: true })],
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'rev@example.com' }, ARCH);
+    expect(perm.canRun).toBe(false);
+    expect(perm.isScoped).toBe(false);
+    expect(perm.reason).toMatch(/cannot run agents/i);
+  });
+
+  it('Project Owner always gets full access regardless of agentAccessScoped or assignment', () => {
+    const proj = baseProject({
+      teamMembers: [member({ id: 'o-1', email: 'owner@example.com', appRole: 'project_owner', agentAccessScoped: true })],
+      agentAssignments: [],
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'owner@example.com' }, ARCH);
+    expect(perm.canRun).toBe(true);
+    expect(perm.isScoped).toBe(false);
+  });
+
+  it('a legacy Editor (agentAccessScoped falsy) keeps full access with no assignments at all — grandfathering', () => {
+    const proj = baseProject({
+      teamMembers: [member({ id: 'e-legacy', email: 'legacy@example.com', appRole: 'editor', agentAccessScoped: undefined })],
+      agentAssignments: [],
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'legacy@example.com' }, ARCH);
+    expect(perm.canRun).toBe(true);
+    expect(perm.isScoped).toBe(false);
+  });
+
+  it('a scoped Editor can run an agent explicitly assigned to them', () => {
+    const assignments: AgentAssignment[] = [{ agentId: ARCH, memberIds: ['editor-1'] }];
+    const proj = baseProject({
+      teamMembers: [scopedEditor({ email: 'scoped@example.com' })],
+      agentAssignments: assignments,
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'scoped@example.com' }, ARCH);
+    expect(perm.canRun).toBe(true);
+    expect(perm.isScoped).toBe(true);
+    expect(perm.reason).toBeNull();
+  });
+
+  it('a scoped Editor is denied, with a reason, for an agent NOT in their assignment', () => {
+    const assignments: AgentAssignment[] = [{ agentId: ARCH, memberIds: ['editor-1'] }];
+    const proj = baseProject({
+      teamMembers: [scopedEditor({ email: 'scoped@example.com' })],
+      agentAssignments: assignments,
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'scoped@example.com' }, API_DESIGN);
+    expect(perm.canRun).toBe(false);
+    expect(perm.isScoped).toBe(true);
+    expect(perm.reason).toMatch(/not assigned to run this agent/i);
+  });
+
+  it('a scoped Editor with an assignment entry that has no memberIds at all is denied', () => {
+    const assignments: AgentAssignment[] = [{ agentId: ARCH, memberIds: [] }];
+    const proj = baseProject({
+      teamMembers: [scopedEditor({ email: 'scoped@example.com' })],
+      agentAssignments: assignments,
+    });
+    const perm = getAgentRunPermission(proj, { userEmail: 'scoped@example.com' }, ARCH);
+    expect(perm.canRun).toBe(false);
+    expect(perm.isScoped).toBe(true);
   });
 });

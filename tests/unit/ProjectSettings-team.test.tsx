@@ -112,7 +112,7 @@ const ADMIN_MEMBER = {
   email: 'alice@example.com',
   role: 'Product Manager',
   avatarColor: '#4f46e5',
-  isAdmin: true,
+  appRole: 'project_owner' as const,
   inviteStatus: 'accepted' as const,
 };
 
@@ -122,7 +122,7 @@ const NON_ADMIN_MEMBER = {
   email: 'dave@example.com',
   role: 'Engineer',
   avatarColor: '#0891b2',
-  isAdmin: false,
+  appRole: 'editor' as const,
   inviteStatus: 'accepted' as const,
 };
 
@@ -160,7 +160,11 @@ describe('ProjectSettings — Team Members tab', () => {
     expect(newMember.name).toBe('Alice Admin');
     expect(newMember.email).toBe('alice@example.com');
     expect(newMember.role).toBe('Product Manager');
-    expect(newMember.isAdmin).toBe(true);
+    // First member becomes project_owner (the sole authority for
+    // admin/edit access now — see the @deprecated note on
+    // TeamMember.isAdmin in project.types.ts). This IS "the first member
+    // becomes admin automatically" — just expressed via appRole now.
+    expect(newMember.appRole).toBe('project_owner');
     expect(newMember.avatarColor).toBeTruthy();
 
     // Product Manager template should seed agentAssignments for its suggestedAgents.
@@ -312,7 +316,7 @@ describe('ProjectSettings — Team Members tab', () => {
       email: 'bob@example.com',
       role: 'Tech Lead',
       avatarColor: '#059669',
-      isAdmin: true,
+      appRole: 'project_owner' as const,
       inviteStatus: 'accepted' as const,
     };
     currentProject = baseProject({
@@ -338,40 +342,44 @@ describe('ProjectSettings — Team Members tab', () => {
     expect(draft.activeAdminId).toBeUndefined();
   });
 
-  it('toggles isAdmin off for a second admin (TS-95)', async () => {
+  // TS-95/TS-96 used to cover the standalone "Make admin"/"Revoke admin"
+  // toggle, which flipped an isAdmin boolean independent of appRole. That
+  // toggle is retired — Project Owner status now changes only via appRole
+  // (the role dropdown / invite-and-edit-role modal), so there is no
+  // separate admin-toggle button to click anymore. These two tests now
+  // cover what replaced it: the "Owner" badge reflects appRole directly,
+  // and there's no stray admin-toggle control left in the DOM.
+  it('shows the "Owner" badge for a project_owner member and not for others (TS-95)', () => {
     const SECOND_ADMIN = {
       id: 'member-admin-2',
       name: 'Bob Backup',
       email: 'bob@example.com',
       role: 'Tech Lead',
       avatarColor: '#059669',
-      isAdmin: true,
+      appRole: 'project_owner' as const,
       inviteStatus: 'accepted' as const,
     };
     currentProject = baseProject({
-      teamMembers: [ADMIN_MEMBER, SECOND_ADMIN],
+      teamMembers: [ADMIN_MEMBER, SECOND_ADMIN, NON_ADMIN_MEMBER],
       agentAssignments: [],
       activeAdminId: ADMIN_MEMBER.id,
     });
     render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
-    const user = userEvent.setup();
-    const card = screen.getAllByText('Bob Backup')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
-    const adminBtn = within(card).getByRole('button', { name: /admin/i });
-    expect(adminBtn).not.toBeDisabled();
+    const aliceCard = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
+    const bobCard = screen.getAllByText('Bob Backup')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
+    const daveCard = screen.getAllByText('Dev Dave')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
 
-    await user.click(adminBtn);
+    expect(within(aliceCard).getByText('Owner')).toBeInTheDocument();
+    expect(within(bobCard).getByText('Owner')).toBeInTheDocument();
+    expect(within(daveCard).queryByText('Owner')).not.toBeInTheDocument();
 
-    expect(updateProjectMock).toHaveBeenCalledTimes(1);
-    const [, updater] = updateProjectMock.mock.calls[0];
-    const draft = structuredClone(currentProject);
-    updater(draft);
-
-    const bob = draft.teamMembers.find((m) => m.id === SECOND_ADMIN.id);
-    expect(bob?.isAdmin).toBe(false);
+    // No standalone admin-toggle button remains anywhere in the panel.
+    expect(screen.queryByRole('button', { name: /make admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /🔑 admin/i })).not.toBeInTheDocument();
   });
 
-  it('disables the admin-revoke button for the only admin (TS-96)', async () => {
+  it('disables Remove (not a separate admin-revoke control) for the only Project Owner (TS-96)', async () => {
     currentProject = baseProject({
       teamMembers: [ADMIN_MEMBER],
       agentAssignments: [],
@@ -381,10 +389,11 @@ describe('ProjectSettings — Team Members tab', () => {
 
     const user = userEvent.setup();
     const card = screen.getAllByText('Alice Admin')[0].closest('[class*="memberGrid"] > div') as HTMLElement;
-    const adminBtn = within(card).getByRole('button', { name: /🔑 admin/i });
-    expect(adminBtn).toBeDisabled();
+    const removeBtn = within(card).getByRole('button', { name: /remove/i });
+    expect(removeBtn).toBeDisabled();
+    expect(removeBtn).toHaveAttribute('title', expect.stringMatching(/only project owner/i));
 
-    await user.click(adminBtn);
+    await user.click(removeBtn);
     expect(updateProjectMock).not.toHaveBeenCalled();
   });
 
@@ -465,7 +474,7 @@ describe('ProjectSettings — Team Members tab', () => {
       agentAssignments: [],
       activeAdminId: '',
     });
-    render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
+    const { rerender } = render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
 
     const user = userEvent.setup();
     const select = screen.getByText('Viewing as:').parentElement!.querySelector('select') as HTMLSelectElement;
@@ -479,7 +488,12 @@ describe('ProjectSettings — Team Members tab', () => {
     updater(draft);
     expect(draft.activeAdminId).toBe(ADMIN_MEMBER.id);
 
-    // Local state updated too — admin bar now shows the active-session label.
+    // The real app re-renders this panel with a fresh `project` prop once
+    // the persisted activeAdminId comes back through the live query (see
+    // ProjectWorkspace's `key`-bump remount) -- isAdmin is derived from the
+    // `project` prop (via getProjectMember's fallbackMemberId match), not
+    // from the local adminSessionId state alone, so simulate that here.
+    rerender(<ProjectSettings project={{ ...currentProject, activeAdminId: ADMIN_MEMBER.id }} onClose={vi.fn()} />);
     expect(await screen.findByText('🔑 Admin session active')).toBeInTheDocument();
   });
 });

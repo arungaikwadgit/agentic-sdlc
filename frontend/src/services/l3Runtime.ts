@@ -46,6 +46,8 @@ export interface L3RunOptions {
   userPrompt: string;
   agentId: string;
   provider?: 'openai' | 'claude';
+  /** Forwarded to every api.callAgent call in the L3 loop so the backend's per-agent authorizeAgentRun() check has a project to check against. */
+  projectId?: string;
 }
 
 export interface L3RunResult {
@@ -305,6 +307,7 @@ export async function runL3Agent(
       userPrompt: buildConversationPrompt(turns, userContent, iteration),
       agentId: options.agentId,
       provider: options.provider,
+      projectId: options.projectId,
     });
 
     const rawText = api.extractText(resp);

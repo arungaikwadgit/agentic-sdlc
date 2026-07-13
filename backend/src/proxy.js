@@ -150,8 +150,18 @@ async function provisionInviteeAccount({ email, name, actionDate }) {
   const password = generateDefaultPassword(name, actionDate);
   const metadata = { must_change_password: true, name: name ?? undefined };
 
+  // is_invited_user is only set on the CREATE path below (a brand-new
+  // account that exists purely because of this invite) -- it is deliberately
+  // NOT merged into an existing user's metadata on the update-existing-user
+  // path further down, so an admin resetting an already-registered organic
+  // user's password can never accidentally get them mislabeled as
+  // "invited-only" and lose visibility into their own projects. Read by the
+  // frontend (AuthContext / Dashboard) to scope the invited-only experience:
+  // no "+ New Project" button, dashboard limited to projects they're a
+  // member of.
   const { data: createData, error: createError } = await admin.auth.admin.createUser({
-    email, password, email_confirm: true, user_metadata: metadata,
+    email, password, email_confirm: true,
+    user_metadata: { ...metadata, is_invited_user: true },
   });
   if (!createError) {
     return { password, userId: createData?.user?.id ?? null, created: true };
@@ -677,10 +687,15 @@ async function withRetry(fn, maxAttempts = 4) {
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 app.post('/api/agent', checkToken, async (req, res) => {
-  const { systemPrompt, userPrompt, testMode, agentId, provider: requestedProvider } = req.body ?? {};
+  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider } = req.body ?? {};
 
   if (!systemPrompt || !userPrompt)
     return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
+
+  // Per-agent access scoping (see authorizeAgentRun() below) — only runs when
+  // both projectId and agentId were sent; writes its own 403 on denial.
+  const agentAuthz = await authorizeAgentRun(req, res, { projectId, agentId });
+  if (!agentAuthz.ok) return;
 
   // M-05 fix: server-side prompt injection detection — client-side check is bypassable
   const INJECTION_PATTERNS = [
@@ -727,7 +742,7 @@ app.post('/api/agent', checkToken, async (req, res) => {
 // Alias — newer frontend builds call /api/agents/call; route to the same handler
 app.post('/api/agents/call', checkToken, async (req, res) => {
   // Delegate to /api/agent handler by reusing the same logic inline
-  const { systemPrompt, userPrompt, testMode, agentId, provider: requestedProvider } = req.body ?? {};
+  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider } = req.body ?? {};
 
   // Diagnostic logging (temporary) — see checkToken() above. Traces the full
   // Test Connection / agent-call lifecycle on the backend, from authenticated
@@ -740,6 +755,11 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
 
   if (!systemPrompt || !userPrompt)
     return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
+
+  // Per-agent access scoping (see authorizeAgentRun() below) — only runs when
+  // both projectId and agentId were sent; writes its own 403 on denial.
+  const agentAuthz = await authorizeAgentRun(req, res, { projectId, agentId });
+  if (!agentAuthz.ok) return;
 
   const INJECTION_PATTERNS = [
     /ignore previous/i, /ignore rules/i, /ignore (all )?instructions/i,
@@ -1494,7 +1514,7 @@ function getGmailTransporter() {
   return _gmailTransporter;
 }
 const APP_URL          = process.env.APP_URL ?? 'http://localhost:5173';
-const INVITABLE_APP_ROLES = ['editor', 'reviewer', 'viewer'];
+const INVITABLE_APP_ROLES = ['project_owner', 'editor', 'reviewer', 'viewer'];
 const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const INVITE_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -1540,6 +1560,16 @@ function resolveDbConnectionString() {
 
 const dbConnectionString = resolveDbConnectionString();
 
+// Local docker-compose Postgres has no SSL listener at all and rejects an SSL
+// negotiation attempt outright; Supabase (and most managed Postgres) requires
+// it. Same detection pattern as scripts/seedMasterData.js and
+// scripts/seedSampleData.js -- without this, pointing POSTGRES_URL_LOCAL at
+// Supabase's pooler (as opposed to a local docker Postgres) hangs/fails to
+// connect, and dbPool silently falls back to the in-memory invite store.
+const dbTargetHost = (dbConnectionString ?? '').replace(/^[a-z]+:\/\/[^@]*@/, '').split(/[:/]/)[0];
+const dbIsLocalHost = /^(localhost|127\.0\.0\.1|db)$/i.test(dbTargetHost);
+const dbSslOption = dbIsLocalHost ? false : { rejectUnauthorized: false };
+
 // M-NEW-03 fix: warn loudly at startup if invite tokens will not be persisted.
 // A Railway restart (deploy, OOM, health-check failure) will silently drop all
 // pending invites when running without a database.
@@ -1577,14 +1607,20 @@ let appStateReady = null;
 let inviteSessionReady = null;
 if (dbConnectionString) {
   try {
-    dbPool = new Pool({ connectionString: dbConnectionString });
+    dbPool = new Pool({ connectionString: dbConnectionString, ssl: dbSslOption });
     dbPool.query('SELECT 1').then(async () => {
       console.log('Invite system: DB connected');
       await ensureAppStateTables().catch((err) => {
         console.error('App state schema init failed:', err.message);
       });
-    }).catch(() => {
-      console.warn('Invite system: DB connection failed, using in-memory store');
+    }).catch((err) => {
+      // Temporary diagnostic logging (2026-07-11) -- this used to swallow the
+      // real error entirely, which made a bad connection string, wrong
+      // credentials, SSL mismatch, and network/firewall blocks all look
+      // identical ("DB connection failed, using in-memory store"). Logging
+      // err.message/err.code here so the actual cause is visible instead of
+      // guessed at.
+      console.warn(`Invite system: DB connection failed (${err.code ?? 'no code'}: ${err.message}), using in-memory store`);
       dbPool = null;
     });
   } catch { dbPool = null; }
@@ -2044,6 +2080,95 @@ async function getCallerAppRoleForProject(projectId, email) {
   return null;
 }
 
+// Per-agent access scoping (mandatory-agent-assignment invites, 2026-07-11).
+// agentAssignments has no relational-table equivalent -- it only ever lived
+// in projects.data JSONB (same place the frontend's ProjectSettings.tsx /
+// ProjectWorkspace.tsx read/write it), so this reads that JSONB directly
+// rather than mirroring getCallerAppRoleForProject()'s dual relational+JSONB
+// lookup above.
+async function getCallerAgentAccess(projectId, email) {
+  if (!dbPool || !email || !projectId) return null;
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const result = await dbPool.query(`
+    SELECT
+      member->>'id' AS member_id,
+      member->>'appRole' AS app_role,
+      COALESCE((member->>'agentAccessScoped')::boolean, false) AS agent_access_scoped,
+      COALESCE(p.data->'agentAssignments', '[]'::jsonb) AS agent_assignments
+    FROM projects p, jsonb_array_elements(COALESCE(p.data->'teamMembers', '[]'::jsonb)) AS member
+    WHERE p.id = $1 AND lower(member->>'email') = $2
+    LIMIT 1
+  `, [projectId, normalizedEmail]).catch(() => ({ rows: [] }));
+  return result.rows[0] ?? null;
+}
+
+/**
+ * Enforces the per-agent access-scoping feature: a scoped, non-owner member
+ * (TeamMember.agentAccessScoped === true, set only by the mandatory-
+ * agent-assignment invite flow -- see InviteModal in ProjectSettings.tsx) may
+ * only run agents present in their own project.agentAssignments entry. This
+ * is the server-side half of that feature; ProjectWorkspace.tsx's UI gating
+ * is the other half and must not be relied on alone, since /api/agent and
+ * /api/agents/call were previously reachable directly with any agentId once
+ * past checkToken()'s identity check -- there was no project- or
+ * agent-scoped authorization here at all before this function existed.
+ *
+ * Writes the 403 response itself and returns { ok: false } on denial; caller
+ * must `return` immediately when ok is false. Returns { ok: true, skipped:
+ * true } (not just `ok: true`) in every case where the check intentionally
+ * did not run, so tests/logs can distinguish "explicitly allowed" from
+ * "not evaluated" -- see the reasons in each branch below.
+ */
+async function authorizeAgentRun(req, res, { projectId, agentId }) {
+  // No project/agent context -- meta or utility calls (e.g. app-level "Test
+  // Connection", the Risk Register suggestion helper, chat-widget prompts)
+  // are out of scope for this feature and unaffected.
+  if (!projectId || !agentId) return { ok: true, skipped: true };
+
+  if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+    return { ok: true, skipped: true };
+  }
+  const callerEmail = req.authUser?.email ?? null;
+  if (callerEmail && isConfiguredAdminEmail(callerEmail)) {
+    return { ok: true, skipped: true };
+  }
+  if (!dbPool) {
+    // Fail-open: this is defense-in-depth on top of the frontend gate, not
+    // the sole gate, and a DB hiccup must not take down agent execution
+    // entirely (mirrors the invite system's existing graceful-degradation
+    // posture elsewhere in this file).
+    console.warn(`[authorizeAgentRun] dbPool unavailable — skipping per-agent check (project=${projectId}, agent=${agentId})`);
+    return { ok: true, skipped: true };
+  }
+  if (!callerEmail) {
+    // No resolvable identity (e.g. PROXY_TOKEN/open-mode calls) -- nothing
+    // to scope against; pre-existing behavior for these paths is unchanged.
+    return { ok: true, skipped: true };
+  }
+
+  const access = await getCallerAgentAccess(projectId, callerEmail).catch(() => null);
+  if (!access) {
+    // Caller has no team_members/JSONB roster entry we could find for this
+    // project (e.g. projectAccess.ts's synthetic ownerFallbackMember() case,
+    // which has no persisted row at all). Don't 403 a path this function
+    // hasn't fully mapped -- leave it to whatever project-level auth already
+    // gates that request elsewhere.
+    return { ok: true, skipped: true };
+  }
+  if (access.app_role === 'project_owner') return { ok: true };
+  if (!access.agent_access_scoped) return { ok: true }; // legacy/grandfathered member — full access, as before this feature
+
+  const assignments = Array.isArray(access.agent_assignments) ? access.agent_assignments : [];
+  const assignment = assignments.find((a) => a && a.agentId === agentId);
+  const memberIds = Array.isArray(assignment?.memberIds) ? assignment.memberIds : [];
+  if (memberIds.includes(access.member_id)) return { ok: true };
+
+  res.status(403).json({
+    error: 'You are not assigned to run this agent for this project. Ask your Project Owner to assign it to you in Settings → Team Members.',
+  });
+  return { ok: false };
+}
+
 // Returns { ok: true, callerEmail, callerRole } when the caller may
 // create/revoke/view invites for projectId, or writes the appropriate
 // 401/403 response and returns { ok: false }. Pass requestedAppRole only for
@@ -2075,8 +2200,15 @@ async function authorizeInviteAction(req, res, { projectId, action, requestedApp
     return { ok: false };
   }
 
-  if (requestedAppRole && appRoleRank(requestedAppRole) >= appRoleRank('project_owner')) {
-    res.status(403).json({ error: 'Project Owner cannot grant a role equal to or higher than their own.' });
+  // Historically this rejected requestedAppRole ranked >= the caller's own
+  // rank (project_owner) -- since project_owner was the top rank, that made
+  // it impossible for anyone to ever invite another project_owner, even
+  // though a project owner is meant to be able to delegate full project
+  // management to someone else. Only reject roles ranked STRICTLY HIGHER
+  // than project_owner (impossible today, but keeps this future-proof if a
+  // higher rank is ever added).
+  if (requestedAppRole && appRoleRank(requestedAppRole) > appRoleRank('project_owner')) {
+    res.status(403).json({ error: 'Project Owner cannot grant a role higher than their own.' });
     return { ok: false };
   }
 
@@ -2119,7 +2251,7 @@ async function dbUpsertMember({ projectId, name, email, appRole, inviteTokenHash
   return rows[0]?.id ?? null;
 }
 
-async function dbAcceptInvite(token, email) {
+async function dbAcceptInvite(token, email, userId) {
   if (!dbPool) return null;
   await ensureInviteSessionTable();
   const tokenHash = hashInviteToken(token);
@@ -2153,14 +2285,28 @@ async function dbAcceptInvite(token, email) {
       throw Object.assign(new Error('Invite has an invalid role and cannot be accepted.'), { code: 'INVALID_ROLE' });
     }
 
+    // Setting user_id here (in the same UPDATE that flips invite_status to
+    // 'accepted') is THE thing that grants actual API access -- team_members
+    // is the one place project roles/access live (see
+    // backend/migrations/006_consolidate_team_members.sql), and
+    // requireProjectRole()/GET /api/projects in server/src/routes/projects.ts
+    // both key off team_members.user_id = auth.uid()-equivalent. Without it,
+    // the invitee would be marked 'accepted' but still have no user_id to be
+    // found by, so the project would never appear on their dashboard.
+    // COALESCE keeps any existing user_id if this is somehow re-run without
+    // a fresh verified session (shouldn't happen, but avoids clobbering).
+    if (!userId) {
+      console.warn(`[invite/accept] No verified userId available -- accepting project=${pending.project_id} email=${pending.email} without a user_id. This invitee will not see the project until this is corrected.`);
+    }
     await client.query(`
       UPDATE team_members
       SET invite_status = 'accepted',
           accepted_at = COALESCE(accepted_at, NOW()),
           invite_token = NULL,
-          invite_token_hash = NULL
+          invite_token_hash = NULL,
+          user_id = COALESCE($2, user_id)
       WHERE id = $1
-    `, [pending.id]);
+    `, [pending.id, userId ?? null]);
 
     await client.query(`
       INSERT INTO invite_log (project_id, team_member_id, action, performed_by)
@@ -2628,7 +2774,7 @@ async function requireVerifiedInviteeEmail(req, res) {
     res.status(400).json({ error: 'Your account has no confirmed email address.' });
     return null;
   }
-  return email;
+  return { email, userId: data.user.id };
 }
 
 // ── POST /api/invite/accept ───────────────────────────────────────────────────
@@ -2639,8 +2785,9 @@ app.post('/api/invite/accept', async (req, res) => {
   const token = req.body?.token ?? req.query?.token;
   if (!token) return res.status(400).json({ error: 'token is required' });
 
-  const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
-  if (!verifiedEmail) return; // response already sent
+  const verified = await requireVerifiedInviteeEmail(req, res);
+  if (!verified) return; // response already sent
+  const { email: verifiedEmail, userId: verifiedUserId } = verified;
 
   const tokenHash = hashInviteToken(token);
 
@@ -2671,7 +2818,7 @@ app.post('/api/invite/accept', async (req, res) => {
         return res.status(410).json({ error: 'This invite link has expired. Ask the project owner to resend.' });
       }
       let invalidRoleError = null;
-      const dbRow = await dbAcceptInvite(token, verifiedEmail).catch((err) => {
+      const dbRow = await dbAcceptInvite(token, verifiedEmail, verifiedUserId).catch((err) => {
         if (err?.code === 'INVALID_ROLE') { invalidRoleError = err; return null; }
         throw err;
       });
@@ -2728,14 +2875,15 @@ app.get('/api/invite/accept', async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).json({ error: 'token is required' });
 
-  const verifiedEmail = await requireVerifiedInviteeEmail(req, res);
-  if (!verifiedEmail) return; // response already sent
+  const verified = await requireVerifiedInviteeEmail(req, res);
+  if (!verified) return; // response already sent
+  const { email: verifiedEmail, userId: verifiedUserId } = verified;
 
   const tokenHash = hashInviteToken(token);
 
   // Try DB first
   let invalidRoleError = null;
-  const dbRow = await dbAcceptInvite(token, verifiedEmail).catch((err) => {
+  const dbRow = await dbAcceptInvite(token, verifiedEmail, verifiedUserId).catch((err) => {
     if (err?.code === 'INVALID_ROLE') { invalidRoleError = err; return null; }
     return null; // any other DB error: fall through to in-memory fallback below
   });
@@ -3006,4 +3154,7 @@ module.exports = {
   provisionInviteeAccount,
   findSupabaseUserByEmail,
   getSupabaseAdmin,
+  // Exported for unit testing only (per-agent access scoping, 2026-07-11):
+  authorizeAgentRun,
+  getCallerAgentAccess,
 };

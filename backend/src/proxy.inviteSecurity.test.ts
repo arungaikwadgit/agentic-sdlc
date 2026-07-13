@@ -103,6 +103,53 @@ describe('invite-link security helpers', () => {
     });
   });
 
+  describe('authorizeAgentRun — dbPool-unavailable fail-open path', () => {
+    // process.env in beforeEach above clears POSTGRES_URL/POSTGRES_URL_LOCAL,
+    // so proxy.js's dbPool stays null (see the `if (dbConnectionString) {...}`
+    // guard around Pool creation) — this exercises the "fail-open, this is
+    // defense-in-depth not the sole gate" branch documented on
+    // authorizeAgentRun() itself. The real assigned-vs-not-assigned SQL logic
+    // (which needs a working dbPool) is covered by
+    // proxy.agentAccess.integration.test.ts against a real Postgres.
+    function fakeReqRes(email: string | null, opts: { adminBypass?: boolean } = {}) {
+      const req: any = { authUser: opts.adminBypass ? { adminBypass: true } : { email } };
+      const res: any = {
+        status(this: any) { return this; },
+        json(this: any) { return this; },
+      };
+      return { req, res };
+    }
+
+    it('skips when projectId or agentId is missing, even with no dbPool', async () => {
+      const { authorizeAgentRun } = require('./proxy');
+      const { req, res } = fakeReqRes('someone@example.com');
+      expect(await authorizeAgentRun(req, res, { projectId: null, agentId: 'architecture' })).toEqual({ ok: true, skipped: true });
+      expect(await authorizeAgentRun(req, res, { projectId: 'proj-1', agentId: null })).toEqual({ ok: true, skipped: true });
+    });
+
+    it('skips (fail-open) for a would-be-scoped caller when dbPool is unavailable', async () => {
+      const { authorizeAgentRun } = require('./proxy');
+      const { req, res } = fakeReqRes('some-editor@example.com');
+      const result = await authorizeAgentRun(req, res, { projectId: 'proj-1', agentId: 'architecture' });
+      expect(result).toEqual({ ok: true, skipped: true });
+    });
+
+    it('skips for the admin-bypass identity regardless of dbPool availability', async () => {
+      const { authorizeAgentRun } = require('./proxy');
+      const { req, res } = fakeReqRes(null, { adminBypass: true });
+      const result = await authorizeAgentRun(req, res, { projectId: 'proj-1', agentId: 'architecture' });
+      expect(result).toEqual({ ok: true, skipped: true });
+    });
+
+    it('skips for a configured app-admin email regardless of dbPool availability', async () => {
+      process.env.ADMIN_EMAIL_ALLOWLIST = 'admin@example.com';
+      const { authorizeAgentRun } = require('./proxy');
+      const { req, res } = fakeReqRes('admin@example.com');
+      const result = await authorizeAgentRun(req, res, { projectId: 'proj-1', agentId: 'architecture' });
+      expect(result).toEqual({ ok: true, skipped: true });
+    });
+  });
+
   describe('isInviteExpired', () => {
     it('is not expired immediately after being invited', () => {
       const { isInviteExpired } = require('./proxy');

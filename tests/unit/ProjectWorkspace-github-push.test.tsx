@@ -18,9 +18,26 @@ vi.mock('@/db/database', () => ({
   db: { projects: { get: vi.fn() } },
 }));
 
+// ── Mock contexts/AuthContext — ProjectWorkspace.tsx calls useAuth()
+// unconditionally at the top of the component; without this mock,
+// useAuth() throws "must be used inside <AuthProvider>" and every test in
+// this file fails to render. ──
+vi.mock('../../frontend/src/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'owner-user-1', email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+}));
+
+// ── ProjectWorkspace.tsx loads its project via the useProject() hook
+// (frontend/src/hooks/useProject.ts), which calls getProject +
+// subscribeProjectRepositoryChange from @/db/projectRepository -- neither
+// was defined on this mock, so useProject's effect threw and every test in
+// this file failed to render (pre-existing gap from a useLiveQuery ->
+// useProject refactor, unrelated to the isAdmin -> appRole RBAC
+// consolidation, but it blocks verifying that consolidation here). ──
 vi.mock('@/db/projectRepository', () => ({
+  getProject: (...args: unknown[]) => Promise.resolve(currentProject),
   updateProject: vi.fn(),
   updateAgentRun: vi.fn(),
+  subscribeProjectRepositoryChange: () => () => {},
 }));
 
 vi.mock('@/services/pipelineEngine', () => ({
@@ -87,7 +104,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'simple',
     teamMembers: [
-      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', isAdmin: true, avatarColor: '#fff' },
+      { id: 'member-1', name: 'Alice Admin', email: 'alice@example.com', role: 'Admin', appRole: 'project_owner', avatarColor: '#fff' },
     ],
     activeAdminId: 'member-1',
     agentAssignments: [],
@@ -107,7 +124,10 @@ const noop = () => {};
 
 async function selectAgent(agentName: string) {
   const user = userEvent.setup();
-  const row = screen.getByRole('button', { name: new RegExp(agentName, 'i') });
+  // findByRole (not getByRole) -- the project now loads asynchronously via
+  // useProject()'s getProject() call, so the agent sidebar isn't populated
+  // on the very first synchronous render tick.
+  const row = await screen.findByRole('button', { name: new RegExp(agentName, 'i') });
   await user.click(row);
   return user;
 }
@@ -135,7 +155,7 @@ describe('ProjectWorkspace — GitHub push integration', () => {
       githubIntegrationId: 'gh-int-1',
       agentRuns: withCompleteRun('sprintPlanner', SPRINT_PLAN_OUTPUT),
       teamMembers: [
-        { id: 'member-1', name: 'Bob Dev', email: 'bob@example.com', role: 'Developer', isAdmin: false, avatarColor: '#fff' },
+        { id: 'member-1', name: 'Bob Dev', email: 'bob@example.com', role: 'Developer', appRole: 'editor', avatarColor: '#fff' },
       ],
       activeAdminId: 'member-1',
     } as Partial<Project>);
