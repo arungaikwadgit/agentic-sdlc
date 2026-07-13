@@ -43,6 +43,34 @@ function buildPriorContext(agentId: AgentId, project: Project): string {
   return priorOutputs.join('\n\n---\n\n');
 }
 
+/**
+ * Builds context from documents the project owner uploaded (brand docs,
+ * specs, existing process docs, etc.), if any exist. Gap questions should
+ * be grounded in these when present — e.g. "the uploaded spec says X, but
+ * this document doesn't address it" is a much sharper question than a
+ * generic one. Returns '' when the project has no uploaded documents.
+ */
+function buildUploadedDocsContext(project: Project): string {
+  const docs = project.contextDocuments;
+  if (!docs || docs.length === 0) return '';
+
+  const MAX_PER_DOC = 1_500;
+  const MAX_TOTAL = 5_000;
+
+  const parts: string[] = [];
+  let used = 0;
+  for (const doc of docs) {
+    if (used >= MAX_TOTAL) break;
+    const remaining = MAX_TOTAL - used;
+    const slice = doc.content.slice(0, Math.min(MAX_PER_DOC, remaining));
+    const truncated = slice.length < doc.content.length;
+    parts.push(`### ${doc.name} (${doc.kind})\n${slice}${truncated ? '\n[...truncated]' : ''}`);
+    used += slice.length;
+  }
+
+  return parts.join('\n\n---\n\n');
+}
+
 export default function ReviewImprovePanel({ agentId, project, onRegenerate, onClose }: Props) {
   const [questions, setQuestions] = useState<GapQuestion[]>([]);
   // Track all questions ever shown in this session so Refresh never repeats them
@@ -67,10 +95,15 @@ export default function ReviewImprovePanel({ agentId, project, onRegenerate, onC
       ? `\n\n## Already asked questions (do NOT repeat these):\n${existingQuestions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')}`
       : '';
 
+    const uploadedDocsContext = buildUploadedDocsContext(project);
+
     const systemPrompt = `You are a senior document quality reviewer specialising in software development artifacts.
 Your job is to read an agent-generated document and identify the most important gaps, ambiguities, or missing details that would make the document more complete and accurate.
 Generate exactly 4 concise, specific questions that the project owner can answer to fill those gaps.
 Each question must be directly tied to a concrete weakness you found in the document.
+${uploadedDocsContext
+  ? 'The project owner has uploaded reference documents (see "Uploaded project documents" below) — prioritise questions that surface gaps or conflicts between those documents and the agent\'s output over generic questions. Only fall back to a generic gap question if the uploaded documents don\'t suggest a sharper one.'
+  : 'No documents have been uploaded for this project, so base your questions on the document itself and the prior agent context below.'}
 Format your response as a numbered list — one question per line, nothing else. No preamble, no explanations.`;
 
     const userPrompt = [
@@ -81,6 +114,7 @@ Format your response as a numbered list — one question per line, nothing else.
       currentOutput.slice(0, 3000),
       currentOutput.length > 3000 ? '[...document truncated for brevity]' : '',
       '',
+      uploadedDocsContext ? `## Uploaded project documents:\n${uploadedDocsContext}` : '',
       priorContext ? `## Context from earlier agents:\n${priorContext}` : '',
       alreadyAsked,
     ].filter(Boolean).join('\n');

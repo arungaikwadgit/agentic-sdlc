@@ -9,7 +9,7 @@ import { DOMAINS, getDomain } from '@/agents/domains';
 import { getEffectiveDomainKnowledgeDefault } from '@/agents/domainKnowledgeDefaults';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import type { DomainId } from '@/types/domain.types';
-import type { ProjectPriority, ProjectType } from '@/types/project.types';
+import type { ProjectExecutionStyle, ProjectPriority, ProjectType } from '@/types/project.types';
 import styles from './NewProjectModal.module.css';
 
 const PROJECT_TYPES: { value: ProjectType; label: string }[] = [
@@ -19,6 +19,21 @@ const PROJECT_TYPES: { value: ProjectType; label: string }[] = [
   { value: 'internal-tool', label: 'Internal Tool' },
   { value: 'data-ml', label: 'Data / ML Pipeline' },
   { value: 'other', label: 'Other' },
+];
+
+// Sourced from current (2026) software delivery engagement-model conventions —
+// see Fixed Price/T&M/Dedicated Team/Managed Capacity/Milestone/Retainer/
+// Outcome-based as the commonly recognized categories.
+const EXECUTION_STYLES: { value: ProjectExecutionStyle; label: string; hint: string }[] = [
+  { value: 'fixed-bid', label: 'Fixed Bid', hint: 'Fixed price for a fixed, locked scope — scope changes need formal change requests.' },
+  { value: 'time-and-materials', label: 'Time & Materials', hint: 'Billed for actual hours/effort — scope can evolve as priorities change.' },
+  { value: 'dedicated-team', label: 'Dedicated Team', hint: 'A committed team billed monthly/hourly, managed jointly with the client.' },
+  { value: 'staff-augmentation', label: 'Staff Augmentation', hint: 'Individual contributors embedded into the client’s own team/process.' },
+  { value: 'fixed-capacity', label: 'Fixed Capacity', hint: 'Flexible team size within a fixed monthly fee, vendor-managed delivery.' },
+  { value: 'milestone-based', label: 'Milestone-Based', hint: 'Price agreed per phase/deliverable; payment released at each checkpoint.' },
+  { value: 'retainer', label: 'Retainer', hint: 'Recurring fixed fee for an ongoing scope of work or hours per period.' },
+  { value: 'outcome-based', label: 'Outcome-Based', hint: 'Payment tied to measurable business outcomes rather than hours or scope.' },
+  { value: 'other', label: 'Other', hint: 'A hybrid or custom commercial structure not listed above.' },
 ];
 
 const PRIORITIES: { value: ProjectPriority; label: string }[] = [
@@ -100,6 +115,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [owner, setOwner] = useState('');
   const [team, setTeam] = useState('');
   const [projectType, setProjectType] = useState<ProjectType | ''>('');
+  const [projectExecutionStyle, setProjectExecutionStyle] = useState<ProjectExecutionStyle>('time-and-materials');
   const [priority, setPriority] = useState<ProjectPriority>('medium');
   const [startDate, setStartDate] = useState('');
 
@@ -252,6 +268,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
       owner: owner.trim(),
       team: team.trim() || undefined,
       projectType: projectType || undefined,
+      projectExecutionStyle,
       priority,
       startDate: startDate || undefined,
       targetEndDate: targetEndDate || undefined,
@@ -413,6 +430,19 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
                   </select>
                 </div>
               </div>
+
+              <label className={styles.label}>Project Execution Style</label>
+              <select
+                value={projectExecutionStyle}
+                onChange={(e) => setProjectExecutionStyle(e.target.value as ProjectExecutionStyle)}
+              >
+                {EXECUTION_STYLES.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+              <p className={styles.hint}>
+                {EXECUTION_STYLES.find((s) => s.value === projectExecutionStyle)?.hint}
+              </p>
 
               <div className={styles.grid2}>
                 <div>

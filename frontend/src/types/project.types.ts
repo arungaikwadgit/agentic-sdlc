@@ -129,6 +129,24 @@ export type ProjectPriority = 'low' | 'medium' | 'high' | 'critical';
 
 export type ProjectType = 'web-app' | 'mobile-app' | 'api-backend' | 'internal-tool' | 'data-ml' | 'other';
 
+/**
+ * How the engagement/contract for this project is structured. Distinct from
+ * ProjectType (what's being built) — this describes the commercial delivery
+ * model, which affects how the SDLC Orchestrator should frame scope risk,
+ * change-request rigor, and critical path (e.g. a fixed-bid engagement needs
+ * tighter scope-lock and estimation discipline than time-and-materials).
+ */
+export type ProjectExecutionStyle =
+  | 'fixed-bid'
+  | 'time-and-materials'
+  | 'dedicated-team'
+  | 'staff-augmentation'
+  | 'fixed-capacity'
+  | 'milestone-based'
+  | 'retainer'
+  | 'outcome-based'
+  | 'other';
+
 export type ReviewGateId = 'gate1' | 'gate2' | 'gate3' | 'gate5' | 'gate6';
 
 export interface ReviewGate {
@@ -210,6 +228,7 @@ export interface Project {
   owner?: string;
   team?: string;
   projectType?: ProjectType;
+  projectExecutionStyle?: ProjectExecutionStyle;
   priority?: ProjectPriority;
   startDate?: string;
   targetEndDate?: string;

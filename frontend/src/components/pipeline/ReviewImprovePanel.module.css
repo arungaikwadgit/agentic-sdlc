@@ -208,7 +208,10 @@
 }
 
 .regenBtn {
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
   padding: 9px 18px;
   background: var(--success, #10b981);
   color: #fff;
