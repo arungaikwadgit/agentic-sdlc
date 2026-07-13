@@ -129,28 +129,42 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['invite', 'invite team', 'add team member', 'invite member', 'send invite', 'team invite'],
     question: 'How do I invite team members to a project?',
     answer:
-      'Open the project, then click the "Team" button in the workspace toolbar. In the Team & Invites panel, enter the team member\'s name, email, job title, and select their role (Project Owner, Editor, Reviewer, or Viewer). Click "Send Invite" — the system generates a magic link and emails it to the invitee (if a Gmail address + App Password is configured) or shows you a copyable link to share manually. The invitee clicks the link to accept and joins the project.',
+      'Open the project, then click the "Team" button in the workspace toolbar. Enter the team member\'s name, email, job title, and select their role (Project Owner, Editor, Reviewer, or Viewer). If you pick Editor, you must also check off which specific agents they\'re allowed to run — this is required before you can send the invite. Click "Send Invite" — the system creates a sign-in link and a default password (shown to you and copyable, or emailed if configured), then shares both with the invitee. They sign in with that password and are prompted to set their own on first login.',
   },
   {
     id: 'roles',
     keywords: ['role', 'roles', 'permissions', 'access', 'what can they do', 'project owner', 'editor', 'reviewer', 'viewer'],
     question: 'What are the roles and what can each role do?',
     answer:
-      'There are four roles: Project Owner — full control, can invite/remove members, change roles, run agents, edit settings. Editor — can run agents, upload documents, edit project settings; cannot invite members. Reviewer — can view all outputs and approve review gates; cannot run agents or change settings. Viewer — read-only, can view all agent outputs but cannot make any changes.',
+      'There are four roles: Project Owner — full control, can invite/remove members, change roles, run agents, edit settings. Editor — can run agents, upload documents, edit project settings; cannot invite members. When you invite someone as an Editor, you must also select which specific agents they can run — they get full view access to every agent\'s output, but can only run/edit the ones you checked. Reviewer — can view all outputs and approve review gates; cannot run agents or change settings. Viewer — read-only, can view all agent outputs but cannot make any changes.',
+  },
+  {
+    id: 'agent-access-scoping',
+    keywords: ['agent access', 'which agents can', 'restrict agents', 'assign agents', 'agent picker', 'agents this editor', 'agent assignments'],
+    question: 'How does per-agent access scoping work for Editors?',
+    answer:
+      'When you invite someone as an Editor, you must check off which agents they\'re allowed to run — this can\'t be skipped. That Editor can still view every agent\'s output across the whole project, but the Run/Retry/edit-prompt actions only work for the agents you assigned them. Project Owners always have full access regardless of assignment; Reviewers and Viewers can\'t run any agent regardless. You can review or change an Editor\'s agent assignments any time from the Team panel\'s "Agent Assignments" tab.',
   },
   {
     id: 'invite-link',
-    keywords: ['invite link', 'magic link', 'accept invite', 'join project'],
-    question: 'How does the invite link work?',
+    keywords: ['invite link', 'magic link', 'accept invite', 'join project', 'default password', 'sign in password'],
+    question: 'How does the invite link and sign-in work?',
     answer:
-      'When you send an invite, the system generates a secure magic link containing a unique token tied to the invitee\'s email address. The invitee clicks the link, which opens a landing page showing the project name and their assigned role. They click "Accept Invitation" to confirm — this records their acceptance and gives them access to the project. Links expire after 7 days. A Project Owner can resend or revoke an invite at any time from the Team panel.',
+      'When you send an invite, the system creates a secure link tied to the invitee\'s email and a default password (format like "jane_08072026" — first name plus the date). The invitee clicks the link, sees the project name and their assigned role, and signs in using that default password. On first sign-in, they\'re required to set their own password before they can do anything else in the app. A Project Owner can resend or revoke an invite, or reset a member\'s password, at any time from the Team panel.',
+  },
+  {
+    id: 'password-reset',
+    keywords: ['forgot password', 'reset password', 'change password', 'new password', 'password reset', 'default password format'],
+    question: 'What if a team member forgets their password, or needs a new one?',
+    answer:
+      'Two ways to handle this. Self-service: on the sign-in page, click "Forgot password?", enter your email, and you\'ll get a reset link. Admin-triggered: a Project Owner can open the Team panel, find the member, and click "Reset password" — this generates a new default-format password (shown or emailed the same way as the original invite), and the member is prompted to set their own new password the next time they sign in.',
   },
   {
     id: 'resend-revoke',
     keywords: ['resend invite', 'revoke invite', 'cancel invite', 'change role'],
     question: 'Can I resend or revoke an invite?',
     answer:
-      'Yes. Open the project and click the "Team" button in the toolbar. Find the pending invite in the list — you can click "Resend" to generate a fresh magic link, or "Revoke" to cancel it immediately. You can also change a member\'s role at any time from the same panel. Only a Project Owner can resend, revoke, or change roles.',
+      'Yes. Open the project and click the "Team" button in the toolbar. Find the pending invite in the list — you can click "Resend" to generate a fresh sign-in link and password, or "Revoke" to cancel it immediately. You can also change a member\'s role at any time from the same panel. Only a Project Owner can resend, revoke, or change roles.',
   },
   // ── CONTEXT FILES ──────────────────────────────────────────────────────────
   {
