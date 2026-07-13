@@ -766,7 +766,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   };
   function canRunThisAgent(agentId: AgentId | null | undefined): boolean {
     if (!agentId) return false;
-    return getAgentRunPermission(project, accessCtx, agentId).canRun;
+    // Non-null assertion: `project` is guaranteed defined here by the
+    // `if (!project) return ...` guard above, but TypeScript doesn't
+    // propagate that narrowing into this nested function's closure over
+    // the outer `project` binding (a known TS limitation for closures).
+    return getAgentRunPermission(project!, accessCtx, agentId).canRun;
   }
   // Whether the current member is agent-access-scoped at all (independent of
   // any specific agentId) — used to hide/disable the whole-pipeline actions
