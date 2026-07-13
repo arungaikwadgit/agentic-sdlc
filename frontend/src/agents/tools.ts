@@ -377,6 +377,99 @@ export const getStyleGuideTool: AgentTool = {
   },
 };
 
+// ─── Tool: get_agent_catalog ──────────────────────────────────────────────────
+/**
+ * Returns the read-only agent fleet catalog (id, name, phase, description,
+ * dependsOn for every agent in the pipeline). Populated by
+ * PipelineEngine.buildContext() from AGENT_DEFINITIONS — this tool does NOT
+ * import definitions.ts directly to avoid a circular import (definitions.ts
+ * already imports this file for CONTEXT_TOOLS/ORCHESTRATOR_TOOLS etc.).
+ * Lets the orchestrator ground its plan in the actual agent fleet instead of
+ * inferring "8 phases" from its own prompt text.
+ */
+export const getAgentCatalogTool: AgentTool = {
+  name: 'get_agent_catalog',
+  description:
+    'Return the full catalog of agents in this pipeline: id, name, phase, description, and dependsOn. ' +
+    'Use this before recommending an execution order — ground your plan in the actual agent fleet, ' +
+    'not assumptions about how many phases or agents exist.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  execute: async (_args, ctx) => {
+    if (!ctx.agentCatalog || ctx.agentCatalog.length === 0) {
+      return { found: false, message: 'Agent catalog was not provided in this run context.' };
+    }
+    return { found: true, agents: ctx.agentCatalog };
+  },
+};
+
+// ─── Tool: get_phase_rules ────────────────────────────────────────────────────
+/**
+ * Returns the static phase/gate rules (PHASE_ORDER, PHASE_AGENTS,
+ * PARALLEL_PHASES, REVIEW_GATES) as data instead of leaving the LLM to guess
+ * them. Same "no direct import of constants.ts" reasoning as
+ * get_agent_catalog — read from ctx, populated by PipelineEngine.
+ */
+export const getPhaseRulesTool: AgentTool = {
+  name: 'get_phase_rules',
+  description:
+    'Return the pipeline\'s actual phase order, which agents run in which phase, which phases run in ' +
+    'parallel, and which review gates exist. Use this to ensure your recommended execution plan matches ' +
+    'what the pipeline can actually run — do not invent phase numbers or gate names.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  execute: async (_args, ctx) => {
+    if (!ctx.phaseRules) {
+      return { found: false, message: 'Phase rules were not provided in this run context.' };
+    }
+    return { found: true, ...ctx.phaseRules };
+  },
+};
+
+// ─── Tool: get_available_models ───────────────────────────────────────────────
+/**
+ * Returns the admin-configured model catalog (paid + free/open, enabled
+ * entries only surfaced as usable) so the orchestrator can assign a model per
+ * agent based on what's actually configured, instead of assuming a fixed
+ * model exists. See agents/modelCatalog.ts for resolveModelForAgent(), which
+ * implements the "fall back to whatever's available" behavior for rate-limited
+ * or disabled models — this tool just reports what's currently enabled.
+ */
+export const getAvailableModelsTool: AgentTool = {
+  name: 'get_available_models',
+  description:
+    'Return the catalog of models currently enabled for this deployment (paid and free/open), with their ' +
+    'cost tier, context window, and capabilities (reasoning, coding, long-context, structured-output, ' +
+    'tool-calling). Use this to recommend which model each agent should run on — prefer paid/reliable ' +
+    'models for critical-path agents (architecture, data model, security) and free/open models only for ' +
+    'lower-stakes, standard-tier document agents.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  execute: async (_args, ctx) => {
+    const enabled = (ctx.modelCatalog ?? []).filter((m) => m.enabled);
+    if (enabled.length === 0) {
+      return { found: false, message: 'No models are enabled in the model catalog for this deployment.' };
+    }
+    return {
+      found: true,
+      models: enabled.map((m) => ({
+        id: m.id,
+        label: m.label,
+        costTier: m.costTier,
+        contextWindow: m.contextWindow,
+        capabilities: m.capabilities,
+        reliabilityNote: m.reliabilityNote,
+      })),
+    };
+  },
+};
+
 // ─── Convenience bundles ──────────────────────────────────────────────────────
 
 /** Full tool set for document-producing agents (all tools) */
@@ -397,6 +490,21 @@ export const CONTEXT_TOOLS: AgentTool[] = [
   getAgentOutputTool,
   getDomainContextTool,
   getTeamRosterTool,
+];
+
+/**
+ * Orchestrator-only tool set. Deliberately not merged into CONTEXT_TOOLS —
+ * get_agent_catalog/get_phase_rules/get_available_models are only useful to
+ * an agent that's planning the pipeline, adding them to every agent using
+ * CONTEXT_TOOLS would inflate every prompt for no benefit. Currently assigned
+ * only to sdlcOrchestrator (see definitions.ts).
+ */
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [
+  ...CONTEXT_TOOLS,
+  getAgentCatalogTool,
+  getPhaseRulesTool,
+  getAvailableModelsTool,
+  validateOutputCompletenessTool,
 ];
 
 /** Research tool set — for agents that synthesise prior work */

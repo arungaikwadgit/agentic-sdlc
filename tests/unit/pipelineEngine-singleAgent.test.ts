@@ -35,12 +35,20 @@ vi.mock('../../frontend/src/agents/promptDefaults', () => ({
   getAgentProviderHints: vi.fn(async () => ({})),
 }));
 
-// Track callAgent calls so we can assert on provider/model args
-const callAgentMock = vi.fn(async () => ({
-  choices: [{ message: { content: 'mock output' }, finish_reason: 'stop' }],
-  usage: { total_tokens: 10 },
-  provider: 'openai' as const,
-  model: 'gpt-4o',
+// Track callAgent calls so we can assert on provider/model args.
+// vi.hoisted() is required here: vi.mock() factories are hoisted above all other
+// top-level code, including plain `const` declarations, and the test file's own
+// imports (which pull in pipelineEngine.ts, which imports './api') evaluate before
+// the rest of the file's top-level statements. A plain `const callAgentMock` closed
+// over by the factory below hits it before initialization. vi.hoisted() runs at the
+// same hoisted point as vi.mock(), so callAgentMock exists before the factory needs it.
+const { callAgentMock } = vi.hoisted(() => ({
+  callAgentMock: vi.fn(async () => ({
+    choices: [{ message: { content: 'mock output' }, finish_reason: 'stop' }],
+    usage: { total_tokens: 10 },
+    provider: 'openai' as const,
+    model: 'gpt-4o',
+  })),
 }));
 
 vi.mock('../../frontend/src/services/api', () => ({

@@ -2,6 +2,8 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
+import type { ModelCatalogEntry } from './model.types';
+
 export type AgentStatus = 'idle' | 'running' | 'complete' | 'error' | 'skipped';
 
 export type PhaseId =
@@ -149,6 +151,28 @@ export interface TeamRosterEntry {
   agents: AgentId[];
 }
 
+/** Lightweight, read-only view of one entry in AGENT_DEFINITIONS — enough for
+ *  the orchestrator to reason about the agent fleet via a tool call instead of
+ *  inferring it from memory. Deliberately excludes systemPrompt/goal/tools so
+ *  the catalog tool can't be used to exfiltrate prompt internals. */
+export interface AgentCatalogEntry {
+  id: AgentId;
+  name: string;
+  phase: PhaseId;
+  description: string;
+  dependsOn?: AgentId[];
+}
+
+/** Read-only view of the static phase/gate rules (constants.ts), exposed as a
+ *  tool result so the orchestrator's plan is grounded in what the pipeline can
+ *  actually execute, not a guess baked into its own prompt text. */
+export interface PhaseRulesSnapshot {
+  phaseOrder: PhaseId[];
+  phaseAgents: Record<PhaseId, AgentId[]>;
+  parallelPhases: PhaseId[];
+  reviewGates: Record<string, PhaseId[]>;
+}
+
 export interface AgentPromptContext {
   projectName: string;
   projectDescription: string;
@@ -175,6 +199,18 @@ export interface AgentPromptContext {
    * Range 1–4. Defaults to 2 when absent.
    */
   mockupVersionCount?: number;
+  /** Commercial delivery model (fixed bid, T&M, etc.) — see ProjectExecutionStyle. */
+  projectExecutionStyle?: string;
+  /** What's being built (web app, mobile app, etc.) — see ProjectType. */
+  projectType?: string;
+  /** Read-only agent fleet metadata, populated by PipelineEngine.buildContext(). Only
+   *  present for agents whose tools include get_agent_catalog (currently sdlcOrchestrator). */
+  agentCatalog?: AgentCatalogEntry[];
+  /** Read-only phase/gate rules snapshot, same availability scope as agentCatalog. */
+  phaseRules?: PhaseRulesSnapshot;
+  /** Admin-configured model catalog (paid + free/open models), same availability scope
+   *  as agentCatalog. See types/model.types.ts. */
+  modelCatalog?: ModelCatalogEntry[];
 }
 
 export interface AgentRun {

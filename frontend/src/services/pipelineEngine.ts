@@ -21,8 +21,31 @@ import { api } from './api';
 import { runL3Agent } from './l3Runtime';
 import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
+import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
 import type { Project, ReviewGateId } from '@/types/project.types';
-import type { AgentId, PhaseId, L3RuntimeMeta } from '@/types/agent.types';
+import type { AgentCatalogEntry, AgentId, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
+
+// Lightweight, read-only view of the agent fleet for the get_agent_catalog tool.
+// Built once per context — deliberately excludes systemPrompt/goal/tools so the
+// tool can't be used to read prompt internals back out through the LLM.
+function buildAgentCatalog(): AgentCatalogEntry[] {
+  return Object.values(AGENT_DEFINITIONS).map((def) => ({
+    id: def.id,
+    name: def.name,
+    phase: def.phase,
+    description: def.description,
+    dependsOn: def.dependsOn,
+  }));
+}
+
+function buildPhaseRules(): PhaseRulesSnapshot {
+  return {
+    phaseOrder: PHASE_ORDER,
+    phaseAgents: PHASE_AGENTS,
+    parallelPhases: [...PARALLEL_PHASES],
+    reviewGates: REVIEW_GATES,
+  };
+}
 
 export interface PipelineCallbacks {
   onAgentStart: (agentId: AgentId) => void;
@@ -322,6 +345,11 @@ export class PipelineEngine {
       techStack: project.techStack,
       contextDocuments: project.contextDocuments,
       mockupVersionCount: project.mockupVersionCount,
+      projectType: project.projectType,
+      projectExecutionStyle: project.projectExecutionStyle,
+      agentCatalog: buildAgentCatalog(),
+      phaseRules: buildPhaseRules(),
+      modelCatalog: DEFAULT_MODEL_CATALOG,
     };
   }
 }
@@ -454,6 +482,11 @@ export async function runSingleAgent(
       techStack: project.techStack,
       contextDocuments: project.contextDocuments,
       mockupVersionCount: project.mockupVersionCount,
+      projectType: project.projectType,
+      projectExecutionStyle: project.projectExecutionStyle,
+      agentCatalog: buildAgentCatalog(),
+      phaseRules: buildPhaseRules(),
+      modelCatalog: DEFAULT_MODEL_CATALOG,
     };
 
     const userPrompt = def.buildUserPrompt(ctx) +

@@ -3,7 +3,7 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import type { AgentDefinition, AgentPromptContext } from '@/types/agent.types';
-import { ALL_TOOLS, CONTEXT_TOOLS, RESEARCH_TOOLS } from './tools';
+import { ALL_TOOLS, CONTEXT_TOOLS, ORCHESTRATOR_TOOLS, RESEARCH_TOOLS } from './tools';
 
 // ─── Shared system prompt prefix ────────────────────────────────────────────
 const BASE_SYSTEM = `You are a senior software engineering consultant producing professional SDLC documentation.
@@ -82,7 +82,8 @@ const sdlcOrchestrator: AgentDefinition = {
     '- **Agentic behavior for this phase**: Describe, in plan/act/observe/revise terms, how the agent(s) in this phase actually work — what they plan before producing output, what tools or context-gathering steps they take (e.g. reading prior outputs, checking domain knowledge, validating against the team roster), how they self-check or revise their own draft before finalizing it, and what would cause them to flag a gap rather than guess. If a phase’s agents are simple single-shot generators rather than iterative planners, say so explicitly rather than implying agentic behavior that doesn’t exist.\n' +
     '- **Expected output quality bar**: What "done" looks like for each agent\n' +
     '- **Dependencies**: Which prior outputs each agent needs\n' +
-    '- **Estimated complexity**: Low / Medium / High for this specific project\n\n' +
+    '- **Estimated complexity**: Low / Medium / High for this specific project\n' +
+    '- **Recommended model**: Which model from the available model catalog (call get_available_models) this agent should run on, and why. Favor paid/reliable models for critical-path agents (architecture, data model, security, this orchestrator itself); free/open models are acceptable only for standard-tier, lower-stakes document agents. If no model catalog is available, omit this line rather than inventing a model name.\n\n' +
     '### 3. Critical Path\n' +
     'Identify the 3-5 agents whose output quality most impacts downstream phases. These are the agents where the team should spend extra time reviewing and re-running if needed.\n\n' +
     '### 4. Phase-by-Phase Guidance\n' +
@@ -130,16 +131,20 @@ const sdlcOrchestrator: AgentDefinition = {
   goal: (ctx: AgentPromptContext): string =>
     'Produce a complete SDLC Orchestration Plan for ' + ctx.projectName + ' (' + ctx.domain + ' domain).\n\n' +
     'MANDATORY STEP SEQUENCE:\n' +
-    'STEP 1 — call get_domain_context: Get domain-specific regulatory requirements, common integration patterns, and standard risks for the ' + ctx.domain + ' domain.\n' +
-    'STEP 2 — call get_team_roster: Get named team members for phase approval and risk owner assignments.\n' +
-    'STEP 3 — call get_style_guide: Check if branding/style constraints exist — note as Phase 3 input for UX agents.\n' +
-    'STEP 4 — Produce all 9 sections. Phase-by-phase guidance must reference actual team member names. Risk register must be project-specific. Go/No-Go criteria must be explicit thresholds.\n' +
-    'STEP 5 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, and risk mitigations are actionable. Fix gaps before finishing.',
+    'STEP 1 — call get_agent_catalog: Ground your plan in the actual agent fleet (ids, names, phases, dependencies) instead of assuming how many phases or agents exist.\n' +
+    'STEP 2 — call get_phase_rules: Get the actual phase order, phase/agent mapping, parallel-phase groups, and review gates so your recommended plan matches what the pipeline can really execute.\n' +
+    'STEP 3 — call get_domain_context: Get domain-specific regulatory requirements, common integration patterns, and standard risks for the ' + ctx.domain + ' domain.\n' +
+    'STEP 4 — call get_team_roster: Get named team members for phase approval and risk owner assignments.\n' +
+    'STEP 5 — call get_style_guide: Check if branding/style constraints exist — note as Phase 3 input for UX agents.\n' +
+    'STEP 6 — call get_available_models: See which models (paid and free/open) are actually enabled for this deployment before recommending one per agent.\n' +
+    'STEP 7 — Produce all 9 sections. Phase-by-phase guidance must reference actual team member names. Risk register must be project-specific. Go/No-Go criteria must be explicit thresholds. Recommended models must come from the get_available_models result — never invent a model name, and if no models are enabled, omit model recommendations rather than guessing.\n' +
+    'STEP 8 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, risk mitigations are actionable, and every phase in your plan matches a real phase from get_phase_rules. Fix gaps before finishing.',
 
-  tools: CONTEXT_TOOLS,
-  // 3 mandatory tool calls (domain, team roster, style guide) + write + self-check
-  // needs more than 3 iterations — same corruption risk class as the stakeholder fix.
-  maxIterations: 5,
+  tools: ORCHESTRATOR_TOOLS,
+  // 6 mandatory tool calls (agent catalog, phase rules, domain, team roster, style
+  // guide, available models) + write + self-check — bumped from the old 5-iteration
+  // budget to cover the 3 new grounding calls.
+  maxIterations: 7,
 };
 
 // ─── Phase 1 ─────────────────────────────────────────────────────────────────

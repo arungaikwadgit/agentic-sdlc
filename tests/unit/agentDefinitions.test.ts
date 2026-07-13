@@ -21,8 +21,8 @@ const MOCK_CTX: AgentPromptContext = {
 const ALL_AGENT_IDS: AgentId[] = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
 
 describe('PHASE_ORDER and PHASE_AGENTS', () => {
-  it('PHASE_ORDER has 11 phases', () => {
-    expect(PHASE_ORDER.length).toBe(11);
+  it('PHASE_ORDER has 15 phases', () => {
+    expect(PHASE_ORDER.length).toBe(15);
   });
 
   it('starts with phase0 (SDLC Orchestrator)', () => {
