@@ -24,6 +24,11 @@
 //   - Invitee cannot access an unrelated project (session is project-scoped)
 //   - Invite cannot be accepted twice
 
+// Forces TS to treat this file as a module (its own scope) instead of a
+// global script — see proxy.agentAccess.integration.test.ts for the full
+// explanation of the TS2451 collision this prevents.
+export {};
+
 const TEST_DB_URL = process.env.POSTGRES_URL_TEST || process.env.POSTGRES_URL_LOCAL || process.env.POSTGRES_URL || '';
 
 const describeOrSkip = TEST_DB_URL ? describe : describe.skip;

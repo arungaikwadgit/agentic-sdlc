@@ -19,6 +19,11 @@
 // Requires a real Postgres, same as proxy.inviteFlow.integration.test.ts --
 // skipped (not failed) when no test database connection string is available.
 
+// Forces TS to treat this file as a module (its own scope) instead of a
+// global script — see proxy.agentAccess.integration.test.ts for the full
+// explanation of the TS2451 collision this prevents.
+export {};
+
 const TEST_DB_URL = process.env.POSTGRES_URL_TEST || process.env.POSTGRES_URL_LOCAL || process.env.POSTGRES_URL || '';
 
 const describeOrSkip = TEST_DB_URL ? describe : describe.skip;

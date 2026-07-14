@@ -21,6 +21,14 @@
 // recognizes the admin-bypass token or a verified Supabase session, and
 // SUPABASE_URL is intentionally unset in this suite).
 
+// Forces TS to treat this file as a module (its own scope) instead of a
+// global script. Without this, top-level `const`s here collide with the
+// same names in proxy.inviteAccept.integration.test.ts and
+// proxy.inviteFlow.integration.test.ts (TS2451: Cannot redeclare
+// block-scoped variable), since none of the three files have any other
+// import/export statement.
+export {};
+
 const TEST_DB_URL = process.env.POSTGRES_URL_TEST || process.env.POSTGRES_URL_LOCAL || process.env.POSTGRES_URL || '';
 
 const describeOrSkip = TEST_DB_URL ? describe : describe.skip;
