@@ -69,6 +69,9 @@ for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
 
 // Map gate → which phase follows it
 const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
+  // gate0 blocks phase1 (and everything after) until the SDLC Orchestrator's
+  // plan (phase0) is approved by a project owner or admin.
+  gate0: PHASE_ORDER.indexOf('phase1'),
   gate1: PHASE_ORDER.indexOf('phase2'),
   gate2: PHASE_ORDER.indexOf('phase3'),
   gate3: PHASE_ORDER.indexOf('phase4'),

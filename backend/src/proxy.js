@@ -1482,6 +1482,49 @@ app.get('/api/master-data/catalog', async (_req, res) => {
   }
 });
 
+// Admin-only: add a new domain (e.g. "Logistics") or update an existing one's
+// label/color/context. Lets an admin extend the built-in domain list from
+// Settings → Domains without a code deploy.
+app.put('/api/master-data/domains/:id', checkToken, requireAdmin, async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!/^[a-zA-Z][a-zA-Z0-9_-]{1,49}$/.test(id)) {
+    return res.status(400).json({
+      error: 'Domain id must be 2-50 characters, start with a letter, and contain only letters, numbers, "-", or "_".',
+    });
+  }
+  const { label, color, bgColor, context, template } = req.body ?? {};
+  if (!label || typeof label !== 'string' || !label.trim()) {
+    return res.status(400).json({ error: 'label is required.' });
+  }
+  if (!context || typeof context !== 'string' || !context.trim()) {
+    return res.status(400).json({ error: 'context is required.' });
+  }
+  const hexColorRe = /^#[0-9a-fA-F]{6}$/;
+  const colorVal = typeof color === 'string' && hexColorRe.test(color) ? color : '#64748b';
+  const bgColorVal = typeof bgColor === 'string' && hexColorRe.test(bgColor) ? bgColor : '#e2e8f0';
+
+  try {
+    const domain = await dbUpsertDomain({
+      id,
+      label: label.trim(),
+      color: colorVal,
+      bgColor: bgColorVal,
+      context: context.trim(),
+      template: typeof template === 'string' ? template : '',
+    });
+    if (!domain) {
+      return res.status(501).json({
+        error: 'Adding domains requires a direct Postgres connection (POSTGRES_URL configured on the backend). ' +
+          'This deployment does not have one configured, so this write is unavailable.',
+      });
+    }
+    return res.json({ ok: true, domain });
+  } catch (err) {
+    console.error('Domain upsert failed:', err.message);
+    return res.status(500).json({ error: 'Failed to save domain: ' + err.message });
+  }
+});
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INVITE SYSTEM
@@ -2043,6 +2086,33 @@ async function dbGetMasterCatalog() {
     expiresAt: Date.now() + MASTER_CATALOG_CACHE_TTL_MS,
   };
   return catalog;
+}
+
+// Create or update a single row in master_domains (admin "Add domain" UI).
+// Requires a direct Postgres connection. The Supabase-REST-only fallback used
+// by dbGetMasterCatalog's read path (fetchSupabaseTable) is GET-only in this
+// file — no write helper exists for it yet — so this mirrors the existing
+// dbUpsertMember precedent of returning null when dbPool isn't configured,
+// and the route handler below turns that into a clear 501 for the admin.
+async function dbUpsertDomain({ id, label, color, bgColor, context, template }) {
+  if (!dbPool) return null;
+  const { rows } = await dbPool.query(`
+    INSERT INTO master_domains (id, label, color, bg_color, context, template)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (id) DO UPDATE
+      SET label = EXCLUDED.label,
+          color = EXCLUDED.color,
+          bg_color = EXCLUDED.bg_color,
+          context = EXCLUDED.context,
+          template = EXCLUDED.template,
+          updated_at = NOW()
+    RETURNING id, label, color, bg_color, context, template
+  `, [id, label, color, bgColor, context, template]);
+  // Invalidate the 5-minute catalog cache so the new/updated domain is
+  // visible on the next GET /api/master-data/catalog instead of waiting
+  // out the TTL.
+  masterCatalogCache = { value: null, expiresAt: 0 };
+  return rows[0] ?? null;
 }
 
 // ── Authorization: who can create/revoke/view invites for a project ─────────

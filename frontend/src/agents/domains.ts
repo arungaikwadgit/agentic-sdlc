@@ -139,4 +139,59 @@ citizen-facing portal UX, identity proofing (NIST 800-63), open data mandates,
 legacy mainframe modernization, procurement compliance (FAR/DFARS), multi-agency data sharing,
 disaster recovery (RPO/RTO requirements), FISMA compliance.`,
   },
+  logistics: {
+    id: 'logistics',
+    label: 'Logistics & Supply Chain',
+    color: '#4d7c0f',
+    bgColor: '#ecfccb',
+    context: `Domain: Logistics & Supply Chain. Key concerns: real-time shipment tracking (GPS/IoT
+telemetry), warehouse management systems (WMS), route optimization, fleet management,
+EDI integration (ASNs, purchase orders), customs/compliance documentation, last-mile delivery
+coordination, freight rate management, carrier API integration (FedEx, UPS, freight brokers),
+demand forecasting, cold-chain monitoring for perishables, multi-modal shipment visibility.`,
+  },
+  energy: {
+    id: 'energy',
+    label: 'Energy & Clean Tech',
+    color: '#ca8a04',
+    bgColor: '#fef9c3',
+    context: `Domain: Energy & Clean Tech. Key concerns: smart grid / SCADA integration, IoT sensor
+telemetry for solar and wind assets, energy trading and settlement, demand response programs,
+NERC CIP compliance (grid cybersecurity), carbon accounting and ESG reporting, EV charging
+network management, battery storage optimization, utility billing systems, real-time load
+forecasting, renewable energy certificate (REC) tracking.`,
+  },
+  construction: {
+    id: 'construction',
+    label: 'Construction & PropTech',
+    color: '#92400e',
+    bgColor: '#fde68a',
+    context: `Domain: Construction & PropTech. Key concerns: project scheduling and Gantt-based
+timelines, BIM (Building Information Modeling) integration, on-site progress reporting and
+photo documentation, subcontractor/vendor management, punch list and RFI workflows, safety
+compliance (OSHA), procurement and change order tracking, mobile field data capture,
+integration with estimating/takeoff software, permit and inspection tracking.`,
+  },
+  biotech: {
+    id: 'biotech',
+    label: 'Biotech & Life Sciences',
+    color: '#0d9488',
+    bgColor: '#ccfbf1',
+    context: `Domain: Biotech & Life Sciences. Key concerns: FDA 21 CFR Part 11 compliance
+(electronic records/signatures), GxP validation (GLP/GMP/GCP), clinical trial data management
+(CDISC standards), laboratory information management systems (LIMS), sample chain-of-custody
+tracking, electronic lab notebooks (ELN), bioinformatics pipeline integration, adverse event
+reporting, IRB/regulatory submission workflows, data integrity audit trails.`,
+  },
+  telecom: {
+    id: 'telecom',
+    label: 'Telecommunications',
+    color: '#4338ca',
+    bgColor: '#e0e0ff',
+    context: `Domain: Telecommunications. Key concerns: OSS/BSS integration (order-to-cash,
+provisioning), network inventory and topology management, real-time billing and mediation
+(CDR processing), SLA monitoring, number portability, 5G/network slicing configuration,
+customer self-service portals, fraud detection, regulatory compliance (FCC/CPNI),
+carrier interconnect settlement, outage/incident management.`,
+  },
 };

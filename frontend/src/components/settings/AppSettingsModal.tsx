@@ -140,6 +140,16 @@ export default function AppSettingsModal({ onClose }: Props) {
   const [researchingDomain, setResearchingDomain] = useState(false);
   const [domainResearchError, setDomainResearchError] = useState<string | null>(null);
 
+  // Add new domain (Domains tab) state
+  const [showAddDomain, setShowAddDomain] = useState(false);
+  const [newDomainId, setNewDomainId] = useState('');
+  const [newDomainLabel, setNewDomainLabel] = useState('');
+  const [newDomainColor, setNewDomainColor] = useState('#2563eb');
+  const [newDomainBgColor, setNewDomainBgColor] = useState('#dbeafe');
+  const [newDomainContext, setNewDomainContext] = useState('');
+  const [addingDomain, setAddingDomain] = useState(false);
+  const [addDomainErr, setAddDomainErr] = useState('');
+
   // Projects tab state
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
@@ -273,6 +283,75 @@ export default function AppSettingsModal({ onClose }: Props) {
     setSelectedDomain(domainId);
   }
 
+  // ── Add a brand-new domain (e.g. "Logistics") to the catalog ───────────────
+  // Writes to the backend's master_domains table (admin-only) and, on success,
+  // mutates the shared DOMAINS object in place so it shows up everywhere in
+  // the app immediately — the same pattern masterDataCatalog.ts's applyCatalog()
+  // already uses to hydrate DOMAINS from the backend at app load.
+  async function handleAddDomain() {
+    setAddDomainErr('');
+    const id = newDomainId.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!/^[a-z][a-z0-9_-]{1,49}$/.test(id)) {
+      setAddDomainErr('Domain ID must be 2-50 characters, start with a letter, and use only lowercase letters, numbers, "-", or "_".');
+      return;
+    }
+    if (DOMAINS[id as DomainId]) {
+      setAddDomainErr(`A domain with ID "${id}" already exists.`);
+      return;
+    }
+    if (!newDomainLabel.trim()) {
+      setAddDomainErr('Label is required.');
+      return;
+    }
+    if (!newDomainContext.trim()) {
+      setAddDomainErr('Domain context is required — describe the key concerns agents should account for.');
+      return;
+    }
+    setAddingDomain(true);
+    try {
+      const authHeader = await getAuthHeader();
+      const proxyToken = getProxyToken();
+      const res = await fetch(`${API_URL}/master-data/domains/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeader,
+          ...(!authHeader.Authorization && proxyToken ? { 'X-API-Token': proxyToken } : {}),
+        },
+        body: JSON.stringify({
+          label: newDomainLabel.trim(),
+          color: newDomainColor,
+          bgColor: newDomainBgColor,
+          context: newDomainContext.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+      DOMAINS[id as DomainId] = {
+        id: id as DomainId,
+        label: newDomainLabel.trim(),
+        color: newDomainColor,
+        bgColor: newDomainBgColor,
+        context: newDomainContext.trim(),
+      };
+      setNewDomainId('');
+      setNewDomainLabel('');
+      setNewDomainContext('');
+      setNewDomainColor('#2563eb');
+      setNewDomainBgColor('#dbeafe');
+      setShowAddDomain(false);
+      setSelectedDomain(id as DomainId);
+      setDomainSaveMsg(`✓ Added "${newDomainLabel.trim()}" domain`);
+      setTimeout(() => setDomainSaveMsg(''), 2500);
+    } catch (err) {
+      setAddDomainErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAddingDomain(false);
+    }
+  }
+
   async function handleSaveDomainDefault() {
     setSavingDomainDefault(true);
     try {
@@ -309,7 +388,7 @@ export default function AppSettingsModal({ onClose }: Props) {
     try {
       const generated = await api.generateDomainKnowledge({
         domainLabel: getDomain(selectedDomain).label,
-        domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[selectedDomain],
+        domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[selectedDomain] ?? '',
         projectName: `${getDomain(selectedDomain).label} (app-level default)`,
         projectDescription: `A general-purpose ${getDomain(selectedDomain).label} project. This brief will be used as the app-wide starting point for all new ${getDomain(selectedDomain).label} projects, so keep it broadly applicable rather than tied to one specific product.`,
         currentInput: domainDraft,
@@ -944,6 +1023,61 @@ export default function AppSettingsModal({ onClose }: Props) {
                 Use "🔍 Research with AI" to have the model draft or refresh a brief based on its trained knowledge of
                 the industry — review the "Assumptions & Open Questions" section it produces before saving.
               </span>
+
+              {isAppAdminUser && (
+                <div style={{ marginBottom: 12 }}>
+                  {!showAddDomain ? (
+                    <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setShowAddDomain(true)}>
+                      + Add new domain
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+                      <span className={styles.fieldLabel}>New Domain</span>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <input
+                          type="text"
+                          placeholder="ID (e.g. aerospace)"
+                          value={newDomainId}
+                          onChange={(e) => setNewDomainId(e.target.value)}
+                          style={{ flex: '1 1 160px' }}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Label (e.g. Aerospace)"
+                          value={newDomainLabel}
+                          onChange={(e) => setNewDomainLabel(e.target.value)}
+                          style={{ flex: '1 1 160px' }}
+                        />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                          Color
+                          <input type="color" value={newDomainColor} onChange={(e) => setNewDomainColor(e.target.value)} />
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                          Background
+                          <input type="color" value={newDomainBgColor} onChange={(e) => setNewDomainBgColor(e.target.value)} />
+                        </label>
+                      </div>
+                      <textarea
+                        className={styles.promptTextarea}
+                        placeholder="Domain context injected into every agent prompt — key concerns, standards, integrations for this industry..."
+                        value={newDomainContext}
+                        onChange={(e) => setNewDomainContext(e.target.value)}
+                        rows={4}
+                      />
+                      {addDomainErr && <span className={styles.errorMsg}>⚠ {addDomainErr}</span>}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn-primary" onClick={handleAddDomain} disabled={addingDomain}>
+                          {addingDomain ? 'Adding...' : '💾 Add domain'}
+                        </button>
+                        <button className="btn-secondary" onClick={() => { setShowAddDomain(false); setAddDomainErr(''); }} disabled={addingDomain}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className={styles.promptsLayout}>
                 <div className={styles.promptAgentList}>
                   {allDomainIds.map((domainId) => {

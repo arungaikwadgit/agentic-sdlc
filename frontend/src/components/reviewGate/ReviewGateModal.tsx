@@ -12,7 +12,7 @@ import { api } from '@/services/api';
 import { checkPromptInjection } from '@/utils/sanitize';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProjectExportPermission } from '@/lib/projectAccess';
+import { getProjectExportPermission, isProjectAdminUser } from '@/lib/projectAccess';
 import DocumentViewer from '../documents/DocumentViewer';
 import ExportMenu from '../documents/ExportMenu';
 import type { Project, ReviewGateId } from '@/types/project.types';
@@ -26,6 +26,7 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
 }
 
 const GATE_LABELS: Record<ReviewGateId, string> = {
+  gate0: 'Plan Approval Gate',
   gate1: 'Phase 1 Review Gate',
   gate2: 'Phase 2 Review Gate',
   gate3: 'Phase 3 & 3B Review Gate',
@@ -79,6 +80,19 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
   });
+
+  // gate0 (the SDLC Orchestrator's execution plan) may only be approved by
+  // the project owner or an app admin — no agent past phase0 may run until
+  // one of them signs off. Other gates keep their existing, looser behavior
+  // (anyone who can reach this modal can approve).
+  const isGate0 = gateId === 'gate0';
+  const isProjectAdmin = isProjectAdminUser(project, {
+    adminMode,
+    userEmail: user?.email ?? null,
+    userId: user?.id ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const gate0Blocked = isGate0 && !isProjectAdmin;
 
   const [selectedAgent, setSelectedAgent] = useState<AgentId>(agents[0]);
   const [notes, setNotes] = useState('');
@@ -339,16 +353,23 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
             <button
               className="btn-primary"
               onClick={() => onApprove(notes, approvedById || undefined)}
-              disabled={!allAgentsComplete}
+              disabled={!allAgentsComplete || gate0Blocked}
               title={
-                allAgentsComplete
-                  ? undefined
-                  : `Waiting on ${incompleteAgents.length} agent${incompleteAgents.length === 1 ? '' : 's'} to finish: ` +
+                !allAgentsComplete
+                  ? `Waiting on ${incompleteAgents.length} agent${incompleteAgents.length === 1 ? '' : 's'} to finish: ` +
                     incompleteAgents.map((a) => AGENT_DEFINITIONS[a]?.name ?? a).join(', ')
+                  : gate0Blocked
+                  ? 'Only the project owner or an admin can approve the execution plan. Ask them to review and approve before other agents can run.'
+                  : undefined
               }
             >
               Approve &amp; Continue ›
             </button>
+            {gate0Blocked && (
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                🔒 Owner/admin approval required
+              </span>
+            )}
           </div>
         </div>
 

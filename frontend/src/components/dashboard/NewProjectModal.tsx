@@ -310,7 +310,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
       try {
         const generated = await api.generateDomainKnowledge({
           domainLabel: getDomain(domain).label,
-          domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[domain],
+          domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[domain] ?? '',
           projectName: name,
           projectDescription: description,
           currentInput: domainKnowledge,

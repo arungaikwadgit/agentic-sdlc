@@ -1756,7 +1756,7 @@ export default function ProjectSettings({
                       try {
                         const generated = await api.generateDomainKnowledge({
                           domainLabel: getDomain(project.domain).label,
-                          domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[project.domain],
+                          domainTemplate: DOMAIN_KNOWLEDGE_TEMPLATES[project.domain] ?? '',
                           projectName: project.name, projectDescription: project.description,
                           currentInput: domainKnowledge,
                         });

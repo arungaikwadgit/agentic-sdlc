@@ -147,7 +147,7 @@ export type ProjectExecutionStyle =
   | 'outcome-based'
   | 'other';
 
-export type ReviewGateId = 'gate1' | 'gate2' | 'gate3' | 'gate5' | 'gate6';
+export type ReviewGateId = 'gate0' | 'gate1' | 'gate2' | 'gate3' | 'gate5' | 'gate6';
 
 export interface ReviewGate {
   id: ReviewGateId;

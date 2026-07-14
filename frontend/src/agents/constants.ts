@@ -73,6 +73,11 @@ export const TOTAL_AGENTS = Object.values(PHASE_AGENTS).flat().length;
 
 /** Review gates — which phases must complete before the gate triggers */
 export const REVIEW_GATES = {
+  // gate0 fires after the SDLC Orchestrator (phase0) produces its execution
+  // plan. The plan must be approved by a project owner or admin before any
+  // other agent runs — see ReviewGateModal.tsx's gate0-specific permission
+  // check and pipelineEngine.ts's GATE_AFTER_PHASE_INDEX.gate0.
+  gate0: ['phase0'] as PhaseId[],
   gate1: ['phase1', 'phase1b'] as PhaseId[],
   // gate2 fires after ALL requirements phases (including phase2a: dataModel)
   gate2: ['phase2', 'phase2a'] as PhaseId[],

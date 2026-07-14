@@ -9,7 +9,12 @@
  */
 import type { DomainId } from '@/types/domain.types';
 
-export const DOMAIN_KNOWLEDGE_TEMPLATES: Record<DomainId, string> = {
+// Partial, not exhaustive: DomainId is intentionally open (see domain.types.ts)
+// so admin-added custom domains are valid without a code change. Those domains
+// simply have no hardcoded starter template — the "Research with AI" button in
+// Settings > Domains generates one on demand instead. All read sites already
+// fall back with `?? ''`.
+export const DOMAIN_KNOWLEDGE_TEMPLATES: Partial<Record<DomainId, string>> = {
   fintech: `# Domain Knowledge: Financial Technology
 
 ## Project-Specific Context
