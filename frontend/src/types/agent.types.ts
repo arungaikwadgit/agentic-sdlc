@@ -250,8 +250,12 @@ export interface AgentRun {
   completedAt?: number;
   /** Token usage from Anthropic response */
   tokensUsed?: number;
-  /** Which provider actually served this run, echoed back by the proxy. */
-  provider?: 'openai' | 'claude';
+  /**
+   * Which provider actually served this run, echoed back by the proxy.
+   * 'openai-compatible' means a MODEL_CATALOG entry (e.g. Hugging Face)
+   * served it — see dispatchAgentCall() in backend/src/proxy.js.
+   */
+  provider?: 'openai' | 'claude' | 'openai-compatible';
   /** Which model actually served this run, echoed back by the proxy. */
   model?: string;
   /**
@@ -261,8 +265,11 @@ export interface AgentRun {
    * (AGENT_PROVIDER_MAP) will decide, and the actual provider/model will be
    * known once the run completes (see `provider`/`model` above).
    * Not meaningful once `status` is 'complete' or 'error'.
+   * Can also be a MODEL_CATALOG entry id (e.g. an assigned Hugging Face
+   * model) when the agent has a specific model assignment set — see
+   * getAgentModelAssignments() in agents/promptDefaults.ts.
    */
-  pendingProvider?: 'openai' | 'claude' | 'auto';
+  pendingProvider?: 'openai' | 'claude' | 'auto' | (string & {});
   /** L3 runtime metadata — only present for agents that ran in L3 mode */
   l3?: L3RuntimeMeta;
 }

@@ -14,7 +14,7 @@
 import PQueue from 'p-queue';
 import { PHASE_ORDER, PARALLEL_PHASES, PHASE_AGENTS, REVIEW_GATES } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
-import { getPromptDefaults, getAgentProviderHints } from '@/agents/promptDefaults';
+import { getPromptDefaults, getAgentProviderHints, getAgentModelAssignments } from '@/agents/promptDefaults';
 import { getDomain } from '@/agents/domains';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { api } from './api';
@@ -249,13 +249,16 @@ export class PipelineEngine {
 
     this.callbacks.onAgentStart(agentId);
 
-    // Per-agent provider routing hint (app-level, set via App Settings →
-    // AI Providers). 'auto'/unset lets the backend pick its own default.
+    // Per-agent provider routing: a specific MODEL_CATALOG assignment (e.g.
+    // an admin-assigned Hugging Face model) takes priority over the legacy
+    // openai/claude hint, which takes priority over the backend default.
     // Resolved up front so the UI can show which provider is expected to
     // execute this agent while the run is still in progress.
+    const modelAssignments = await getAgentModelAssignments();
     const providerHints = await getAgentProviderHints();
+    const assignedModelId = modelAssignments[agentId];
     const providerHint = providerHints[agentId];
-    const provider = providerHint && providerHint !== 'auto' ? providerHint : undefined;
+    const provider = assignedModelId ?? (providerHint && providerHint !== 'auto' ? providerHint : undefined);
 
     await updateAgentRun(this.projectId, agentId, {
       agentId,
@@ -304,7 +307,7 @@ export class PipelineEngine {
 
       let output: string;
       let tokensUsed: number;
-      let respProvider: 'openai' | 'claude' | undefined;
+      let respProvider: 'openai' | 'claude' | 'openai-compatible' | undefined;
       let respModel: string | undefined;
       let l3Meta: L3RuntimeMeta | undefined;
 
@@ -435,9 +438,9 @@ async function applyUxMockupsCorrectiveCheck(
   userPrompt: string,
   existingOutput: string,
   desiredHtmlCount: number,
-  provider?: 'openai' | 'claude',
+  provider?: 'openai' | 'claude' | (string & {}),
   projectId?: string,
-): Promise<{ output: string; extraTokens: number; provider?: 'openai' | 'claude'; model?: string }> {
+): Promise<{ output: string; extraTokens: number; provider?: 'openai' | 'claude' | 'openai-compatible'; model?: string }> {
   const htmlBlockCount = (existingOutput.match(/```html/g) ?? []).length;
   if (htmlBlockCount >= desiredHtmlCount) {
     return { output: existingOutput, extraTokens: 0 };
@@ -487,15 +490,17 @@ export async function runSingleAgent(
 
   callbacks.onStart?.();
 
-  // Resolve provider: explicit override → app-level hint → undefined (backend default)
+  // Resolve provider: explicit override → assigned MODEL_CATALOG entry → app-level hint → undefined (backend default)
+  const modelAssignments = await getAgentModelAssignments();
   const providerHints = await getAgentProviderHints();
   const overrideVal = options.providerOverride && options.providerOverride !== 'auto'
     ? options.providerOverride
     : undefined;
+  const assignedModelId = modelAssignments[agentId];
   const hintVal = providerHints[agentId] && providerHints[agentId] !== 'auto'
     ? (providerHints[agentId] as 'openai' | 'claude')
     : undefined;
-  const provider = overrideVal ?? hintVal;
+  const provider = overrideVal ?? assignedModelId ?? hintVal;
 
   await updateAgentRun(projectId, agentId, {
     agentId,
@@ -560,7 +565,7 @@ ${userPromptExtra.trim()}` : '');
 
     let output: string;
     let tokensUsed: number;
-    let respProvider: 'openai' | 'claude' | undefined;
+    let respProvider: 'openai' | 'claude' | 'openai-compatible' | undefined;
     let respModel: string | undefined;
     let l3Meta: L3RuntimeMeta | undefined;
 

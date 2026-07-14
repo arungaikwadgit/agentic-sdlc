@@ -8,8 +8,11 @@ import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import {
   getPromptDefaults, savePromptDefault, resetPromptDefault,
   getAgentProviderHints, saveAgentProviderHint,
+  getAgentModelAssignments, saveAgentModelAssignment,
   type ProviderHint,
 } from '@/agents/promptDefaults';
+import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
+import type { ModelCatalogEntry } from '@/types/model.types';
 import { DOMAINS, getDomain } from '@/agents/domains';
 import { DOMAIN_KNOWLEDGE_TEMPLATES } from '@/agents/domainKnowledgeTemplates';
 import {
@@ -108,11 +111,20 @@ export default function AppSettingsModal({ onClose }: Props) {
 
   // Claude (Anthropic) provider state
   const [claudeApiKey, setClaudeApiKey] = useState('');
+  const [huggingfaceApiKey, setHuggingfaceApiKey] = useState('');
+  const [showHfApiKey, setShowHfApiKey] = useState(false);
   const [claudeModel, setClaudeModel]   = useState('claude-sonnet-4-6');
   const [claudeEnabled, setClaudeEnabled] = useState(false);
   const [showClaudeApiKey, setShowClaudeApiKey] = useState(false);
   const [defaultProvider, setDefaultProvider] = useState<'openai' | 'claude'>('openai');
   const [agentProviderHints, setAgentProviderHints] = useState<Partial<Record<AgentId, ProviderHint>>>({});
+
+  // Model catalog (paid + free/open, incl. Hugging Face) + per-agent model
+  // assignments — a specific catalog entry an agent is pinned to, which
+  // takes priority over the openai/claude hint above (see pipelineEngine.ts).
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogEntry[]>(DEFAULT_MODEL_CATALOG);
+  const [agentModelAssignments, setAgentModelAssignments] = useState<Partial<Record<AgentId, string>>>({});
+  const [catalogSaveMsg, setCatalogSaveMsg] = useState('');
 
   // "Test Connection" state, per provider
   const [testingProvider, setTestingProvider] = useState<'openai' | 'claude' | null>(null);
@@ -166,18 +178,22 @@ export default function AppSettingsModal({ onClose }: Props) {
   // Load persisted app config from the backend app-state store on mount
   useEffect(() => {
     (async () => {
-      const [storedModel, storedTheme, defaults, domainDefaults, providerHints] = await Promise.all([
+      const [storedModel, storedTheme, defaults, domainDefaults, providerHints, storedCatalog, modelAssignments] = await Promise.all([
         getAppConfigValue<string>('app:model', 'gpt-4o'),
         getAppConfigValue<Theme>('app:theme', 'dark'),
         getPromptDefaults(),
         getDomainKnowledgeDefaults(),
         getAgentProviderHints(),
+        getAppConfigValue<ModelCatalogEntry[]>('app:modelCatalog', DEFAULT_MODEL_CATALOG),
+        getAgentModelAssignments(),
       ]);
       if (storedModel) setModel(storedModel);
       if (storedTheme) setTheme(storedTheme);
       setPromptDefaults(defaults);
       setDomainKnowledgeDefaults(domainDefaults);
       setAgentProviderHints(providerHints);
+      setModelCatalog(storedCatalog && storedCatalog.length > 0 ? storedCatalog : DEFAULT_MODEL_CATALOG);
+      setAgentModelAssignments(modelAssignments);
     })();
 
     // Read current Claude/provider + Gmail config from the backend .env
@@ -427,6 +443,7 @@ export default function AppSettingsModal({ onClose }: Props) {
       if (claudeModel)         payload.anthropicModel  = claudeModel;
       payload.anthropicEnabled = claudeEnabled;
       payload.defaultLlmProvider = defaultProvider;
+      if (huggingfaceApiKey.trim()) payload.huggingfaceApiKey = huggingfaceApiKey.trim();
 
       await setAppConfigValue('app:model', model);
 
@@ -436,6 +453,7 @@ export default function AppSettingsModal({ onClose }: Props) {
         setApiKey('');
         setProxyToken('');
         setClaudeApiKey('');
+        setHuggingfaceApiKey('');
       } else {
         setSaveErr(result.error ?? 'Save failed.');
       }
@@ -490,6 +508,58 @@ export default function AppSettingsModal({ onClose }: Props) {
     } catch {
       // Non-fatal — the frontend hint still takes effect via the
       // `provider` field sent with each /api/agent request.
+    }
+  }
+
+  // ── Model catalog (paid + free/open, incl. Hugging Face) ──────────────────
+  async function pushModelCatalogToBackend(catalog: ModelCatalogEntry[]) {
+    // The backend's resolveDispatchTarget() looks up MODEL_CATALOG entries by
+    // id (from its own .env-persisted JSON, read once at process start) — so
+    // any catalog change here needs to reach it, or an assignment will
+    // silently fall back to the default provider server-side until the next
+    // manual backend restart anyway. Non-fatal: the catalog is still saved
+    // app-side and will sync on the next successful save.
+    try {
+      await saveBackendSettings({ modelCatalog: catalog });
+      setCatalogSaveMsg('Saved. Restart the backend for the change to take effect.');
+    } catch {
+      setCatalogSaveMsg('Saved locally — backend sync failed (is the proxy running?).');
+    }
+  }
+
+  async function toggleModelEnabled(id: string) {
+    const next = modelCatalog.map((m) => (m.id === id ? { ...m, enabled: !m.enabled } : m));
+    setModelCatalog(next);
+    setCatalogSaveMsg('');
+    await setAppConfigValue('app:modelCatalog', next);
+    await pushModelCatalogToBackend(next);
+  }
+
+  // A per-agent dropdown selection is either a legacy provider hint
+  // ('auto'/'openai'/'claude') or a MODEL_CATALOG entry id. Route to the
+  // right persistence path and keep the two mutually exclusive per agent —
+  // whichever was picked most recently wins, so there's no silent
+  // disagreement between an old hint and a new model assignment (or vice
+  // versa) the next time this agent runs.
+  async function handleAgentModelChange(agentId: AgentId, value: string) {
+    const isCatalogId = modelCatalog.some((m) => m.id === value);
+    if (isCatalogId) {
+      await saveAgentModelAssignment(agentId, value);
+      setAgentModelAssignments((prev) => ({ ...prev, [agentId]: value }));
+      await saveAgentProviderHint(agentId, 'auto');
+      setAgentProviderHints((prev) => {
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+    } else {
+      await saveAgentModelAssignment(agentId, undefined);
+      setAgentModelAssignments((prev) => {
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+      await handleAgentProviderHintChange(agentId, value as ProviderHint);
     }
   }
 
@@ -724,6 +794,27 @@ export default function AppSettingsModal({ onClose }: Props) {
                 </select>
               </div>
 
+              <div className={styles.fieldGroup} style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
+                <label className={styles.fieldLabel}>Hugging Face API Key</label>
+                <div className={styles.passwordInput}>
+                  <input
+                    type={showHfApiKey ? 'text' : 'password'}
+                    value={huggingfaceApiKey}
+                    onChange={(e) => setHuggingfaceApiKey(e.target.value)}
+                    placeholder="hf_… (leave blank to keep current)"
+                    autoComplete="off"
+                  />
+                  <button className={styles.eyeBtn} onClick={() => setShowHfApiKey((v) => !v)}>
+                    {showHfApiKey ? '🙈' : '👁'}
+                  </button>
+                </div>
+                <span className={styles.fieldHint}>
+                  A fine-grained Hugging Face token with the "Make calls to Inference Providers" permission. Stored in
+                  backend/.env as HUGGINGFACE_API_KEY. Required before enabling any Hugging Face model below. Restart the
+                  backend after saving.
+                </span>
+              </div>
+
               <div className={styles.fieldGroup}>
                 <button
                   className="btn-secondary"
@@ -793,17 +884,44 @@ export default function AppSettingsModal({ onClose }: Props) {
                 </span>
               </div>
 
-              {(apiKey.trim() || proxyToken.trim() || claudeApiKey.trim()) && (
+              {(apiKey.trim() || proxyToken.trim() || claudeApiKey.trim() || huggingfaceApiKey.trim()) && (
                 <div className={styles.restartHint}>
                   ⚠ After saving new API keys, restart the backend server for changes to take effect (<code>npm start</code> in the <code>backend/</code> folder).
                 </div>
               )}
 
               <div className={styles.fieldGroup} style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
+                <label className={styles.fieldLabel}>Models (free/open, incl. Hugging Face)</label>
+                <span className={styles.fieldHint}>
+                  Enable a model here before it can be assigned to an agent below. Free/open models route through Hugging Face
+                  Inference Providers (or another OpenAI-compatible gateway) — set the Hugging Face API Key above before
+                  enabling any Hugging Face entry.
+                </span>
+                <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {modelCatalog.filter((m) => m.providerType !== 'anthropic' && m.providerType !== 'openai').map((m) => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{m.label}</div>
+                        <div style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '0.15rem' }}>{m.costTier} · {m.contextWindow.toLocaleString()} ctx · {m.capabilities.join(', ')}</div>
+                        {m.reliabilityNote && (
+                          <div style={{ fontSize: '0.72rem', opacity: 0.6, marginTop: '0.2rem', maxWidth: 480 }}>{m.reliabilityNote}</div>
+                        )}
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                        <input type="checkbox" checked={m.enabled} onChange={() => toggleModelEnabled(m.id)} />
+                        <span style={{ fontSize: '0.8rem' }}>{m.enabled ? 'Enabled' : 'Disabled'}</span>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                {catalogSaveMsg && <div className={styles.fieldHint} style={{ marginTop: '0.5rem' }}>{catalogSaveMsg}</div>}
+              </div>
+
+              <div className={styles.fieldGroup} style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
                 <label className={styles.fieldLabel}>Per-Agent Provider Routing</label>
                 <span className={styles.fieldHint}>
-                  Override which provider handles each agent. "Auto" follows the default provider above.
-                  {!claudeEnabled && ' Enable Claude above to route agents to it.'}
+                  Override which provider (or specific enabled model) handles each agent. "Auto" follows the default provider above.
+                  If the run fails on a non-default provider or model, it automatically falls back to the default OpenAI model once.
                 </span>
                 <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   {PHASE_ORDER.map((phaseId) => (
@@ -815,12 +933,16 @@ export default function AppSettingsModal({ onClose }: Props) {
                           <select
                             className={styles.modelSelect}
                             style={{ width: 'auto', minWidth: '180px' }}
-                            value={agentProviderHints[agentId] ?? 'auto'}
-                            onChange={(e) => handleAgentProviderHintChange(agentId, e.target.value as ProviderHint)}
-                            disabled={!claudeEnabled}
+                            value={agentModelAssignments[agentId] ?? agentProviderHints[agentId] ?? 'auto'}
+                            onChange={(e) => handleAgentModelChange(agentId, e.target.value)}
                           >
                             {PROVIDER_HINT_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                              <option key={opt.value} value={opt.value} disabled={opt.value === 'claude' && !claudeEnabled}>
+                                {opt.label}{opt.value === 'claude' && !claudeEnabled ? ' (enable Claude above first)' : ''}
+                              </option>
+                            ))}
+                            {modelCatalog.filter((m) => m.enabled && m.providerType === 'openai-compatible').map((m) => (
+                              <option key={m.id} value={m.id}>{m.label}</option>
                             ))}
                           </select>
                         </div>

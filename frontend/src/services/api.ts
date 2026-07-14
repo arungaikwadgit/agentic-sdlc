@@ -85,8 +85,16 @@ export interface AgentRequest {
   systemPrompt: string;
   userPrompt: string;
   testMode?: boolean;
-  /** Explicit provider override â€” bypasses per-agent routing hints and the default provider. */
-  provider?: 'openai' | 'claude';
+  /**
+   * Explicit provider override — bypasses per-agent routing hints and the
+   * default provider. Either a legacy provider literal ('openai'/'claude')
+   * or a MODEL_CATALOG entry id (e.g. an admin-assigned Hugging Face model,
+   * set via App Settings → AI Providers). The `(string & {})` intersection
+   * keeps 'openai'/'claude' autocomplete while still accepting any catalog
+   * id string — see resolveDispatchTarget() in backend/src/proxy.js for how
+   * this gets classified server-side.
+   */
+  provider?: 'openai' | 'claude' | (string & {});
   /** Used by the backend for per-agent provider routing hints when `provider` is not set. */
   agentId?: string;
   /**
@@ -110,8 +118,12 @@ export interface AgentResponse {
     finish_reason: string;
   }>;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-  /** Echoed back by the proxy: which provider actually served this request. */
-  provider?: 'openai' | 'claude';
+  /**
+   * Echoed back by the proxy: which provider actually served this request.
+   * 'openai-compatible' means a MODEL_CATALOG entry (e.g. Hugging Face)
+   * served it — see dispatchAgentCall() in backend/src/proxy.js.
+   */
+  provider?: 'openai' | 'claude' | 'openai-compatible';
   /** Echoed back by the proxy: which model actually served this request. */
   model?: string;
 }

@@ -19,6 +19,7 @@ import { getAppConfigValue, setAppConfigValue } from '@/services/appStateApi';
 
 const SETTINGS_KEY = 'app:promptDefaults';
 const PROVIDER_HINTS_KEY = 'app:agentProviderHints';
+const MODEL_ASSIGNMENTS_KEY = 'app:agentModelAssignments';
 
 export type PromptDefaultsMap = Partial<Record<AgentId, string>>;
 
@@ -46,6 +47,35 @@ export async function saveAgentProviderHint(agentId: AgentId, hint: ProviderHint
     next[agentId] = hint;
   }
   await setAppConfigValue(PROVIDER_HINTS_KEY, next);
+}
+
+/**
+ * Per-agent MODEL_CATALOG entry assignments, e.g. { brd: 'hf-gpt-oss-120b' }.
+ * Distinct from AgentProviderHintsMap (which only covers the legacy
+ * 'openai'/'claude' split): this is how an admin pins an agent to a specific
+ * catalog entry (a paid model or a free/open one such as a Hugging Face
+ * model). When both are set for the same agent, the model assignment takes
+ * priority — see pipelineEngine.ts's provider-resolution blocks. Persisted
+ * the same DB-backed way as PROVIDER_HINTS_KEY so it survives across
+ * sessions/devices, not just this browser.
+ */
+export type AgentModelAssignmentsMap = Partial<Record<AgentId, string>>;
+
+/** Load the app-level per-agent model catalog assignments (empty object if none saved yet). */
+export async function getAgentModelAssignments(): Promise<AgentModelAssignmentsMap> {
+  return await getAppConfigValue<AgentModelAssignmentsMap>(MODEL_ASSIGNMENTS_KEY, {});
+}
+
+/** Assign (or clear, by passing undefined/null) a specific MODEL_CATALOG entry id for one agent. */
+export async function saveAgentModelAssignment(agentId: AgentId, modelId: string | undefined | null): Promise<void> {
+  const assignments = await getAgentModelAssignments();
+  const next: AgentModelAssignmentsMap = { ...assignments };
+  if (!modelId) {
+    delete next[agentId];
+  } else {
+    next[agentId] = modelId;
+  }
+  await setAppConfigValue(MODEL_ASSIGNMENTS_KEY, next);
 }
 
 /** Load the full app-level prompt defaults map (empty object if none saved yet). */

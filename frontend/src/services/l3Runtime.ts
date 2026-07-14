@@ -45,7 +45,8 @@ export interface L3RunOptions {
   systemPrompt: string;
   userPrompt: string;
   agentId: string;
-  provider?: 'openai' | 'claude';
+  /** 'openai', 'claude', or a MODEL_CATALOG entry id (e.g. an assigned Hugging Face model) — see AgentRequest.provider in api.ts. */
+  provider?: 'openai' | 'claude' | (string & {});
   /** Forwarded to every api.callAgent call in the L3 loop so the backend's per-agent authorizeAgentRun() check has a project to check against. */
   projectId?: string;
 }
@@ -53,7 +54,7 @@ export interface L3RunOptions {
 export interface L3RunResult {
   output: string;
   tokensUsed: number;
-  provider?: 'openai' | 'claude';
+  provider?: 'openai' | 'claude' | 'openai-compatible';
   model?: string;
   l3: L3RuntimeMeta;
 }
@@ -275,7 +276,7 @@ export async function runL3Agent(
   ];
 
   let totalTokens = 0;
-  let lastProvider: 'openai' | 'claude' | undefined;
+  let lastProvider: 'openai' | 'claude' | 'openai-compatible' | undefined;
   let lastModel: string | undefined;
   let finalOutput = '';
 

@@ -184,6 +184,34 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
 const ANTHROPIC_MODEL   = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6';
 const ANTHROPIC_ENABLED = String(process.env.ANTHROPIC_ENABLED ?? '').toLowerCase() === 'true' && !!ANTHROPIC_API_KEY;
 const DEFAULT_LLM_PROVIDER = (process.env.DEFAULT_LLM_PROVIDER ?? 'openai').toLowerCase() === 'claude' ? 'claude' : 'openai';
+
+// Hugging Face Inference Providers — one specific 'openai-compatible' gateway,
+// first-class (dedicated env var, like OPENAI_API_KEY/ANTHROPIC_API_KEY above)
+// rather than making the admin type an arbitrary env var name in the UI.
+// Base URL and auth verified against https://huggingface.co/docs/inference-providers
+// (Oct 2026): Bearer token with the "Make calls to Inference Providers" scope,
+// genuinely OpenAI-compatible /chat/completions shape. Provider routing for a
+// given model uses a "<org>/<model>:<provider>" suffix in the model string —
+// see MODEL_CATALOG entries' own `id`, which is expected to already be in that
+// form when relevant (falls back to HF's own auto-routing if no suffix given).
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY ?? '';
+const HUGGINGFACE_BASE_URL = 'https://router.huggingface.co/v1';
+
+// Admin-configured catalog of additional models an agent can be routed to
+// beyond the built-in OpenAI/Claude providers (see frontend/src/agents/
+// modelCatalog.ts for the matching frontend type/seed data). Persisted the
+// same way AGENT_PROVIDER_MAP is below — see /api/settings POST handler.
+// AGENT_PROVIDER_MAP[agentId] can hold either a legacy 'openai'/'claude'
+// string (today's only case) or one of these entries' `id` — see
+// resolveDispatchTarget() below, which is the single place that distinction
+// is resolved.
+let MODEL_CATALOG = [];
+try {
+  MODEL_CATALOG = JSON.parse(process.env.MODEL_CATALOG ?? '[]');
+} catch (_) {
+  MODEL_CATALOG = [];
+}
+
 const localProjectStore = createLocalProjectStore();
 const appStateStore = createInMemoryAppStateStore();
 
@@ -543,6 +571,11 @@ app.use('/api/admin', forwardToServer);
 // Resolution order: explicit request `provider` -> per-agent routing hint
 // (AGENT_PROVIDER_MAP) -> DEFAULT_LLM_PROVIDER. Falls back to 'openai' if
 // Claude is requested/hinted but not enabled (missing key or disabled flag).
+//
+// Kept as a separate, still-exported function (rather than folding into
+// resolveDispatchTarget below) because a couple of call sites only need the
+// legacy openai/claude string, not a full dispatch target — e.g. anywhere
+// that reports `provider`/`model` before actually calling out.
 function resolveProvider(requestedProvider, agentId) {
   let provider = DEFAULT_LLM_PROVIDER;
 
@@ -559,6 +592,44 @@ function resolveProvider(requestedProvider, agentId) {
   }
 
   return provider;
+}
+
+// Resolves what to actually call for a request. AGENT_PROVIDER_MAP[agentId]
+// can now hold either a legacy 'openai'/'claude' string (today's only case,
+// unaffected by anything below) or a MODEL_CATALOG entry's `id` (new — an
+// admin-assigned model, e.g. a Hugging Face model routed through the
+// 'openai-compatible' branch). This is the one place that distinction gets
+// resolved, so both /api/agent and /api/agents/call stay in sync instead of
+// duplicating this logic and risking drift between them.
+function resolveDispatchTarget(requestedProvider, agentId) {
+  // Priority: explicit per-request override (what the frontend actually
+  // sends on every real call, via its DB-backed 'app:agentProviderHints' /
+  // 'app:agentModelAssignments' config — see promptDefaults.ts) beats the
+  // AGENT_PROVIDER_MAP env var (legacy/backup path, only reached if the
+  // frontend sends no override at all) beats DEFAULT_LLM_PROVIDER.
+  // requestedProvider can be 'openai', 'claude', or a MODEL_CATALOG entry id
+  // (e.g. an admin-assigned Hugging Face model) — any non-empty value here
+  // is trusted and classified below, not just the two legacy literals.
+  let hint = DEFAULT_LLM_PROVIDER;
+  if (agentId && AGENT_PROVIDER_MAP[agentId]) hint = AGENT_PROVIDER_MAP[agentId];
+  if (requestedProvider) hint = requestedProvider;
+
+  if (hint === 'openai' || hint === 'claude') {
+    const provider = hint === 'claude' && !ANTHROPIC_ENABLED ? 'openai' : hint;
+    return { kind: 'legacy', provider };
+  }
+
+  const entry = MODEL_CATALOG.find((m) => m.id === hint);
+  if (entry && entry.enabled !== false) {
+    return { kind: 'catalog', entry };
+  }
+
+  // Unknown or disabled catalog id (e.g. an admin disabled it after
+  // assigning it to an agent, or MODEL_CATALOG was cleared/never saved) —
+  // fall back to the default legacy provider rather than erroring the
+  // whole request over a stale routing hint.
+  const fallbackProvider = DEFAULT_LLM_PROVIDER === 'claude' && !ANTHROPIC_ENABLED ? 'openai' : DEFAULT_LLM_PROVIDER;
+  return { kind: 'legacy', provider: fallbackProvider };
 }
 
 // Normalize an OpenAI-shaped response into our common shape.
@@ -664,6 +735,91 @@ async function callClaude(systemPrompt, userPrompt) {
   return fromAnthropicResponse(data);
 }
 
+// Calls a MODEL_CATALOG entry with providerType 'openai-compatible' — a
+// generic branch for any provider exposing an OpenAI-style /chat/completions
+// endpoint (Hugging Face Inference Providers, OpenRouter, Groq, etc.), not a
+// bespoke integration per provider. entry.id is expected to be the model
+// string that provider expects (for Hugging Face specifically, the
+// "<org>/<model>:<provider>" convention — see comment on HUGGINGFACE_BASE_URL
+// above); entry.modelSlug can override this if the catalog id needs to differ
+// from the literal model string sent upstream for some other gateway.
+async function callOpenAiCompatible(entry, systemPrompt, userPrompt) {
+  const apiKey = entry.apiKeyEnvVar === 'HUGGINGFACE_API_KEY'
+    ? HUGGINGFACE_API_KEY
+    : (entry.apiKeyEnvVar ? process.env[entry.apiKeyEnvVar] : '');
+
+  if (!entry.endpointUrl || !apiKey) {
+    throw Object.assign(
+      new Error(`Model "${entry.label ?? entry.id}" is missing its endpoint URL or API key (${entry.apiKeyEnvVar ?? 'no apiKeyEnvVar set'}) — check Admin Settings.`),
+      { status: 500 },
+    );
+  }
+
+  const requestBody = JSON.stringify({
+    model: entry.modelSlug ?? entry.id,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user',   content: userPrompt },
+    ],
+    temperature: 0.4,
+    max_tokens:  8192,
+  });
+
+  const url = entry.endpointUrl.replace(/\/+$/, '') + '/chat/completions';
+  const { status, body } = await httpsPost(
+    url,
+    {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    requestBody,
+  );
+
+  if (status < 200 || status >= 300) {
+    console.error(`${entry.label ?? entry.id} (openai-compatible) ${status}:`, body.slice(0, 300));
+    throw Object.assign(new Error(`${entry.label ?? entry.id} error ${status}: ${body.slice(0, 200)}`), { status });
+  }
+
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw Object.assign(new Error(`Invalid JSON from ${entry.label ?? entry.id}`), { status: 502, raw: body.slice(0, 200) });
+  }
+
+  return fromOpenAiResponse(data);
+}
+
+// Single choke point for actually dispatching an agent call, used by both
+// /api/agent and /api/agents/call. Wraps whatever resolveDispatchTarget()
+// picked with ONE automatic fallback to the default OpenAI model if that
+// call fails — this is the "fall back to default LLM" behavior: it applies
+// to any non-default target (Claude or any MODEL_CATALOG entry), not just
+// Hugging Face specifically, since bad credentials/rate limits/outages can
+// hit any of them the same way. If the default OpenAI call itself is what
+// failed, there's nothing left to fall back to — the error propagates as-is,
+// identical to today's behavior.
+async function dispatchAgentCall(target, systemPrompt, userPrompt) {
+  const attemptLabel = target.kind === 'catalog' ? (target.entry.label ?? target.entry.id) : target.provider;
+
+  try {
+    if (target.kind === 'catalog') {
+      const result = await withRetry(() => callOpenAiCompatible(target.entry, systemPrompt, userPrompt));
+      return { ...result, provider: target.entry.providerType, model: target.entry.id };
+    }
+    const result = await withRetry(() =>
+      target.provider === 'claude' ? callClaude(systemPrompt, userPrompt) : callOpenAi(systemPrompt, userPrompt)
+    );
+    return { ...result, provider: target.provider, model: target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL };
+  } catch (err) {
+    if (target.kind === 'legacy' && target.provider === 'openai') throw err; // already the default — nothing to fall back to
+
+    console.error(`[dispatchAgentCall] ${attemptLabel} failed (${err.message}) — falling back to default OpenAI model`);
+    const fallbackResult = await withRetry(() => callOpenAi(systemPrompt, userPrompt));
+    return { ...fallbackResult, provider: 'openai', model: OPENAI_MODEL, fallbackFrom: attemptLabel };
+  }
+}
+
 // ── Rate-limit retry helper ───────────────────────────────────────────────────
 // Retries the given async fn up to maxAttempts on 429, with exponential backoff.
 // Parses "Please try again in Xs" from the OpenAI error body when available.
@@ -710,8 +866,9 @@ app.post('/api/agent', checkToken, async (req, res) => {
     }
   }
 
-  const provider = resolveProvider(requestedProvider, agentId);
-  const model = provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL;
+  const target = resolveDispatchTarget(requestedProvider, agentId);
+  const provider = target.kind === 'catalog' ? target.entry.providerType : target.provider;
+  const model = target.kind === 'catalog' ? target.entry.id : (target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL);
 
   // Test mode — no external call
   if (testMode) {
@@ -724,13 +881,8 @@ app.post('/api/agent', checkToken, async (req, res) => {
   }
 
   try {
-    const result = await withRetry(() =>
-      provider === 'claude'
-        ? callClaude(systemPrompt, userPrompt)
-        : callOpenAi(systemPrompt, userPrompt)
-    );
-
-    return res.json({ ...result, provider, model });
+    const result = await dispatchAgentCall(target, systemPrompt, userPrompt);
+    return res.json(result);
 
   } catch (err) {
     console.error('Proxy error:', err.message);
@@ -773,8 +925,9 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
     }
   }
 
-  const provider = resolveProvider(requestedProvider, agentId);
-  const model = provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL;
+  const target = resolveDispatchTarget(requestedProvider, agentId);
+  const provider = target.kind === 'catalog' ? target.entry.providerType : target.provider;
+  const model = target.kind === 'catalog' ? target.entry.id : (target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL);
   console.log(`${callTag} resolved provider=${provider} model=${model}`);
 
   if (testMode) {
@@ -790,13 +943,9 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
   try {
     console.log(`${callTag} calling ${provider} API...`);
     const started = Date.now();
-    const result = await withRetry(() =>
-      provider === 'claude'
-        ? callClaude(systemPrompt, userPrompt)
-        : callOpenAi(systemPrompt, userPrompt)
-    );
-    console.log(`${callTag} ${provider} call succeeded in ${Date.now() - started}ms`);
-    return res.json({ ...result, provider, model });
+    const result = await dispatchAgentCall(target, systemPrompt, userPrompt);
+    console.log(`${callTag} ${provider} call succeeded in ${Date.now() - started}ms` + (result.fallbackFrom ? ` (fell back from ${result.fallbackFrom})` : ''));
+    return res.json(result);
   } catch (err) {
     console.error(`${callTag} ${provider} call FAILED — status=${err.status ?? 502} message=${err.message}`);
     const status = err.status ?? 502;
@@ -1176,6 +1325,8 @@ app.get('/api/settings', checkToken, requireAdmin, (req, res) => {
     const anthropicEnabled = readKey('ANTHROPIC_ENABLED');
     const defaultLlmProvider = readKey('DEFAULT_LLM_PROVIDER');
     const agentProviderMapRaw = readKey('AGENT_PROVIDER_MAP');
+    const huggingfaceApiKey = readKey('HUGGINGFACE_API_KEY');
+    const modelCatalogRaw  = readKey('MODEL_CATALOG');
     const gmailUser        = readKey('GMAIL_USER');
     const gmailAppPassword = readKey('GMAIL_APP_PASSWORD');
     const appUrl           = readKey('APP_URL');
@@ -1183,17 +1334,23 @@ app.get('/api/settings', checkToken, requireAdmin, (req, res) => {
     let agentProviderMap = {};
     try { agentProviderMap = agentProviderMapRaw ? JSON.parse(agentProviderMapRaw) : {}; } catch (_) {}
 
+    let modelCatalog = [];
+    try { modelCatalog = modelCatalogRaw ? JSON.parse(modelCatalogRaw) : []; } catch (_) {}
+
     return res.json({
       openaiApiKey:      openaiApiKey  ? '***' : '',          // never expose raw keys
       anthropicApiKey:   anthropicApiKey ? '***' : '',
+      huggingfaceApiKey: huggingfaceApiKey ? '***' : '',
       proxyToken:        proxyToken    ? '***' : '',
       openaiModel:       openaiModel   || 'gpt-4o',
       anthropicModel:    anthropicModel || 'claude-opus-4-5',
       anthropicEnabled:  anthropicEnabled === 'true',
       defaultLlmProvider: defaultLlmProvider || 'openai',
       agentProviderMap,
+      modelCatalog,
       hasOpenaiKey:      !!openaiApiKey,
       hasAnthropicKey:   !!anthropicApiKey,
+      hasHuggingfaceKey: !!huggingfaceApiKey,
       hasProxyToken:     !!proxyToken,
       hasGmailAppPassword: !!gmailAppPassword,               // never expose raw app password
       gmailUser,
@@ -1221,6 +1378,7 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
     openaiApiKey, proxyToken, openaiModel,
     anthropicApiKey, anthropicModel, anthropicEnabled,
     defaultLlmProvider, agentProviderMap,
+    huggingfaceApiKey, modelCatalog,
     gmailUser, gmailAppPassword, appUrl,
   } = req.body ?? {};
   const fs   = require('fs');
@@ -1229,7 +1387,7 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
 
   const stringFields = {
     openaiApiKey, proxyToken, openaiModel,
-    anthropicApiKey, anthropicModel,
+    anthropicApiKey, anthropicModel, huggingfaceApiKey,
     defaultLlmProvider, gmailUser, gmailAppPassword, appUrl,
   };
   for (const [field, value] of Object.entries(stringFields)) {
@@ -1239,6 +1397,9 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
   }
   if (agentProviderMap !== undefined && rejectsEnvInjection(JSON.stringify(agentProviderMap))) {
     return res.status(400).json({ error: 'agentProviderMap cannot contain newline characters' });
+  }
+  if (modelCatalog !== undefined && rejectsEnvInjection(JSON.stringify(modelCatalog))) {
+    return res.status(400).json({ error: 'modelCatalog cannot contain newline characters' });
   }
 
   try {
@@ -1275,6 +1436,8 @@ app.post('/api/settings', checkToken, requireAdmin, (req, res) => {
     if (anthropicEnabled !== undefined) upsertFlag(lines, 'ANTHROPIC_ENABLED', anthropicEnabled ? 'true' : 'false');
     if (defaultLlmProvider)         upsert(lines, 'DEFAULT_LLM_PROVIDER', defaultLlmProvider);
     if (agentProviderMap)           upsertFlag(lines, 'AGENT_PROVIDER_MAP', JSON.stringify(agentProviderMap));
+    if (huggingfaceApiKey)          upsert(lines, 'HUGGINGFACE_API_KEY', huggingfaceApiKey);
+    if (modelCatalog)               upsertFlag(lines, 'MODEL_CATALOG', JSON.stringify(modelCatalog));
 
     // Email / invite settings
     // Google's UI displays the app password as space-separated groups; strip

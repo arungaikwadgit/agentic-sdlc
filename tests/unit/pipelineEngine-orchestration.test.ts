@@ -38,6 +38,11 @@ vi.mock('../../frontend/src/db/projectRepository', () => ({
 vi.mock('../../frontend/src/agents/promptDefaults', () => ({
   getPromptDefaults: vi.fn(async () => ({})),
   getAgentProviderHints: vi.fn(async () => ({})),
+  // pipelineEngine.ts also resolves a per-agent MODEL_CATALOG assignment
+  // (takes priority over the provider hint above) — empty map here means
+  // "no admin-assigned model", so these tests exercise the pre-existing
+  // hint-only behavior unaffected by the new HF/model-catalog feature.
+  getAgentModelAssignments: vi.fn(async () => ({})),
 }));
 
 vi.mock('../../frontend/src/services/api', () => ({
