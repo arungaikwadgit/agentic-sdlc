@@ -131,14 +131,14 @@ const sdlcOrchestrator: AgentDefinition = {
   goal: (ctx: AgentPromptContext): string =>
     'Produce a complete SDLC Orchestration Plan for ' + ctx.projectName + ' (' + ctx.domain + ' domain).\n\n' +
     'MANDATORY STEP SEQUENCE:\n' +
-    'STEP 1 — call get_agent_catalog: Ground your plan in the actual agent fleet (ids, names, phases, dependencies) instead of assuming how many phases or agents exist.\n' +
+    'STEP 1 — call get_agent_catalog: Ground your plan in the actual agent fleet (ids, names, phases, dependencies) instead of assuming how many phases or agents exist. Each entry has an `enabled` field — false means nobody on the team is currently assigned to that agent, so it will NOT run. Treat disabled agents as unavailable, not merely low-priority.\n' +
     'STEP 2 — call get_phase_rules: Get the actual phase order, phase/agent mapping, parallel-phase groups, and review gates so your recommended plan matches what the pipeline can really execute.\n' +
     'STEP 3 — call get_domain_context: Get domain-specific regulatory requirements, common integration patterns, and standard risks for the ' + ctx.domain + ' domain.\n' +
     'STEP 4 — call get_team_roster: Get named team members for phase approval and risk owner assignments.\n' +
     'STEP 5 — call get_style_guide: Check if branding/style constraints exist — note as Phase 3 input for UX agents.\n' +
     'STEP 6 — call get_available_models: See which models (paid and free/open) are actually enabled for this deployment before recommending one per agent.\n' +
-    'STEP 7 — Produce all 9 sections. Phase-by-phase guidance must reference actual team member names. Risk register must be project-specific. Go/No-Go criteria must be explicit thresholds. Recommended models must come from the get_available_models result — never invent a model name, and if no models are enabled, omit model recommendations rather than guessing.\n' +
-    'STEP 8 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, risk mitigations are actionable, and every phase in your plan matches a real phase from get_phase_rules. Fix gaps before finishing.',
+    'STEP 7 — Produce all 9 sections. Phase-by-phase guidance must reference actual team member names. For any phase where every agent is disabled (from STEP 1), explicitly mark that phase "SKIPPED — no team member assigned" in your plan instead of describing work that will not happen; for a phase with a mix of enabled and disabled agents, describe only the enabled ones. Risk register must be project-specific. Go/No-Go criteria must be explicit thresholds. Recommended models must come from the get_available_models result — never invent a model name, and if no models are enabled, omit model recommendations rather than guessing.\n' +
+    'STEP 8 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, risk mitigations are actionable, every phase in your plan matches a real phase from get_phase_rules, and no disabled agent from STEP 1 is described as if it will run. Fix gaps before finishing.',
 
   tools: ORCHESTRATOR_TOOLS,
   // 6 mandatory tool calls (agent catalog, phase rules, domain, team roster, style

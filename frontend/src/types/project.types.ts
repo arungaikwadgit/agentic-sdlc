@@ -244,6 +244,14 @@ export interface Project {
    */
   skippedAgentIds?: AgentId[];
   /**
+   * Set once the project owner/admin has confirmed the pre-flight
+   * team-assignment warning (unassigned agents will be skipped) before the
+   * first pipeline run. Prevents re-showing that warning on every
+   * subsequent "Resume Pipeline" click — see lib/agentEnablement.ts and
+   * ProjectWorkspace.tsx's Run Pipeline button.
+   */
+  teamAssignmentWarningAcknowledged?: boolean;
+  /**
    * Context documents attached by the user for agent re-runs.
    * Persisted so the extracted text survives panel close / page reload.
    * Each entry mirrors ExtractedFile (minus the ephemeral File object).

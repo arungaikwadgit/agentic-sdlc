@@ -161,6 +161,11 @@ export interface AgentCatalogEntry {
   phase: PhaseId;
   description: string;
   dependsOn?: AgentId[];
+  /** False when this agent has no team member assigned (or was otherwise
+   *  marked skipped) and will not execute — see project.skippedAgentIds and
+   *  lib/agentEnablement.ts. Lets the orchestrator plan around the actual
+   *  available fleet instead of assuming every agent will run. */
+  enabled?: boolean;
 }
 
 /** Read-only view of the static phase/gate rules (constants.ts), exposed as a

@@ -22,19 +22,24 @@ import { runL3Agent } from './l3Runtime';
 import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
+import { isAgentSkipped } from '@/lib/agentEnablement';
 import type { Project, ReviewGateId } from '@/types/project.types';
 import type { AgentCatalogEntry, AgentId, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
 
 // Lightweight, read-only view of the agent fleet for the get_agent_catalog tool.
 // Built once per context — deliberately excludes systemPrompt/goal/tools so the
 // tool can't be used to read prompt internals back out through the LLM.
-function buildAgentCatalog(): AgentCatalogEntry[] {
+// `enabled: false` marks agents skipped due to no team assignment (see
+// lib/agentEnablement.ts) so the orchestrator can plan around the actual
+// available fleet instead of assuming every agent will run.
+function buildAgentCatalog(project: Project): AgentCatalogEntry[] {
   return Object.values(AGENT_DEFINITIONS).map((def) => ({
     id: def.id,
     name: def.name,
     phase: def.phase,
     description: def.description,
     dependsOn: def.dependsOn,
+    enabled: !isAgentSkipped(project, def.id),
   }));
 }
 
@@ -199,6 +204,21 @@ export class PipelineEngine {
     // Skip if already complete (resume support)
     if (project.agentRuns[agentId]?.status === 'complete') return;
 
+    // Skip if nobody's assigned to this agent (see lib/agentEnablement.ts) —
+    // marks the run 'skipped' rather than calling the LLM. Already-skipped
+    // runs are also short-circuited here so re-running the phase doesn't
+    // re-attempt them. An admin can override via project.skippedAgentIds.
+    if (isAgentSkipped(project, agentId)) {
+      if (project.agentRuns[agentId]?.status !== 'skipped') {
+        await updateAgentRun(this.projectId, agentId, {
+          agentId,
+          status: 'skipped',
+          completedAt: Date.now(),
+        });
+      }
+      return;
+    }
+
     this.callbacks.onAgentStart(agentId);
 
     // Per-agent provider routing hint (app-level, set via App Settings →
@@ -350,7 +370,7 @@ export class PipelineEngine {
       mockupVersionCount: project.mockupVersionCount,
       projectType: project.projectType,
       projectExecutionStyle: project.projectExecutionStyle,
-      agentCatalog: buildAgentCatalog(),
+      agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
     };
@@ -487,7 +507,7 @@ export async function runSingleAgent(
       mockupVersionCount: project.mockupVersionCount,
       projectType: project.projectType,
       projectExecutionStyle: project.projectExecutionStyle,
-      agentCatalog: buildAgentCatalog(),
+      agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
     };

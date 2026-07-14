@@ -849,6 +849,28 @@
   display: flex;
 }
 
+/* ── Team-assignment gating: admin-only "Enable" override on skipped rows ──
+   Unlike agentRunFromBtn, this is always visible (not hover-only) — a
+   skipped agent is an exceptional state the admin should notice at a
+   glance, not something they discover by hovering every row. */
+.agentEnableBtn {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s;
+}
+.agentEnableBtn:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
 /* ── B2: Provider selector in re-run panel ───────────────────────────────── */
 .providerSelector {
   display: flex;

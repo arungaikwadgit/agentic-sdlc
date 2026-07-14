@@ -161,6 +161,12 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     ],
     activeAdminId: 'member-1',
     agentAssignments: [],
+    // This suite tests run/stop control mechanics, not the team-assignment
+    // warning flow (that gets its own dedicated test file). Without this,
+    // every "Run Pipeline" click here would hit TeamAssignmentWarningModal
+    // instead of calling engine.run() directly, since agentAssignments is
+    // empty above -- see lib/agentEnablement.ts's getUnassignedAgents().
+    teamAssignmentWarningAcknowledged: true,
     ...overrides,
   } as unknown as Project;
 }

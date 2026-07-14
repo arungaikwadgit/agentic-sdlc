@@ -104,8 +104,13 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
 
   // Every agent under this gate must have a completed artifact before the
   // pipeline can be approved past this gate — otherwise downstream phases
-  // would start from missing/partial context.
-  const incompleteAgents = agents.filter((a) => project.agentRuns[a]?.status !== 'complete');
+  // would start from missing/partial context. Skipped agents (no team
+  // member assigned — see lib/agentEnablement.ts) never produce an
+  // artifact by design, so they don't block approval.
+  const incompleteAgents = agents.filter((a) => {
+    const status = project.agentRuns[a]?.status;
+    return status !== 'complete' && status !== 'skipped';
+  });
   const allAgentsComplete = incompleteAgents.length === 0;
 
   // Editable output state

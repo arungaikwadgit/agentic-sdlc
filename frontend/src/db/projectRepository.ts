@@ -151,6 +151,7 @@ function rowToProject(row: ApiProjectRow): Project {
     targetUsers: blob.targetUsers,
     initialRisks: blob.initialRisks,
     skippedAgentIds: blob.skippedAgentIds,
+    teamAssignmentWarningAcknowledged: blob.teamAssignmentWarningAcknowledged,
     contextDocuments: blob.contextDocuments,
     extractionPackage: blob.extractionPackage,
     creationApproval: blob.creationApproval,
@@ -158,6 +159,10 @@ function rowToProject(row: ApiProjectRow): Project {
     disabledRoleIds: blob.disabledRoleIds,
     githubIntegrationId: blob.githubIntegrationId,
     currentPhase: blob.currentPhase,
+    // NOTE: was added to the Project type earlier but never wired into this
+    // blob mapping, so it silently never persisted — fixing that gap here
+    // rather than leaving a second broken field alongside the new one.
+    projectExecutionStyle: blob.projectExecutionStyle,
   };
 }
 
@@ -195,6 +200,7 @@ function projectToPayload(p: Project): ApiCreatePayload {
       targetUsers: p.targetUsers,
       initialRisks: p.initialRisks,
       skippedAgentIds: p.skippedAgentIds,
+      teamAssignmentWarningAcknowledged: p.teamAssignmentWarningAcknowledged,
       contextDocuments: p.contextDocuments,
       extractionPackage: p.extractionPackage,
       creationApproval: p.creationApproval,
@@ -202,6 +208,7 @@ function projectToPayload(p: Project): ApiCreatePayload {
       disabledRoleIds: p.disabledRoleIds,
       githubIntegrationId: p.githubIntegrationId,
       currentPhase: p.currentPhase,
+      projectExecutionStyle: p.projectExecutionStyle,
     },
   };
 }

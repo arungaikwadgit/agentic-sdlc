@@ -21,6 +21,7 @@ import ReviewImprovePanel from './ReviewImprovePanel';
 import MockupPreview from '../documents/MockupPreview';
 import DiagramPreview from '../documents/DiagramPreview';
 import OrchestratorView from './OrchestratorView';
+import TeamAssignmentWarningModal from './TeamAssignmentWarningModal';
 import PrototypeViewer from '../documents/PrototypeViewer';
 import AgentContextUploader from './AgentContextUploader';
 import { useProject } from '@/hooks/useProject';
@@ -32,6 +33,7 @@ import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
+import { getUnassignedAgents, computeSkippedAgentIdsAfterConfirm } from '@/lib/agentEnablement';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
@@ -196,6 +198,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
+  const [showTeamWarning, setShowTeamWarning] = useState(false);
+  // Which phase to resume from once the team-assignment warning is
+  // confirmed — undefined means "start from the very beginning" (mirrors
+  // startPipeline(undefined)'s own semantics for a full restart).
+  const [pendingStartPhase, setPendingStartPhase] = useState<PhaseId | undefined>(undefined);
   const [showTeamPanel, setShowTeamPanel] = useState(false);
   const [teamPanelKey, setTeamPanelKey] = useState(0);
   // Persists the last-active Project Settings tab across remounts of
@@ -262,7 +269,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     if (!shouldAutoStart || !project) return;
     setShouldAutoStart(false);
     // Small delay so the workspace finishes rendering first
-    const t = setTimeout(() => startPipeline(undefined), 300);
+    const t = setTimeout(() => attemptStartPipeline(undefined), 300);
     return () => clearTimeout(t);
   }, [shouldAutoStart, project]);
 
@@ -355,6 +362,42 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     setEngineRunning(false);
     updateProject(projectId, (p) => { p.status = 'paused'; });
   };
+
+  // ── Team-assignment gating (Steps A–D) ──────────────────────────────────
+  // Before the pipeline's first run (from any entry point — the header
+  // button, "Run All" on the orchestrator plan, or an auto-start after
+  // "Save & Restart Pipeline"), warn the owner/admin if any agent has
+  // nobody assigned. Once acknowledged (the flag persists on the project),
+  // skip the warning and run normally. Non-admins never see the "Continue"
+  // path enabled — they must ask an owner/admin or assign the team
+  // themselves (see TeamAssignmentWarningModal). Admin override (removing
+  // an agent from skippedAgentIds) is a separate control on each skipped
+  // row — see the "Enable" button in the sidebar agent-row rendering below.
+  function attemptStartPipeline(fromPhase?: PhaseId) {
+    if (!project) return;
+    const unassigned = getUnassignedAgents(project);
+    if (unassigned.length > 0 && !project.teamAssignmentWarningAcknowledged) {
+      setPendingStartPhase(fromPhase);
+      setShowTeamWarning(true);
+      return;
+    }
+    startPipeline(fromPhase);
+  }
+
+  function handleRunPipelineClick() {
+    if (!project) return;
+    attemptStartPipeline(project.currentPhase);
+  }
+
+  async function handleConfirmTeamWarning() {
+    if (!project) return;
+    await updateProject(projectId, (p) => {
+      p.skippedAgentIds = computeSkippedAgentIdsAfterConfirm(p);
+      p.teamAssignmentWarningAcknowledged = true;
+    });
+    setShowTeamWarning(false);
+    startPipeline(pendingStartPhase);
+  }
 
   // ── Re-run: open panel, pre-fill respecting the same 3-level precedence as pipelineEngine ──
   // Level 1: project.promptOverrides[agentId]          (project-specific saved prompt)
@@ -798,11 +841,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   });
   const canExportArtifacts = exportPermission.canExport;
   const exportDisabledReason = exportPermission.reason;
-  const assignments = project.agentAssignments ?? [];
   const allAgentIds = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
-  const unmappedAgents = allAgentIds.filter(
-    (a) => !(assignments.find((x) => x.agentId === a)?.memberIds?.length)
-  );
   const teamReady = members.length > 0;
   const lockedPhases = getLockedPhases(project);
   const selectedRun = selectedAgent ? project.agentRuns[selectedAgent] : null;
@@ -909,7 +948,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           ) : (
             <button
               className="btn-primary"
-              onClick={() => startPipeline(project.currentPhase)}
+              onClick={handleRunPipelineClick}
               disabled={project.status === 'complete' || !teamReady || !canRunProjectAgents || isAgentAccessScoped}
               title={
                 !teamReady
@@ -999,7 +1038,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         <aside className={styles.sidebar}>
           {PHASE_ORDER.map((phase) => {
             const agents = PHASE_AGENTS[phase];
-            const allComplete = agents.every((a) => project.agentRuns[a]?.status === 'complete');
+            const allComplete = agents.every((a) => {
+              const s = project.agentRuns[a]?.status;
+              return s === 'complete' || s === 'skipped';
+            });
             const isPhaseGateLocked = lockedPhases.has(phase);
 
             const gateAfterThisPhase = (Object.entries(REVIEW_GATES) as [ReviewGateId, PhaseId[]][])
@@ -1091,9 +1133,29 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                           ↻
                         </button>
                       )}
+                      {/* Step D — admin/owner override: re-enable a skipped agent.
+                          Only visible to an admin/owner (mirrors the gate0 approval
+                          scoping) so a regular member can't silently bypass the
+                          team-assignment warning. Clears the agent from
+                          project.skippedAgentIds; the engine will run it normally
+                          on the next pipeline pass through its phase. */}
+                      {status === 'skipped' && isAdmin && (
+                        <button
+                          className={styles.agentEnableBtn}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateProject(projectId, (p) => {
+                              p.skippedAgentIds = (p.skippedAgentIds ?? []).filter((id) => id !== agentId);
+                            });
+                          }}
+                          title={'No team member is assigned to ' + (def?.name ?? agentId) + ' — click to re-enable it anyway (admin override)'}
+                        >
+                          Enable
+                        </button>
+                      )}
                       {/* F4 — run-from-here button (visible on hover, hidden when locked/running).
                           Same scoping rationale as the retry button above. */}
-                      {status !== 'error' && !isAgentAccessScoped && (
+                      {status !== 'error' && status !== 'skipped' && !isAgentAccessScoped && (
                         <button
                           className={styles.agentRunFromBtn}
                           onClick={(e) => { e.stopPropagation(); startPipeline(def?.phase as PhaseId); }}
@@ -1377,7 +1439,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 <OrchestratorView
                   markdown={selectedRun.output ?? ''}
                   projectId={projectId}
-                  onRunAll={isAgentAccessScoped ? undefined : () => startPipeline('phase1')}
+                  onRunAll={isAgentAccessScoped ? undefined : handleRunPipelineClick}
                   isRunning={engineRunning}
                   canExport={canExportArtifacts}
                   exportDisabledReason={exportDisabledReason}
@@ -1537,6 +1599,21 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           }}
           onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}
+        />
+      )}
+
+      {showTeamWarning && (
+        <TeamAssignmentWarningModal
+          unassignedAgentIds={getUnassignedAgents(project)}
+          isAdmin={isAdmin}
+          onConfirm={handleConfirmTeamWarning}
+          onCancel={() => { setShowTeamWarning(false); setPendingStartPhase(undefined); }}
+          onGoToTeamSetup={() => {
+            setShowTeamWarning(false);
+            setPendingStartPhase(undefined);
+            setSettingsTab('team');
+            openTeamPanel();
+          }}
         />
       )}
 
