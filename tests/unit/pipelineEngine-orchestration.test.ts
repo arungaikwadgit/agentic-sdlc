@@ -70,6 +70,17 @@ function freshProject(overrides: Partial<Project> = {}): Project {
     mode: 'simple',
     teamMembers: [],
     agentAssignments: [],
+    // This suite tests phase/gate sequencing, not the clarifying-questions
+    // feature (brd/userStory have AgentDefinition.needsClarifyingQuestions:
+    // true as of the BRD/User Stories improvement work). Without pre-seeded
+    // answers here, every test that runs the pipeline through phase1b/phase2
+    // would halt at PipelineEngine's new pre-generation pause instead of
+    // completing those phases — see pipelineEngine.ts's runAgent() and
+    // services/clarifyingQuestions.ts.
+    clarifyingAnswers: {
+      brd: [{ question: 'seed', answer: 'seed' }],
+      userStory: [{ question: 'seed', answer: 'seed' }],
+    },
     ...overrides,
   };
 }
@@ -81,6 +92,7 @@ function makeCallbacks(): PipelineCallbacks & Record<string, ReturnType<typeof v
     onAgentError: vi.fn(),
     onPhaseComplete: vi.fn(),
     onGateReached: vi.fn(),
+    onClarifyingQuestionsNeeded: vi.fn(),
     onPipelineComplete: vi.fn(),
     onPipelineError: vi.fn(),
   };

@@ -22,6 +22,7 @@ import MockupPreview from '../documents/MockupPreview';
 import DiagramPreview from '../documents/DiagramPreview';
 import OrchestratorView from './OrchestratorView';
 import TeamAssignmentWarningModal from './TeamAssignmentWarningModal';
+import AgentClarifyingQuestionsModal from './AgentClarifyingQuestionsModal';
 import PrototypeViewer from '../documents/PrototypeViewer';
 import AgentContextUploader from './AgentContextUploader';
 import { useProject } from '@/hooks/useProject';
@@ -199,6 +200,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamWarning, setShowTeamWarning] = useState(false);
+  // Set by PipelineEngine's onClarifyingQuestionsNeeded callback — see
+  // AgentClarifyingQuestionsModal rendering below and services/clarifyingQuestions.ts.
+  const [pendingClarifyingQuestions, setPendingClarifyingQuestions] =
+    useState<{ agentId: AgentId; questions: string[] } | null>(null);
   // Which phase to resume from once the team-assignment warning is
   // confirmed — undefined means "start from the very beginning" (mirrors
   // startPipeline(undefined)'s own semantics for a full restart).
@@ -350,6 +355,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       onAgentError: (_agentId, _err) => {},
       onPhaseComplete: (_phase) => {},
       onGateReached: (gateId) => { setEngineRunning(false); setPendingGate(gateId); },
+      onClarifyingQuestionsNeeded: (agentId, questions) => {
+        setEngineRunning(false);
+        setPendingClarifyingQuestions({ agentId, questions });
+      },
       onPipelineComplete: () => { setEngineRunning(false); },
       onPipelineError: (_err) => { setEngineRunning(false); },
     });
@@ -531,8 +540,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         setSelectedAgent(null);
         setPendingGate(null);
         setPendingCascadeRerun(null);
-        // Start the full pipeline from Phase 0
-        startPipeline(undefined);
+        // Start the full pipeline from Phase 0 — routed through
+        // attemptStartPipeline so this restart re-triggers the team-
+        // assignment warning check, same as every other pipeline-start path.
+        attemptStartPipeline(undefined);
       } catch (e) {
         setRerunError(String(e));
       } finally {
@@ -713,7 +724,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         // ALL of them via the full sequential engine regardless of whether
         // they're in this member's assignment — they stay idle/reset instead,
         // for an unscoped member (Owner/legacy Editor) to pick up.
-        startPipeline(agentPhase);
+        attemptStartPipeline(agentPhase);
       }
 
       setPendingCascadeRerun(null);
@@ -1036,6 +1047,16 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
       <div className={styles.body}>
         <aside className={styles.sidebar}>
+          {/* Standing reminder for agent-access-scoped members — the per-
+              button tooltips ("You are not assigned to run this agent...")
+              only surface on hover, so a scoped member landing on the
+              workspace for the first time has no upfront explanation of why
+              most rows are read-only for them. */}
+          {isAgentAccessScoped && (
+            <div className={styles.scopedAccessBanner}>
+              You can run the agents assigned to you, once the phases before them are complete. Every other agent is view-only.
+            </div>
+          )}
           {PHASE_ORDER.map((phase) => {
             const agents = PHASE_AGENTS[phase];
             const allComplete = agents.every((a) => {
@@ -1127,7 +1148,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       {status === 'error' && !isPhaseGateLocked && !isAgentAccessScoped && (
                         <button
                           className={styles.agentRetryBtn}
-                          onClick={(e) => { e.stopPropagation(); startPipeline(def?.phase as PhaseId); }}
+                          onClick={(e) => { e.stopPropagation(); attemptStartPipeline(def?.phase as PhaseId); }}
                           title={'Retry ' + (def?.name ?? agentId) + ' from its phase'}
                         >
                           ↻
@@ -1158,7 +1179,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       {status !== 'error' && status !== 'skipped' && !isAgentAccessScoped && (
                         <button
                           className={styles.agentRunFromBtn}
-                          onClick={(e) => { e.stopPropagation(); startPipeline(def?.phase as PhaseId); }}
+                          onClick={(e) => { e.stopPropagation(); attemptStartPipeline(def?.phase as PhaseId); }}
                           disabled={engineRunning || isPhaseGateLocked || !teamReady || (apiReady === false)}
                           title={'Run pipeline from ' + (def?.name ?? agentId)}
                         >
@@ -1406,7 +1427,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   <button
                     className={styles.reviewBtn + (showReview ? ' ' + styles.reviewBtnActive : '')}
                     onClick={() => { setShowReview((v) => !v); setRerunAgent(null); }}
-                    title="AI-powered gap analysis — get questions to improve this document"
+                    disabled={!canRunThisAgent(selectedAgent)}
+                    title={
+                      canRunThisAgent(selectedAgent)
+                        ? 'AI-powered gap analysis — get questions to improve this document'
+                        : 'You are not assigned to run this agent for this project.'
+                    }
                   >
                     ✦ Review
                   </button>
@@ -1512,7 +1538,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   className="btn-primary"
                   disabled={isAgentAccessScoped}
                   title={isAgentAccessScoped ? 'Your access is scoped to specific agents — use Re-run with edited prompt instead.' : undefined}
-                  onClick={() => startPipeline(project.currentPhase)}
+                  onClick={() => attemptStartPipeline(project.currentPhase)}
                 >
                   Retry Pipeline
                 </button>
@@ -1536,7 +1562,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       className="btn-primary"
                       disabled={engineRunning || !teamReady || (apiReady === false) || isAgentAccessScoped}
                       title={isAgentAccessScoped ? 'Your access is scoped to specific agents — use "Edit prompt and run" instead.' : undefined}
-                      onClick={() => { if (selectedDef) startPipeline(selectedDef.phase); }}
+                      onClick={() => { if (selectedDef) attemptStartPipeline(selectedDef.phase); }}
                     >
                       Run {selectedDef!.name}
                     </button>
@@ -1595,7 +1621,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               }
             });
             setPendingGate(null);
-            if (nextPhase && !isAgentAccessScoped) startPipeline(nextPhase);
+            if (nextPhase && !isAgentAccessScoped) attemptStartPipeline(nextPhase);
           }}
           onReject={() => setPendingGate(null)}
           onClose={() => setPendingGate(null)}
@@ -1613,6 +1639,24 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             setPendingStartPhase(undefined);
             setSettingsTab('team');
             openTeamPanel();
+          }}
+        />
+      )}
+
+      {pendingClarifyingQuestions && (
+        <AgentClarifyingQuestionsModal
+          agentName={AGENT_DEFINITIONS[pendingClarifyingQuestions.agentId]?.name ?? pendingClarifyingQuestions.agentId}
+          questions={pendingClarifyingQuestions.questions}
+          onCancel={() => setPendingClarifyingQuestions(null)}
+          onSubmit={async (answers) => {
+            const { agentId } = pendingClarifyingQuestions;
+            const resumePhase = AGENT_DEFINITIONS[agentId]?.phase;
+            await updateProject(projectId, (p) => {
+              p.clarifyingAnswers = p.clarifyingAnswers ?? {};
+              p.clarifyingAnswers[agentId] = answers;
+            });
+            setPendingClarifyingQuestions(null);
+            attemptStartPipeline(resumePhase);
           }}
         />
       )}

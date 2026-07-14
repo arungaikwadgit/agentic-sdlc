@@ -439,6 +439,18 @@
   font-style: italic;
 }
 
+/* ── Standing reminder banner for agent-access-scoped members ──────────────── */
+.scopedAccessBanner {
+  margin: 10px 12px 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* ── Locked / unmapped agent rows ── */
 .agentLocked {
   cursor: not-allowed !important;

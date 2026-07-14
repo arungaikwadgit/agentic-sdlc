@@ -23,6 +23,7 @@ import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
 import { isAgentSkipped } from '@/lib/agentEnablement';
+import { generateClarifyingQuestions } from './clarifyingQuestions';
 import type { Project, ReviewGateId } from '@/types/project.types';
 import type { AgentCatalogEntry, AgentId, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
 
@@ -58,6 +59,16 @@ export interface PipelineCallbacks {
   onAgentError: (agentId: AgentId, error: string) => void;
   onPhaseComplete: (phase: PhaseId) => void;
   onGateReached: (gateId: ReviewGateId) => void;
+  /**
+   * Fired instead of running an agent's generation call when
+   * AgentDefinition.needsClarifyingQuestions is true and
+   * project.clarifyingAnswers has no entry for it yet (see
+   * services/clarifyingQuestions.ts). The pipeline halts exactly like a
+   * review gate — the caller shows a modal, persists the answers to
+   * project.clarifyingAnswers[agentId], and resumes the pipeline from the
+   * same phase once submitted.
+   */
+  onClarifyingQuestionsNeeded: (agentId: AgentId, questions: string[]) => void;
   onPipelineComplete: () => void;
   onPipelineError: (error: string) => void;
 }
@@ -219,6 +230,23 @@ export class PipelineEngine {
       return;
     }
 
+    // Pre-generation clarifying questions (see AgentDefinition.needsClarifyingQuestions,
+    // services/clarifyingQuestions.ts). Only fires once per agent per project —
+    // once project.clarifyingAnswers[agentId] has any entries, this is skipped
+    // even if some answers were left blank, so re-running the same phase never
+    // re-asks. Halts the pipeline exactly like a review gate: sets this.aborted
+    // so the outer run() loop stops advancing (same mechanism the Stop button
+    // uses), and leaves the project 'paused' at this agent's phase for the UI
+    // to resume from once the modal is answered.
+    if (def.needsClarifyingQuestions && !(project.clarifyingAnswers?.[agentId]?.length)) {
+      const ctx = this.buildContext(project, agentId);
+      const questions = await generateClarifyingQuestions(agentId, ctx, this.projectId);
+      this.aborted = true;
+      this.callbacks.onClarifyingQuestionsNeeded(agentId, questions);
+      await updateProject(this.projectId, (p) => { p.status = 'paused'; p.currentPhase = def.phase; });
+      return;
+    }
+
     this.callbacks.onAgentStart(agentId);
 
     // Per-agent provider routing hint (app-level, set via App Settings →
@@ -240,12 +268,12 @@ export class PipelineEngine {
     const runtimeRunId = await syncRunStart({
       project_id: this.projectId,
       agent_key: agentId,
-      goal: typeof def.goal === 'function' ? def.goal(this.buildContext(project)) : undefined,
+      goal: typeof def.goal === 'function' ? def.goal(this.buildContext(project, agentId)) : undefined,
       provider: provider ?? 'auto',
     });
 
     try {
-      const ctx = this.buildContext(project);
+      const ctx = this.buildContext(project, agentId);
 
       // Resolve system prompt with precedence:
       // 1. project-level override (promptOverrides) — set via Review Gate "Save for this project"
@@ -342,7 +370,7 @@ export class PipelineEngine {
   }
 
 
-  private buildContext(project: Project) {
+  private buildContext(project: Project, agentId?: AgentId) {
     const domain = getDomain(project.domain);
     const priorOutputs: Partial<Record<AgentId, string>> = {};
     for (const [agentId, run] of Object.entries(project.agentRuns)) {
@@ -373,6 +401,7 @@ export class PipelineEngine {
       agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
+      clarifyingAnswers: agentId ? project.clarifyingAnswers?.[agentId] : undefined,
     };
   }
 }
@@ -510,6 +539,12 @@ export async function runSingleAgent(
       agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
+      // Re-running a single agent (e.g. via ProjectWorkspace's Re-run panel)
+      // should still see any previously-collected clarifying answers for it —
+      // this path deliberately does NOT trigger a fresh question round, since
+      // runSingleAgent has no pause/resume mechanism; it only threads through
+      // answers already saved from the agent's original pipeline run, if any.
+      clarifyingAnswers: project.clarifyingAnswers?.[agentId],
     };
 
     const userPrompt = def.buildUserPrompt(ctx) +

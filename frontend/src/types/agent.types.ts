@@ -142,6 +142,23 @@ export interface AgentDefinition {
    * Defaults to 3.
    */
   maxIterations?: number;
+  /**
+   * When true, PipelineEngine pauses before running this agent's generation
+   * call — the first time only, i.e. until project.clarifyingAnswers[id] has
+   * at least one entry — and instead fires onClarifyingQuestionsNeeded with a
+   * generated question set (see services/clarifyingQuestions.ts). The
+   * answers are then threaded into this agent's AgentPromptContext via
+   * clarifyingAnswers below. Currently set on 'brd' and 'userStory' only.
+   */
+  needsClarifyingQuestions?: boolean;
+}
+
+/** One question/answer pair collected via the pre-generation clarifying-
+ *  questions flow (see AgentDefinition.needsClarifyingQuestions). Persisted
+ *  on Project.clarifyingAnswers, keyed by AgentId. */
+export interface ClarifyingAnswer {
+  question: string;
+  answer: string;
 }
 
 export interface TeamRosterEntry {
@@ -216,6 +233,12 @@ export interface AgentPromptContext {
   /** Admin-configured model catalog (paid + free/open models), same availability scope
    *  as agentCatalog. See types/model.types.ts. */
   modelCatalog?: ModelCatalogEntry[];
+  /** This agent's own saved Q&A pairs from the pre-generation clarifying-
+   *  questions flow, if any (see AgentDefinition.needsClarifyingQuestions).
+   *  Populated per-agent by PipelineEngine.buildContext(), not shared across
+   *  agents — brd's answers never leak into userStory's context and vice
+   *  versa. */
+  clarifyingAnswers?: ClarifyingAnswer[];
 }
 
 export interface AgentRun {

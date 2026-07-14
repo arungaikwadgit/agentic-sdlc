@@ -28,6 +28,19 @@ function diagramLine(hint: string): string {
   return `\n\n## Diagram Requirement\nYou MUST include at least one Mermaid diagram in your output. Use a fenced code block with the language tag \`\`\`mermaid. ${hint} Use valid Mermaid syntax (flowchart TD, sequenceDiagram, erDiagram, classDiagram, or C4Context as appropriate).`;
 }
 
+// Threads answers from the pre-generation clarifying-questions flow (see
+// AgentDefinition.needsClarifyingQuestions, services/clarifyingQuestions.ts)
+// into the prompt. Empty string when the agent hasn't collected any yet —
+// e.g. a legacy project re-running this agent before the feature existed, or
+// the user submitted the modal with every answer left blank. In both cases
+// the agent falls back to its own judgment, per the modal's own copy.
+function clarifyingAnswersLine(ctx: AgentPromptContext): string {
+  const answers = (ctx.clarifyingAnswers ?? []).filter((a) => a.answer.trim());
+  if (answers.length === 0) return '';
+  const rows = answers.map((a) => `- Q: ${a.question}\n  A: ${a.answer}`).join('\n');
+  return `\n\n## Clarifications From the Team\nThese answers were collected from the team before generation — incorporate them into the relevant sections rather than ignoring them:\n${rows}`;
+}
+
 function brandingLine(ctx: AgentPromptContext): string {
   if (ctx.brandingGuidelines && ctx.brandingGuidelines.trim()) {
     return `\n\n## Branding Guidelines (owner-supplied)\n${ctx.brandingGuidelines}\nFollow these guidelines for both design concept versions below.`;
@@ -261,6 +274,8 @@ const brd: AgentDefinition = {
 - Business process flows must be described as ordered steps with decision points and actors named (by role), detailed enough that a sequence or flowchart diagram could be drawn directly from the text.
 - The RACI matrix must use real team member names from the roster where available, and every BR-xxx requirement should map to at least one business process step.
 - Compliance/regulatory requirements must be specific to the stated domain (cite the actual regulation or standard relevant to that industry — e.g. HIPAA for healthcare, PCI-DSS for payments, FERPA for education — and explain which BRs they constrain) rather than generic "ensure compliance" language.
+- Domain-Specific Business Requirements (its own section, separate from Compliance) must describe how the domain actually operates day to day — typical workflows, data-handling norms, industry-standard SLAs — not a repeat of the regulatory citations.
+- At least 2 BR-xxx items must trace to a specific fact stated in the Project Description, not generic industry boilerplate that could apply to any project in this domain.
 - Change management must address the people side: who is impacted, what training is needed, and what resistance to expect — not just a checklist of communication steps.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
@@ -268,17 +283,19 @@ const brd: AgentDefinition = {
     `Project Description: ${ctx.projectDescription}`,
     domainLine(ctx),
     teamLine(ctx),
+    clarifyingAnswersLine(ctx),
     `\nProduce a BRD with:`,
     `1. Business Context & Background — the operational/market context that makes this project necessary, grounded in the ${ctx.domain} domain`,
     `2. Business Objectives — distinct from PRD goals; focus on operational/organizational outcomes (efficiency gains, cost reduction, compliance posture, revenue impact)`,
     `3. Current State vs Future State — describe the current workflow/system (named actors, steps, pain points) side by side with the proposed future workflow`,
     `4. Business Process Flows — for at least 2 core processes, describe the flow as numbered steps with actor, action, decision points, and exception paths (detailed enough to convert directly into a flowchart)`,
     `5. Stakeholder Analysis (RACI matrix) — for each major business requirement area, identify who is Responsible, Accountable, Consulted, and Informed, using actual team member names as owners where the roster provides them`,
-    `6. Business Requirements — numbered BR-001, BR-002, etc., grouped by process area, each stated as a testable outcome ("The system shall..." / "The business process shall...")`,
+    `6. Business Requirements — numbered BR-001, BR-002, etc., grouped by process area, each stated as a testable outcome ("The system shall..." / "The business process shall..."). At least 2 must explicitly trace to a specific fact stated in the Project Description above — not generic industry language.`,
     `7. Business Rules — high-level rules that constrain the business requirements (detailed rule logic belongs in the dedicated Business Rules document, so keep these summary-level with a pointer to the rule category)`,
-    `8. Compliance & Regulatory Requirements — name the specific regulations/standards applicable to the ${ctx.domain} domain and map each to the BR-xxx items it constrains`,
-    `9. Reporting & Analytics Requirements — what business metrics/reports stakeholders need, at what frequency, and for which audience`,
-    `10. Change Management Considerations — impacted roles, required training, communication plan, and anticipated points of resistance with mitigation approach`,
+    `8. Domain-Specific Business Requirements — additional numbered BR-xxx items unique to how the ${ctx.domain} domain actually operates day to day (typical workflows, data-handling norms, industry-standard SLAs, operational conventions) — distinct from the regulatory citations in section 9, which are about legal compliance, not operational practice`,
+    `9. Compliance & Regulatory Requirements — name the specific regulations/standards applicable to the ${ctx.domain} domain and map each to the BR-xxx items it constrains`,
+    `10. Reporting & Analytics Requirements — what business metrics/reports stakeholders need, at what frequency, and for which audience`,
+    `11. Change Management Considerations — impacted roles, required training, communication plan, and anticipated points of resistance with mitigation approach`,
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
@@ -286,13 +303,14 @@ const brd: AgentDefinition = {
     `MANDATORY STEP SEQUENCE:\n` +
     `STEP 1 — call get_agent_output("manager"): Read the PRD — extract FR-xxx functional requirements. Every BRD requirement (BR-xxx) must trace to at least one FR-xxx.\n` +
     `STEP 2 — call get_team_roster: Get named team members for the RACI matrix.\n` +
-    `STEP 3 — call get_domain_context: Get domain-specific business process context (typical workflows, regulatory requirements) to ground current-state process descriptions.\n` +
+    `STEP 3 — call get_domain_context: Get domain-specific business process context (typical workflows, regulatory requirements) to ground current-state process descriptions AND the standalone Domain-Specific Business Requirements section (STEP 5).\n` +
     `STEP 4 — call search_prior_outputs("requirements"): Check for any prior requirements analysis.\n` +
-    `STEP 5 — Produce all BRD sections. BR-xxx must be numbered, testable, and cite FR-xxx. RACI must use real team member names. Process flows must show current-state vs future-state. Compliance rules must cite specific regulations.\n` +
-    `STEP 6 — Self-check: verify every BR-xxx cites a FR-xxx, RACI has real names, and compliance regulations are named. Fix gaps before finishing.`,
+    `STEP 5 — Produce all BRD sections, including a standalone "Domain-Specific Business Requirements" section (distinct from Compliance & Regulatory) and at least 2 BR-xxx items that cite a specific fact from the Project Description rather than generic industry language. If a "Clarifications From the Team" block is present above, weave those answers into the relevant sections instead of ignoring them. BR-xxx must be numbered, testable, and cite FR-xxx. RACI must use real team member names. Process flows must show current-state vs future-state. Compliance rules must cite specific regulations.\n` +
+    `STEP 6 — Self-check: verify every BR-xxx cites a FR-xxx, at least 2 BR-xxx cite a specific project-description fact, the Domain-Specific Business Requirements section exists and is distinct from Compliance, RACI has real names, and compliance regulations are named. Fix gaps before finishing.`,
   tools: ALL_TOOLS,
   // 4 mandatory tool calls + write + self-check.
   maxIterations: 6,
+  needsClarifyingQuestions: true,
 };
 
 // ─── Phase 2 ──────────────────────────────────────────────────────────────────
@@ -361,11 +379,15 @@ const userStory: AgentDefinition = {
 
 ## User Story Standards
 - Every story must be sized for a single sprint (if a story feels larger, split it — don't write "epic-sized" stories disguised as user stories).
+- Every story must cover exactly ONE feature/function. If a story statement contains "and" joining two distinct capabilities, split it into two stories rather than bundling them.
 - "As a [persona]" must use a persona/role that's plausible for the project's domain, not a generic "user" — vary personas across epics to reflect different user types.
+- Business Value must be its own explicit line, separate from the "so that [benefit]" clause in the story statement — state concretely what business outcome this story moves (revenue, risk reduction, efficiency, compliance posture, retention), not a restatement of the story itself.
+- Definition of Ready must be story-specific: what has to be true/available before work can start on THIS story (e.g. a specific design mockup exists, a specific upstream API is available, a specific BR-xxx is finalized) — not a generic template repeated verbatim on every story.
+- Definition of Done must be story-specific: what's true beyond the baseline checklist for THIS story to be considered complete (e.g. a specific migration script verified, a specific integration tested end-to-end) — reference the baseline checklist rather than repeating it, then add what's unique to this story.
 - Acceptance criteria must be written in Given/When/Then format and must be specific enough to become test cases verbatim — avoid vague criteria like "the page works correctly".
 - Story Points should follow a consistent scale (Fibonacci: 1,2,3,5,8,13) and the relative sizing across stories should make sense (a story with 5 acceptance criteria and 2 system integrations should not be the same size as a single-field form change).
 - Each epic must map conceptually to one or more functional requirement areas from the PRD so traceability is preserved.
-- Non-functional stories must be written in the same "As a... I want... so that..." format as functional stories, with measurable acceptance criteria (e.g. "p95 response time under 500ms for 95% of requests under 200 concurrent users").`,
+- Non-functional stories must be written in the same "As a... I want... so that..." format as functional stories, with measurable acceptance criteria (e.g. "p95 response time under 500ms for 95% of requests under 200 concurrent users") and the same 5-part structure as functional stories.`,
   buildUserPrompt: (ctx) => [
     `Project: ${ctx.projectName}`,
     `Domain: ${ctx.domain}`,
@@ -373,12 +395,13 @@ const userStory: AgentDefinition = {
     `BRD Excerpt (BR-xxx business rules — epics must trace to these):\n${ctx.priorOutputs.brd?.slice(0, 1500) ?? ''}`,
     domainLine(ctx),
     teamLine(ctx),
+    clarifyingAnswersLine(ctx),
     `\nProduce a User Story Backlog with:`,
     `1. At least 5 Epics — each with a short description, the functional requirement area(s) it maps to, and a rough priority (High/Med/Low)`,
-    `2. For each Epic, 3-5 User Stories in format: "As a [persona relevant to the ${ctx.domain} domain], I want [capability] so that [benefit]" — give each story a unique ID (e.g. US-101)`,
-    `3. Each story must have: Story Points estimate (Fibonacci scale, with relative sizing that reflects actual complexity), Priority (P0/P1/P2), Acceptance Criteria (3+ criteria in Given/When/Then format, specific enough to convert directly into test cases), and Owner (assign from the actual team member names above)`,
-    `4. Definition of Done — a checklist that applies across all stories (code reviewed, tests passing, accessibility checked, docs updated, etc.)`,
-    `5. Non-functional stories (performance, security, accessibility) — written in the same format with measurable acceptance criteria (specific latency/throughput/conformance targets)`,
+    `2. For each Epic, 3-5 User Stories in format: "As a [persona relevant to the ${ctx.domain} domain], I want [capability] so that [benefit]" — give each story a unique ID (e.g. US-101). Each story must cover exactly one feature/function — split any story that bundles more than one.`,
+    `3. Each story MUST have all five of the following, clearly labeled: (a) Clear Requirement — the single feature/function this story delivers, in one sentence; (b) Business Value — the concrete business outcome, as its own line separate from the story's "so that" clause; (c) Definition of Ready — story-specific prerequisites that must be true before work starts; (d) Definition of Done — story-specific completion criteria beyond the baseline checklist in section 4; (e) Acceptance Criteria (3+ criteria in Given/When/Then format, specific enough to convert directly into test cases). Also include: Story Points estimate (Fibonacci scale, with relative sizing that reflects actual complexity), Priority (P0/P1/P2), and Owner (assign from the actual team member names above).`,
+    `4. Definition of Done (baseline) — a checklist that applies across all stories (code reviewed, tests passing, accessibility checked, docs updated, etc.) — each story's own Definition of Done in section 3 should reference this and add what's unique to it`,
+    `5. Non-functional stories (performance, security, accessibility) — written in the same format with the same 5-part structure and measurable acceptance criteria (specific latency/throughput/conformance targets)`,
     `6. Dependencies Between Stories — call out any story-to-story sequencing dependencies (e.g. "US-105 depends on US-101 — auth must exist before profile editing")`,
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
@@ -388,11 +411,12 @@ const userStory: AgentDefinition = {
     `STEP 1 — call get_agent_output("manager"): Extract FR-xxx functional requirement IDs and NFR targets. Every epic must map to at least one FR-xxx.\n` +
     `STEP 2 — call get_agent_output("brd"): Extract BR-xxx business rules. Business-rule enforcement stories must cite the BR-xxx they implement.\n` +
     `STEP 3 — call get_team_roster: Get named team members to assign story owners.\n` +
-    `STEP 4 — Produce all 6 sections: 5+ epics with 3-5 stories each, Fibonacci story points, Given/When/Then ACs, dependency map, DoD checklist, and non-functional stories with measurable ACs.\n` +
-    `STEP 5 — Self-check: every epic maps to a FR-xxx, every story has an owner, all ACs are Given/When/Then, story IDs are unique (US-1xx). Fix gaps before finishing.`,
+    `STEP 4 — Produce all 6 sections: 5+ epics with 3-5 stories each, each story carrying all five mandatory fields (Clear Requirement, Business Value, Definition of Ready, Definition of Done, Acceptance Criteria) plus Story Points/Priority/Owner, dependency map, baseline DoD checklist, and non-functional stories with the same 5-part structure and measurable ACs. If a "Clarifications From the Team" block is present above, use those answers to shape the relevant epics/stories rather than ignoring them.\n` +
+    `STEP 5 — Self-check: every epic maps to a FR-xxx, every story has all five mandatory fields clearly labeled and an owner, no story bundles more than one feature/function, all ACs are Given/When/Then, story IDs are unique (US-1xx). Fix gaps before finishing.`,
   tools: ALL_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  needsClarifyingQuestions: true,
 };
 
 const businessRules: AgentDefinition = {

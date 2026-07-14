@@ -32,6 +32,13 @@ export function usePipeline(projectId: string, mode: 'simple' | 'expert') {
         setPendingGate(_gateId);
         setRunning(false);
       },
+      // This hook currently has no consumer in the app (ProjectWorkspace.tsx
+      // builds its own PipelineEngine callbacks directly) — kept building
+      // rather than wired up, since removing it isn't in scope here. No
+      // clarifying-questions UI exists on this path, so just unblock the run
+      // state the same way onPipelineError does; a future caller of this
+      // hook would need its own modal wiring, same as ProjectWorkspace.tsx.
+      onClarifyingQuestionsNeeded: () => setRunning(false),
       onPipelineComplete: () => setRunning(false),
       onPipelineError: () => setRunning(false),
     });

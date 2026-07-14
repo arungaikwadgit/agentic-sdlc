@@ -2,7 +2,7 @@
  * © 2025 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
-import type { AgentId, AgentRun, PhaseId } from './agent.types';
+import type { AgentId, AgentRun, PhaseId, ClarifyingAnswer } from './agent.types';
 import type { DomainId } from './domain.types';
 import type { ExtractionPackage, ApprovalRecord } from './extraction.types';
 
@@ -251,6 +251,15 @@ export interface Project {
    * ProjectWorkspace.tsx's Run Pipeline button.
    */
   teamAssignmentWarningAcknowledged?: boolean;
+  /**
+   * Answers collected via the pre-generation clarifying-questions flow (see
+   * AgentDefinition.needsClarifyingQuestions in agent.types.ts), keyed by
+   * agentId. Presence of a non-empty array for an agentId is what tells
+   * PipelineEngine.runAgent() the question step is done and it's safe to
+   * proceed to that agent's actual generation call — see
+   * services/clarifyingQuestions.ts and pipelineEngine.ts.
+   */
+  clarifyingAnswers?: Partial<Record<AgentId, ClarifyingAnswer[]>>;
   /**
    * Context documents attached by the user for agent re-runs.
    * Persisted so the extracted text survives panel close / page reload.
