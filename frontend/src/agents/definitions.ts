@@ -154,10 +154,24 @@ const sdlcOrchestrator: AgentDefinition = {
     'STEP 8 — Self-check: verify critical path agents are named, all team members have at least one ownership assignment, risk mitigations are actionable, every phase in your plan matches a real phase from get_phase_rules, and no disabled agent from STEP 1 is described as if it will run. Fix gaps before finishing.',
 
   tools: ORCHESTRATOR_TOOLS,
-  // 6 mandatory tool calls (agent catalog, phase rules, domain, team roster, style
-  // guide, available models) + write + self-check — bumped from the old 5-iteration
-  // budget to cover the 3 new grounding calls.
-  maxIterations: 7,
+  // These 6 must actually be called, not just requested in the prompt — see
+  // requiredTools doc comment in agent.types.ts. Without this, a model that
+  // drops the TOOL_CALL marker formatting mid-sequence gets silently treated
+  // as "finished" by runL3Agent's graceful-degradation fallback, producing a
+  // plan built mostly from general knowledge instead of this project's real
+  // agent catalog, phase rules, and team roster.
+  requiredTools: [
+    'get_agent_catalog',
+    'get_phase_rules',
+    'get_domain_context',
+    'get_team_roster',
+    'get_style_guide',
+    'get_available_models',
+  ],
+  // 6 mandatory tool calls + write + self-check, plus headroom for up to 2
+  // corrective nudges (MAX_CORRECTION_ATTEMPTS in l3Runtime.ts) if the model
+  // tries to finish before calling all of requiredTools above.
+  maxIterations: 10,
 };
 
 // ─── Phase 1 ─────────────────────────────────────────────────────────────────

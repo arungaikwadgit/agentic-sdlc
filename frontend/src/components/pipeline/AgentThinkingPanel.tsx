@@ -165,6 +165,21 @@ function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
       {/* Goal */}
       <GoalBlock goal={l3.goal} />
 
+      {/* Incomplete required-tools warning — set when the agent finished
+          without calling one or more of its mandatory tools (see
+          AgentDefinition.requiredTools / l3Runtime.ts). Means the output
+          may be based on incomplete grounding, not just a fast run. */}
+      {l3.incompleteRequiredTools && l3.incompleteRequiredTools.length > 0 && (
+        <div className={styles.gapWarning}>
+          <span className={styles.gapWarningIcon}>⚠</span>
+          <div>
+            <strong>This run finished without calling every required tool</strong>
+            It never called: {l3.incompleteRequiredTools.join(', ')}. The output below may be based on
+            incomplete grounding — consider re-running this agent.
+          </div>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className={styles.statsBar}>
         <div className={styles.stat}>

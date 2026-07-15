@@ -280,6 +280,14 @@ export async function runL3Agent(
   let lastModel: string | undefined;
   let finalOutput = '';
 
+  // Required-tool enforcement (see AgentDefinition.requiredTools). Bounded so
+  // a persistently uncooperative model can't burn the whole iteration budget
+  // just re-nudging — after this many corrections we accept whatever it
+  // produces and flag the gap instead of looping indefinitely.
+  const requiredTools = def.requiredTools ?? [];
+  const MAX_CORRECTION_ATTEMPTS = 2;
+  let correctionAttempts = 0;
+
   // L3 loop
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     l3Meta.iterationCount = iteration + 1;
@@ -320,11 +328,46 @@ export async function runL3Agent(
 
     // Handle FINAL_OUTPUT
     if (parsed.type === 'final_output' || parsed.type === 'passthrough') {
+      const calledToolNames = new Set(l3Meta.toolTrace.map((t) => t.tool));
+      const missingRequired = requiredTools.filter((t) => !calledToolNames.has(t));
+
+      // Required-tool gap, and we still have budget to push back rather than
+      // silently accept a plan built on incomplete grounding (see comment on
+      // requiredTools above — this is what actually happened in runs that
+      // finished suspiciously early, e.g. "3i" when the goal mandates 6+
+      // tool calls before writing).
+      if (missingRequired.length > 0 && correctionAttempts < MAX_CORRECTION_ATTEMPTS && iteration < maxIterations - 1) {
+        correctionAttempts++;
+        l3Meta.decisions.push({
+          type: 'retry',
+          rationale: `Attempted to finish without calling required tool(s): ${missingRequired.join(', ')}. Pushed back for correction (${correctionAttempts}/${MAX_CORRECTION_ATTEMPTS}).`,
+          confidence: 0.6,
+          timestamp: Date.now(),
+        });
+        turns.push({ role: 'assistant', content: rawText });
+        turns.push({
+          role: 'user',
+          content:
+            `You have not yet called these required tools: ${missingRequired.join(', ')}. ` +
+            'You MUST call them before producing FINAL_OUTPUT — do not write the final document yet. ' +
+            `Call ${missingRequired[0]} now.`,
+        });
+        continue;
+      }
+
       finalOutput = parsed.finalOutput ?? rawText;
+      if (missingRequired.length > 0) {
+        // Retries exhausted (or no iterations left) — accept what we have
+        // rather than loop forever, but flag it so the UI and anyone
+        // reviewing the run can see the plan may be incompletely grounded.
+        l3Meta.incompleteRequiredTools = missingRequired;
+      }
       l3Meta.decisions.push({
         type: 'output_accepted',
-        rationale: `Final output produced after ${iteration + 1} iteration(s).`,
-        confidence: 0.9,
+        rationale: missingRequired.length > 0
+          ? `Final output accepted after ${iteration + 1} iteration(s) despite missing required tool(s): ${missingRequired.join(', ')}.`
+          : `Final output produced after ${iteration + 1} iteration(s).`,
+        confidence: missingRequired.length > 0 ? 0.5 : 0.9,
         timestamp: Date.now(),
       });
       break;
@@ -446,12 +489,18 @@ export async function runL3Agent(
         : (forcedParsed.finalOutput ?? forcedRawText).trim();
 
       finalOutput = candidate;
+      const calledToolNames = new Set(l3Meta.toolTrace.map((t) => t.tool));
+      const missingRequired = requiredTools.filter((t) => !calledToolNames.has(t));
+      if (missingRequired.length > 0) {
+        l3Meta.incompleteRequiredTools = missingRequired;
+      }
       l3Meta.decisions.push({
         type: 'output_accepted',
         rationale: candidate
-          ? `Final output produced via a forced tool-free finalization call after exhausting ${maxIterations} iteration(s).`
+          ? `Final output produced via a forced tool-free finalization call after exhausting ${maxIterations} iteration(s).` +
+            (missingRequired.length > 0 ? ` Missing required tool(s): ${missingRequired.join(', ')}.` : '')
           : `Forced finalization call also failed to produce a usable document after exhausting ${maxIterations} iteration(s).`,
-        confidence: candidate ? 0.6 : 0.1,
+        confidence: candidate ? (missingRequired.length > 0 ? 0.4 : 0.6) : 0.1,
         timestamp: Date.now(),
       });
     } catch (err) {

@@ -113,6 +113,14 @@ export interface L3RuntimeMeta {
   toolTrace: ToolTraceEntry[];
   decisions: AgentDecision[];
   iterationCount: number;
+  /**
+   * Set only when the run finished (FINAL_OUTPUT or passthrough) while one
+   * or more of AgentDefinition.requiredTools had never been called, after
+   * exhausting the runtime's corrective-nudge budget. Undefined/absent
+   * means either the agent has no requiredTools, or it satisfied all of
+   * them. Surfaced as a warning in AgentThinkingPanel.
+   */
+  incompleteRequiredTools?: string[];
 }
 
 export interface AgentDefinition {
@@ -142,6 +150,20 @@ export interface AgentDefinition {
    * Defaults to 3.
    */
   maxIterations?: number;
+  /**
+   * L3 upgrade: tool names (matching AgentTool.name) that MUST be called at
+   * least once before the runtime accepts a FINAL_OUTPUT/passthrough as
+   * done. Without this, a model that drops the TOOL_CALL/FINAL_OUTPUT
+   * marker formatting mid-sequence gets silently treated as "finished" by
+   * runL3Agent's graceful-degradation fallback — even if it skipped most of
+   * its mandatory research steps. When set, the runtime instead pushes a
+   * bounded number of corrective nudges before giving up (see
+   * MAX_CORRECTION_ATTEMPTS in l3Runtime.ts) and flags the gap on
+   * L3RuntimeMeta.incompleteRequiredTools if it still can't get there.
+   * Currently set on 'sdlcOrchestrator' only — its goal explicitly mandates
+   * a 6-tool grounding sequence before writing.
+   */
+  requiredTools?: string[];
   /**
    * When true, PipelineEngine pauses before running this agent's generation
    * call — the first time only, i.e. until project.clarifyingAnswers[id] has

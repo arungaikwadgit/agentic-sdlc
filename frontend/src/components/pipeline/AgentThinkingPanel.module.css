@@ -46,6 +46,22 @@
   margin-bottom: 4px;
 }
 
+/* ── Incomplete required-tools warning ──────────────────────────────────── */
+.gapWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: color-mix(in srgb, var(--warning, #d97706) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 35%, transparent);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.gapWarningIcon { font-size: 16px; flex-shrink: 0; }
+.gapWarning strong { display: block; margin-bottom: 2px; }
+
 /* ── Goal block ──────────────────────────────────────────────────────────── */
 .goalBlock {
   background: color-mix(in srgb, var(--primary, #4f46e5) 8%, var(--surface));
@@ -57,7 +73,12 @@
   font-size: 13px;
   color: var(--text);
   margin: 6px 0 0;
-  line-height: 1.5;
+  line-height: 1.6;
+  /* The goal string (esp. sdlcOrchestrator's numbered STEP 1..N sequence)
+     contains real newlines for structure. Without this, the browser
+     collapses them into spaces and the whole thing renders as one
+     dense run-on paragraph instead of a readable step list. */
+  white-space: pre-wrap;
 }
 
 /* ── Stats bar ───────────────────────────────────────────────────────────── */

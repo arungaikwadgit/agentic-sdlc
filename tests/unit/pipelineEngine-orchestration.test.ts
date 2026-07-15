@@ -13,7 +13,7 @@
 // agents/constants, agents/definitions, agents/domains, and
 // data/roleTemplates are used as-is (pure data/functions).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Project } from '../../frontend/src/types/project.types';
 import type { AgentId, AgentRun } from '../../frontend/src/types/agent.types';
 
@@ -124,6 +124,17 @@ describe('PipelineEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockProject = freshProject();
+    // sdlcOrchestrator now has requiredTools set (see l3Runtime.ts's
+    // requiredTools enforcement) — the generic unmarked "mock agent output"
+    // response below is treated as a premature passthrough and corrected
+    // (see l3Runtime-requiredTools.test.ts), pushing it past 1 iteration
+    // for the first time in this suite. Without this, that would incur
+    // runL3Agent's real 1500ms inter-iteration delay per correction.
+    vi.stubEnv('VITE_L3_ITER_DELAY_MS', '0');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('returns early with onPipelineError when the project does not exist (TS-30)', async () => {
