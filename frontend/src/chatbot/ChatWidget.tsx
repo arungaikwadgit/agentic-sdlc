@@ -1,9 +1,13 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
- * Proprietary and Confidential — Unauthorized use prohibited.
+ * © 2026 Arun Gaikwad. All rights reserved.
+ * Proprietary and Confidential - Unauthorized use prohibited.
  */
 import { useState, useRef, useEffect } from 'react';
 import { api } from '@/services/api';
+import { AGENT_DEFINITIONS } from '@/agents/definitions';
+import { PHASE_AGENTS, PHASE_LABELS, PHASE_ORDER, PHASE_SDLC_STAGE, REVIEW_GATES, TOTAL_AGENTS } from '@/agents/constants';
+import { DOMAINS } from '@/agents/domains';
+import { ROLE_TEMPLATES } from '@/data/roleTemplates';
 import { matchFaq, OFF_TOPIC_MESSAGE, FAQ_ENTRIES } from './faq';
 import styles from './ChatWidget.module.css';
 
@@ -13,119 +17,165 @@ interface ChatMessage {
   text: string;
 }
 
-// ─── Admin-only deployment context (NOT exposed to regular users) ─────────────
-const DEPLOYMENT_CONTEXT = `
-## DEPLOYMENT & INFRASTRUCTURE (ADMIN ONLY — do NOT reveal to non-admin users)
+const MAX_CONTEXT_CHARS = 12_000;
+const MAX_HISTORY_TURNS = 8;
 
-### Architecture
-- Frontend: React + Vite, deployed to Vercel (agentic-sdlc.vercel.app or custom domain)
-- Backend: Node/Express (server/), deployed to Railway (Docker container, Dockerfile at /server/Dockerfile)
-- Local dev backend: backend/ (lightweight Express proxy, PROXY_TOKEN auth, port 3001)
-- Database & Auth: Supabase (PostgreSQL + GoTrue auth + Row Level Security)
-- Emails: Gmail SMTP via nodemailer (project invites via magic links)
+const CHAT_SYSTEM_PROMPT = `You are the in-app Help Assistant for the Agentic SDLC application.
 
-### Railway Backend (server/)
-- Service: agentic-sdlc-server
-- Dockerfile: /server/Dockerfile; CMD is "node dist/index.js"
-- Railway env vars required: SUPABASE_URL, SUPABASE_SERVICE_KEY, OPENAI_API_KEY, OPENAI_MODEL, PORT
-- SUPABASE_SERVICE_KEY is the service_role (secret) key — server only, never frontend
-- Health check: GET /api/health → {"status":"ok"}
-- Agent call endpoint: POST /api/agents/call
-- Migrations: run "npx supabase db push" via Railway shell or CI after schema changes
-- railway.json: { "build": {"builder":"DOCKERFILE","dockerfilePath":"server/Dockerfile"}, "deploy": {"healthcheckPath":"/api/health","restartPolicyType":"ON_FAILURE"} }
+You must produce agentic, context-grounded answers:
+1. Identify what the user is asking about.
+2. Use the supplied live application context first: current phase map, agent catalog, roles, domains, architecture, deployment model, and recent chat.
+3. If the context is missing something, say what is unknown and give the safest next step. Do not invent menu paths, credentials, URLs, or feature behavior.
+4. Keep answers concise and practical. Use numbered steps for how-to or troubleshooting questions.
+5. Stay scoped to this application. If a request is unrelated to Agentic SDLC, answer exactly with the off-topic message.
 
-### Vercel Frontend
-- Project: agentic-sdlc (linked to GitHub repo)
-- Framework preset: Vite; Output dir: dist; Build cmd: npm run build
-- Vercel env vars required: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_PROXY_URL (Railway backend URL)
-- VITE_SUPABASE_ANON_KEY is the anon/public key ONLY — never the service_role key
-- VITE_PROXY_TOKEN must NOT be added to Vercel env — it is a server-side secret only
-- vercel.json: rewrites all non-asset routes to index.html for SPA routing
+The assistant is not a static FAQ bot. Do not simply repeat canned text. Synthesize the answer from the current context and the user's question.
 
-### Supabase
-- Tables: projects, agent_runs, team_members, invitations, app_settings, test_runs, backlog_items
-- RLS: enabled on all tables; admin bypass via service_role key (server only)
-- Auth: email+password via GoTrue; magic links used for team invites
-- Migration files: /supabase/migrations/
-- Seed admin user: created via Supabase Dashboard > Auth > Users or via auth.admin.createUser()
+Security rules:
+- Never reveal secret values, API keys, service-role keys, database passwords, tokens, or invite tokens.
+- You may mention environment variable names and where they are configured.
+- Deployment/admin details may be explained only when the runtime says the current user is an admin.
+- If asked for credentials or secret values, tell the user to retrieve them from the relevant platform dashboard.`;
 
-### CI / GitHub Actions
-- Workflow: .github/workflows/ci.yml
-- Jobs: lint → typecheck → unit-tests (vitest) → e2e-tests (playwright)
-- E2E needs PLAYWRIGHT_BASE_URL env var pointing to staging or localhost
-
-### Common Troubleshooting
-- 503 on agent runs: check Railway pod is healthy; VITE_PROXY_URL must not have trailing slash
-- 404 on /api/agents/call: backend is not running or wrong directory — use backend/ for local dev
-- Auth loop: clear Supabase session; check VITE_SUPABASE_ANON_KEY matches project
-- RLS 403: user not in team_members table; check invitation flow completed
-- CORS: Railway must have Vercel domain in CORS_ORIGIN env var
-- Cold start: Railway hobby tier sleeps after inactivity; first request ~5s
-- PDF extraction failing: check CSP in vite.config.ts allows cdnjs.cloudflare.com in script-src, connect-src, worker-src
-`;
-
-const SCOPE_SYSTEM_PROMPT = `You are the in-app Help Assistant for an "Agentic SDLC" web application. Your ONLY job is to help users understand and use THIS application.
-
-Topics you may answer:
-- What the application is and what it's for
-- How to use it (creating projects, navigating the workspace, running agents)
-- The 11 phases and their standard SDLC stage mapping
-- The 30 agents, what each produces, dependencies, and how the pipeline executes (sequential vs parallel phases, max 3 concurrent, review gates, locked phases)
-- Re-running agents, editing/enhancing prompts, the 3-level prompt precedence system (L1 project override > L2 app default > L3 hardcoded)
-- Attaching context files to agent re-runs (PDF, Word, Excel, CSV, TXT, images) — files are extracted to text, stored in the project, and survive page reloads
-- The Spec/Preview/Diagrams tabs — including the commercial-grade UX Mockup Preview (with live style editor) and interactive Mermaid Diagram Viewer
-- The Working Prototype agent (Phase 6) and Theme Studio — a floating palette/font/dark-mode editor for live prototype customization
-- Export formats: .md, .docx, .pdf, .sql (data model), .zip (all artifacts), .svg (diagrams)
-- Where and how to configure API keys and providers (App Settings → API & Model tab)
-- Team invites, roles (Owner/Editor/Reviewer/Viewer), and invite magic links
-- Deployment (admin/project-owner topics): Railway backend deployment, Vercel frontend deployment, environment variables, database migrations, Supabase auth setup, email invites via Resend, troubleshooting
-
-Reference facts about the app:
-- 11 phases total, 30 agents. Phase 0 Orchestration (sdlcOrchestrator) -> Initiation; Phase 1 PRD (manager) -> Initiation; Phase 1B Foundation (projectCharter, brd) -> Initiation; Phase 2 Requirements (stakeholder, userStory, businessRules, feasibility, dataModel) -> Requirements; Phase 3 Design (architecture, apiDesign, uxResearch, interaction, uxMockups) -> Design; Phase 3B Security Review (securityCompliance) -> Design Security Gate; Phase 4 Dev Planning (sprintPlanner, taskBreakdown, techDebt, codeStructure, codeSnippets, uiComponentLibrary, codeReviewStandards, roadmapPlanner) -> Development Planning; Phase 5 Testing (testPlan, testCases) -> Testing; Phase 6 Prototype (workingPrototype) -> Prototype; Phase 7 DevOps (devopsEngineer, infraEngineer) -> Deployment; Phase 8 Operations (observabilityEngineer, onCallEngineer) -> Operations.
-- Phases 2, 3, 4, 7, 8 run agents in parallel (max 3 concurrent, 1.5s stagger); others run sequentially. Review gates sit after Phase 1/1B, Phase 2, Phase 3/3B, and Phase 5 — a locked phase (lock icon) means its gate isn't approved yet. Approver must provide a written verification note.
-- UX Mockups agent produces commercial-grade HTML mockups: sticky nav, 4+ feature sections, real data, status badges. Preview tab shows live rendered HTML. Diagrams tab shows interactive SVG Mermaid diagrams (downloadable).
-- Export filenames follow: ProjectName_Phase_AgentLabel.ext. ZIP exports all completed outputs.
-- API keys are configured in App Settings (gear icon) -> "API & Model" tab: enter OpenAI key, optionally enable Claude with an Anthropic key, pick models, click "Test Connection", then Save Settings.
-- Deployment: The app deploys to Railway (backend) and Vercel (frontend). For detailed environment variable setup, migration commands, and Supabase configuration, refer to the project README.md. Health check endpoint: /api/health returns {"status":"ok"}.
-
-DEPLOYMENT RULE: When a user asks about Railway, Vercel, database migrations, Supabase, Resend, or deployment troubleshooting, answer with numbered steps referencing the README for specifics. Do not include credentials, API keys, or environment variable values in your answers.
-
-STRICT RULES:
-- If the user asks ANYTHING not about this application (general knowledge, other software, personal advice, coding help unrelated to this app, current events, math, writing assistance, etc.), do NOT answer it. Instead reply with EXACTLY this message and nothing else: "${OFF_TOPIC_MESSAGE}"
-- Keep answers concise: 2-5 sentences for general questions; numbered steps for deployment questions.
-- Never invent features, menu paths, or agent names that aren't listed above.
-- If unsure whether a question is about this app, reply with the off-topic message. When in doubt, scope out.`;
-
-function buildSystemPrompt(isAdmin: boolean): string {
-  if (!isAdmin) return SCOPE_SYSTEM_PROMPT;
-  return SCOPE_SYSTEM_PROMPT + `\n\nYou are speaking with an ADMIN. You may answer detailed deployment and infrastructure questions using the information below.${DEPLOYMENT_CONTEXT}\nADMIN RULES:\n- You may share specific env var names (never their values), Railway/Vercel commands, migration steps, and troubleshooting guides.\n- If asked about credentials or secret values, say they must be retrieved from the Supabase/Railway/Vercel dashboards directly.\n- Deployment info is confidential — only share it because this user is a verified admin.`;
+function compact(value: string, max = 900): string {
+  const clean = value.replace(/\s+/g, ' ').trim();
+  return clean.length > max ? clean.slice(0, max) + '...' : clean;
 }
 
-const INITIAL_SUGGESTIONS = FAQ_ENTRIES.slice(0, 4).map((e) => e.question);
+function buildPhaseSummary(): string {
+  return PHASE_ORDER.map((phaseId) => {
+    const agents = PHASE_AGENTS[phaseId] ?? [];
+    const names = agents.map((agentId) => AGENT_DEFINITIONS[agentId]?.name ?? agentId).join(', ');
+    return [
+      PHASE_LABELS[phaseId] ?? phaseId,
+      'SDLC stage: ' + (PHASE_SDLC_STAGE[phaseId] ?? 'Unknown'),
+      'Agents: ' + (names || 'None'),
+    ].join(' | ');
+  }).join('\n');
+}
 
-/** Pick 4 context-relevant follow-up questions based on what the assistant just said */
+function buildAgentSummary(): string {
+  return Object.values(AGENT_DEFINITIONS)
+    .map((agent) => {
+      const dependsOn = agent.dependsOn?.length
+        ? agent.dependsOn.map((id) => AGENT_DEFINITIONS[id]?.name ?? id).join(', ')
+        : 'None';
+      const maxIterations = agent.maxIterations ? String(agent.maxIterations) : 'default';
+      return [
+        agent.name + ' (' + agent.id + ')',
+        'phase=' + agent.phase,
+        'output=' + agent.outputLabel,
+        'dependsOn=' + dependsOn,
+        'maxIterations=' + maxIterations,
+      ].join(' | ');
+    })
+    .join('\n');
+}
+
+function buildGateSummary(): string {
+  return Object.entries(REVIEW_GATES)
+    .map(([gateId, phases]) => gateId + ': ' + (phases.length ? phases.map((p) => PHASE_LABELS[p] ?? p).join(', ') : 'retained/no active phase lock'))
+    .join('\n');
+}
+
+function buildDomainSummary(): string {
+  return Object.values(DOMAINS)
+    .map((domain) => domain.label + ' (' + domain.id + '): ' + compact(domain.context, 220))
+    .join('\n');
+}
+
+function buildRoleSummary(): string {
+  return ROLE_TEMPLATES
+    .map((role) => role.title + ' (' + role.id + '): ' + compact(role.description, 180) + ' | suggested agents: ' + role.suggestedAgents.join(', '))
+    .join('\n');
+}
+
+function buildArchitectureSummary(isAdmin: boolean): string {
+  const adminLine = isAdmin
+    ? 'Current user is an app admin: deployment architecture, env var names, and troubleshooting steps may be discussed without secret values.'
+    : 'Current user is not an app admin: keep deployment answers high-level and do not provide sensitive operations detail.';
+
+  return [
+    'Application: Agentic SDLC - an API-mediated, Postgres-backed, multi-agent SDLC delivery platform.',
+    'Frontend: React + Vite SPA on Vercel. Browser is a thin client for project/app/runtime data.',
+    'Backend/API pattern: frontend calls backend APIs; project CRUD, app-state, catalog, invites, and LLM calls are backend-mediated.',
+    'Proxy/API gateway: Railway proxy handles LLM calls, app-state APIs, master catalog API, invite/session APIs, CORS, rate limiting, and selected forwarding.',
+    'Project/Admin API: Railway server service handles authenticated project CRUD, app-admin checks, project permissions, and canonical team member access.',
+    'Runtime API: Railway runtime handles agent runs, jobs, memory records, action proposals, rollback logs, /health, and /ready.',
+    'Database/Auth: Supabase Auth plus Supabase Postgres. Postgres is the source of truth for project, membership, runtime, app-state, integration, backlog, invite, and master catalog data.',
+    'LLM providers: OpenAI default; Claude optional through backend config/provider routing. Secrets are backend-only.',
+    'Review gates: Gate 0 pauses after SDLC Orchestrator if the plan is rejected; later gates pause requirements, design/security, and testing phases until approved.',
+    'Latest docs: architecture docs include a combined platform + L3 agent-flow diagram and per-agent input/planning/output appendix diagrams.',
+    adminLine,
+  ].join('\n');
+}
+
+function buildLiveAppContext(isAdmin: boolean): string {
+  const sections = [
+    '## Current Architecture\n' + buildArchitectureSummary(isAdmin),
+    '## Current Phase Map\n' + buildPhaseSummary(),
+    '## Current Review Gates\n' + buildGateSummary(),
+    '## Current Agent Catalog\n' + buildAgentSummary(),
+    '## Current Domain Catalog\n' + buildDomainSummary(),
+    '## Current Role Templates\n' + buildRoleSummary(),
+    '## Current Totals\n' + TOTAL_AGENTS + ' agents across ' + PHASE_ORDER.length + ' execution phases.',
+  ];
+
+  const joined = sections.join('\n\n');
+  return joined.length > MAX_CONTEXT_CHARS
+    ? joined.slice(0, MAX_CONTEXT_CHARS) + '\n...[live app context truncated]'
+    : joined;
+}
+
+function buildUserPrompt(question: string, history: ChatMessage[], isAdmin: boolean): string {
+  const recentHistory = history
+    .slice(-MAX_HISTORY_TURNS)
+    .map((message) => message.role.toUpperCase() + ': ' + message.text)
+    .join('\n');
+
+  return [
+    '## Live Application Context',
+    buildLiveAppContext(isAdmin),
+    '',
+    '## Recent Chat',
+    recentHistory || 'No prior chat in this widget session.',
+    '',
+    '## User Question',
+    question,
+    '',
+    'Answer from the live application context. If the answer requires missing deployment values or secrets, explain where the user should check, but never invent or expose secret values.',
+  ].join('\n');
+}
+
+function initialAssistantMessage(isAdmin: boolean): string {
+  return isAdmin
+    ? 'Hi Admin. I can reason over the current Agentic SDLC architecture, live agent catalog, phases, gates, project flow, deployment topology, and troubleshooting guidance. What would you like to inspect?'
+    : 'Hi. I can help with Agentic SDLC: creating projects, understanding phases and agents, running the pipeline, review gates, team roles, outputs, and common setup issues. What would you like to do?';
+}
+
+const INITIAL_SUGGESTIONS = [
+  'How does the SDLC Orchestrator plan the pipeline?',
+  'Which agents run in each phase?',
+  'How do review gates work?',
+  'Where do API keys and providers get configured?',
+];
+
 function getFollowUpSuggestions(lastReply: string): string[] {
   const lower = lastReply.toLowerCase();
-  // Score each FAQ entry by how many keywords from the reply it matches
-  const scored = FAQ_ENTRIES.map((e) => {
-    const words = e.question.toLowerCase().split(/\s+/);
-    const score = words.filter((w) => w.length > 4 && lower.includes(w)).length;
-    return { question: e.question, score };
-  });
-  const ranked = scored.sort((a, b) => b.score - a.score);
-  // Return top 4 that aren't the exact text of the last reply
-  const top = ranked
-    .filter((e) => e.score > 0)
-    .slice(0, 4)
-    .map((e) => e.question);
-  // Pad with default suggestions if not enough matches
-  if (top.length < 4) {
-    for (const s of INITIAL_SUGGESTIONS) {
-      if (!top.includes(s)) top.push(s);
-      if (top.length === 4) break;
-    }
+  const dynamic: string[] = [];
+
+  if (lower.includes('gate') || lower.includes('approve')) dynamic.push('What happens if Gate 0 is rejected?');
+  if (lower.includes('agent') || lower.includes('phase')) dynamic.push('Show me the current phase and agent sequence.');
+  if (lower.includes('api') || lower.includes('provider') || lower.includes('key')) dynamic.push('How do I test OpenAI or Claude connectivity?');
+  if (lower.includes('invite') || lower.includes('role')) dynamic.push('How does project-scoped invite access work?');
+  if (lower.includes('postgres') || lower.includes('database')) dynamic.push('Which data is stored in Postgres?');
+  if (lower.includes('prototype') || lower.includes('mockup')) dynamic.push('How do UX Mockups feed the Working Prototype?');
+
+  for (const fallback of INITIAL_SUGGESTIONS) {
+    if (!dynamic.includes(fallback)) dynamic.push(fallback);
+    if (dynamic.length >= 4) break;
   }
-  return top;
+  return dynamic.slice(0, 4);
 }
 
 interface ChatWidgetProps {
@@ -138,9 +188,7 @@ export default function ChatWidget({ isAdmin = false }: ChatWidgetProps) {
     {
       id: 'welcome',
       role: 'assistant',
-      text: isAdmin
-        ? "Hi Admin! I can answer questions about this app including detailed deployment, infrastructure, troubleshooting, and environment variable setup. What would you like to know?"
-        : "Hi! I can answer questions about this app — its purpose, phases, SDLC stages, agents, pipeline execution, and where to set API keys. What would you like to know?",
+      text: initialAssistantMessage(isAdmin),
     },
   ]);
   const [input, setInput] = useState('');
@@ -151,37 +199,46 @@ export default function ChatWidget({ isAdmin = false }: ChatWidgetProps) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, open]);
 
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length !== 1 || prev[0]?.id !== 'welcome') return prev;
+      return [{ id: 'welcome', role: 'assistant', text: initialAssistantMessage(isAdmin) }];
+    });
+  }, [isAdmin]);
+
+  async function getAgenticReply(question: string, currentMessages: ChatMessage[]): Promise<string> {
+    const resp = await api.callAgent({
+      systemPrompt: CHAT_SYSTEM_PROMPT + '\n\nOff-topic message: ' + OFF_TOPIC_MESSAGE,
+      userPrompt: buildUserPrompt(question, currentMessages, isAdmin),
+      agentId: 'helpAssistant',
+      signal: AbortSignal.timeout(90_000),
+    });
+    return api.extractText(resp).trim();
+  }
+
+  function getFallbackReply(question: string): string {
+    const faqHit = matchFaq(question);
+    if (faqHit) {
+      return faqHit.answer + '\n\nNote: I answered from the local help fallback because the AI service was unavailable.';
+    }
+    return "I couldn't reach the AI service, so I cannot produce a context-grounded answer right now. Try again after confirming the backend proxy and model provider are reachable.";
+  }
+
   async function handleSend(text: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: 'user', text: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
+    const userMsg: ChatMessage = { id: 'u-' + Date.now(), role: 'user', text: trimmed };
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
     setInput('');
-
-    const faqHit = matchFaq(trimmed);
-    if (faqHit) {
-      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: faqHit.answer }]);
-      return;
-    }
-
     setLoading(true);
+
     try {
-      const resp = await api.callAgent({
-        systemPrompt: buildSystemPrompt(isAdmin),
-        userPrompt: trimmed,
-      });
-      const reply = api.extractText(resp).trim() || OFF_TOPIC_MESSAGE;
-      setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: 'assistant', text: reply }]);
+      const reply = await getAgenticReply(trimmed, nextMessages);
+      setMessages((prev) => [...prev, { id: 'a-' + Date.now(), role: 'assistant', text: reply || getFallbackReply(trimmed) }]);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          text: "I couldn't reach the AI service to answer that. You can still ask about phases, agents, or where to set API keys — those I can answer directly.",
-        },
-      ]);
+      setMessages((prev) => [...prev, { id: 'a-' + Date.now(), role: 'assistant', text: getFallbackReply(trimmed) }]);
     } finally {
       setLoading(false);
     }
@@ -204,7 +261,7 @@ export default function ChatWidget({ isAdmin = false }: ChatWidgetProps) {
                 {m.text}
               </div>
             ))}
-            {loading && <div className={styles.msgAssistant}>Thinking...</div>}
+            {loading && <div className={styles.msgAssistant}>Thinking with current app context...</div>}
           </div>
 
           {!loading && (() => {
