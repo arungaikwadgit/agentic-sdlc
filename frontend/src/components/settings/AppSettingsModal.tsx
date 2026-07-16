@@ -1,12 +1,12 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS } from '@/agents/constants';
 import {
-  getPromptDefaults, savePromptDefault, resetPromptDefault,
+  getPromptDefaults, savePromptDefault, resetPromptDefault, seedBuiltInPromptGovernanceDefaults,
   getAgentProviderHints, saveAgentProviderHint,
   getAgentModelAssignments, saveAgentModelAssignment,
   type ProviderHint,
@@ -141,6 +141,7 @@ export default function AppSettingsModal({ onClose }: Props) {
   const [promptDraft, setPromptDraft] = useState('');
   const [promptSaveMsg, setPromptSaveMsg] = useState('');
   const [savingPromptDefault, setSavingPromptDefault] = useState(false);
+  const [seedingPromptGovernance, setSeedingPromptGovernance] = useState(false);
 
   // Domain Knowledge tab state
   const allDomainIds = Object.keys(DOMAINS) as DomainId[];
@@ -178,22 +179,41 @@ export default function AppSettingsModal({ onClose }: Props) {
   // Load persisted app config from the backend app-state store on mount
   useEffect(() => {
     (async () => {
-      const [storedModel, storedTheme, defaults, domainDefaults, providerHints, storedCatalog, modelAssignments] = await Promise.all([
-        getAppConfigValue<string>('app:model', 'gpt-4o'),
-        getAppConfigValue<Theme>('app:theme', 'dark'),
-        getPromptDefaults(),
-        getDomainKnowledgeDefaults(),
-        getAgentProviderHints(),
-        getAppConfigValue<ModelCatalogEntry[]>('app:modelCatalog', DEFAULT_MODEL_CATALOG),
-        getAgentModelAssignments(),
-      ]);
-      if (storedModel) setModel(storedModel);
-      if (storedTheme) setTheme(storedTheme);
-      setPromptDefaults(defaults);
-      setDomainKnowledgeDefaults(domainDefaults);
-      setAgentProviderHints(providerHints);
-      setModelCatalog(storedCatalog && storedCatalog.length > 0 ? storedCatalog : DEFAULT_MODEL_CATALOG);
-      setAgentModelAssignments(modelAssignments);
+      try {
+        const [storedModel, storedTheme, defaults, domainDefaults, providerHints, storedCatalog, modelAssignments] = await Promise.all([
+
+          getAppConfigValue<string>('app:model', 'gpt-4o'),
+
+          getAppConfigValue<Theme>('app:theme', 'dark'),
+
+          getPromptDefaults(),
+
+          getDomainKnowledgeDefaults(),
+
+          getAgentProviderHints(),
+
+          getAppConfigValue<ModelCatalogEntry[]>('app:modelCatalog', DEFAULT_MODEL_CATALOG),
+
+          getAgentModelAssignments(),
+
+        ]);
+
+        if (storedModel) setModel(storedModel);
+
+        if (storedTheme) setTheme(storedTheme);
+
+        setPromptDefaults(defaults);
+
+        setDomainKnowledgeDefaults(domainDefaults);
+
+        setAgentProviderHints(providerHints);
+
+        setModelCatalog(storedCatalog && storedCatalog.length > 0 ? storedCatalog : DEFAULT_MODEL_CATALOG);
+
+          setAgentModelAssignments(modelAssignments);
+      } catch (error) {
+        console.warn('[AppSettingsModal] Failed to load persisted app configuration; using safe defaults.', error);
+      }
     })();
 
     // Read current Claude/provider + Gmail config from the backend .env
@@ -246,7 +266,10 @@ export default function AppSettingsModal({ onClose }: Props) {
   // (server/src/middleware/auth.ts requireAppAdmin) — this just controls
   // whether the UI shows the controls at all.
   useEffect(() => {
-    checkIsAppAdmin().then(setIsAppAdminUser);
+    checkIsAppAdmin().then(setIsAppAdminUser).catch((error) => {
+      console.warn('[AppSettingsModal] Failed to resolve app-admin status; keeping admin controls hidden.', error);
+      setIsAppAdminUser(false);
+    });
   }, []);
 
   // When switching the selected agent (or loading defaults), refresh the draft
@@ -275,6 +298,19 @@ export default function AppSettingsModal({ onClose }: Props) {
       setTimeout(() => setPromptSaveMsg(''), 2000);
     } finally {
       setSavingPromptDefault(false);
+    }
+  }
+
+  async function handleSeedPromptGovernance() {
+    setSeedingPromptGovernance(true);
+    setPromptSaveMsg('');
+    try {
+      const result = await seedBuiltInPromptGovernanceDefaults();
+      setPromptSaveMsg('Governed defaults initialized: ' + result.created + ' created, ' + result.skipped + ' already active.');
+    } catch (error) {
+      setPromptSaveMsg('Initialization failed: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setSeedingPromptGovernance(false);
     }
   }
 
@@ -1074,6 +1110,17 @@ export default function AppSettingsModal({ onClose }: Props) {
 
           {tab === 'prompts' && (
             <div className={styles.section}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <button
+                  className="btn-secondary"
+                  onClick={handleSeedPromptGovernance}
+                  disabled={seedingPromptGovernance}
+                  title="Create active Postgres-backed global prompt versions for agents that do not have one"
+                >
+                  {seedingPromptGovernance ? 'Initializing...' : 'Initialize governed defaults'}
+                </button>
+                <span className={styles.fieldHint}>Safe to repeat; active governed prompts are never overwritten.</span>
+              </div>
               <span className={styles.fieldHint}>
                 Set the app-wide default system prompt for each agent. These apply to every project unless a project admin
                 saves a project-specific override (Review Gate → Prompt Sandbox → "Save for this project"), which always

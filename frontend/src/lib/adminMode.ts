@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  *
  * Admin-mode flag — activated only in local development when signing in with

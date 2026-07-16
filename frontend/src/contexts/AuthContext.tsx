@@ -1,5 +1,5 @@
 /**
- * Copyright 2025 Arun Gaikwad. All rights reserved.
+ * Copyright 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential - Unauthorized use prohibited.
  *
  * AuthContext wraps Supabase authentication with a local-development-only

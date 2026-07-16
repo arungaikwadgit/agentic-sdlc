@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -17,6 +17,7 @@
  * and ProjectWorkspace.tsx (sidebar UI + the pre-flight warning).
  */
 import { PHASE_ORDER, PHASE_AGENTS } from '@/agents/constants';
+import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import type { Project } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 
@@ -26,7 +27,7 @@ import type { AgentId, PhaseId } from '@/types/agent.types';
  * specifically must never be auto-skippable: it produces the plan gate0
  * gates on, and if it were skipped there'd be nothing for gate0 to review.
  */
-export const ASSIGNMENT_EXEMPT_AGENTS: AgentId[] = ['sdlcOrchestrator'];
+export const ASSIGNMENT_EXEMPT_AGENTS: AgentId[] = ['sdlcOrchestrator', 'tokenOptimizer', 'aiGovernance'];
 
 export function isAgentAssigned(project: Project, agentId: AgentId): boolean {
   const assignment = (project.agentAssignments ?? []).find((a) => a.agentId === agentId);
@@ -36,6 +37,14 @@ export function isAgentAssigned(project: Project, agentId: AgentId): boolean {
 /** Every agent in the pipeline (all phases, in order). */
 export function getAllAgentIds(): AgentId[] {
   return PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph] ?? []);
+}
+
+export function isInternalAgent(agentId: AgentId): boolean {
+  return AGENT_DEFINITIONS[agentId]?.visibility === 'internal';
+}
+
+export function getUserVisibleAgentIds(): AgentId[] {
+  return getAllAgentIds().filter((id) => !isInternalAgent(id));
 }
 
 /** Agents (excluding assignment-exempt ones) that currently have nobody assigned. */

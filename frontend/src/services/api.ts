@@ -1,5 +1,5 @@
 /**
- * Â© 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential â€” Unauthorized use prohibited.
  */
 /**

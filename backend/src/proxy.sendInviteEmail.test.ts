@@ -21,7 +21,16 @@ describe('sendInviteEmail (Gmail SMTP)', () => {
     // CWD -- if a real RESEND_API_KEY is configured there for local dev, these
     // tests would otherwise make a real network call to Resend's API instead
     // of exercising the Gmail/dev-mode paths they're actually testing.
-    process.env = { ...ORIGINAL_ENV, PORT: '0', RESEND_API_KEY: '', RESEND_FROM_EMAIL: '' };
+    process.env = {
+      ...ORIGINAL_ENV,
+      PORT: '0',
+      RESEND_API_KEY: '',
+      RESEND_FROM_EMAIL: '',
+      POSTGRES_URL: '',
+      POSTGRES_URL_LOCAL: '',
+      POSTGRES_URL_PRODUCTION: '',
+      DATABASE_URL: '',
+    };
   });
 
   afterAll(() => {

@@ -16,6 +16,9 @@ const exportDocxMock = vi.fn(async () => undefined);
 vi.mock('@/services/exporters/documentExporter', () => ({
   exportMarkdown: (...args: unknown[]) => exportMarkdownMock(...args),
   exportDocx: (...args: unknown[]) => exportDocxMock(...args),
+  exportPdf: vi.fn(),
+  exportAllArtifactsZip: vi.fn(),
+  buildArtifactFilename: () => 'artifact.docx',
 }));
 
 // Import after mocks are registered.
@@ -86,7 +89,7 @@ describe('ExportMenu', () => {
     expect(exportMarkdownMock).toHaveBeenCalledTimes(1);
     expect(exportMarkdownMock).toHaveBeenCalledWith(
       '# Sprint Plan\n\nDo the work.',
-      `${DEF?.outputLabel}.md`,
+      'artifact.md',
     );
 
     // Dropdown should close after export.

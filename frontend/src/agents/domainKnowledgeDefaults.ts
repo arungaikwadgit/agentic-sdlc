@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -22,7 +22,9 @@ export type DomainKnowledgeDefaultsMap = Partial<Record<DomainId, string>>;
 
 /** Load the full app-level domain knowledge defaults map (empty object if none saved yet). */
 export async function getDomainKnowledgeDefaults(): Promise<DomainKnowledgeDefaultsMap> {
-  return await getAppConfigValue<DomainKnowledgeDefaultsMap>(SETTINGS_KEY, {});
+  const value = await getAppConfigValue<unknown>(SETTINGS_KEY, {});
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as DomainKnowledgeDefaultsMap;
 }
 
 /** Get the effective default brief for a domain: app-level override if set, else the hardcoded template. */

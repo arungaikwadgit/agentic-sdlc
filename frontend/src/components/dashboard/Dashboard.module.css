@@ -1,5 +1,5 @@
 /*
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 .layout {
@@ -171,6 +171,8 @@
   text-align: left;
 }
 .projectLink:hover { color: var(--accent); }
+.creatorName { display: block; color: var(--text); font-size: 12px; }
+.creatorRole { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
 .statusText { text-transform: capitalize; }
 
 .tableProgress {

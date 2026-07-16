@@ -98,9 +98,10 @@ describe('uxMockups — CSS custom property requirement', () => {
     expect(def.systemPrompt).toContain('--spacing-unit');
   });
 
-  it('buildUserPrompt also references CSS custom properties', () => {
+  it('buildUserPrompt requests a shared color-token design system', () => {
     const prompt = def.buildUserPrompt(CTX);
-    expect(prompt).toContain('--color-primary');
+    expect(prompt).toContain('## Design System');
+    expect(prompt).toMatch(/color palette with hex codes/i);
   });
 });
 
@@ -154,14 +155,14 @@ describe('uxMockups — HTML output format requirements', () => {
     expect(prompt).toMatch(/exactly 2/i);
   });
 
-  it('systemPrompt requires EXACTLY 2 fenced code blocks', () => {
-    expect(def.systemPrompt).toMatch(/exactly 2/i);
+  it('systemPrompt keeps block completeness independent of dynamic version count', () => {
+    expect(def.systemPrompt).toMatch(/each block must be a COMPLETE standalone HTML document/i);
   });
 
-  it('buildUserPrompt Appendix section references image prompts', () => {
+  it('buildUserPrompt ends with a cross-version comparison and recommendation', () => {
     const prompt = def.buildUserPrompt(CTX);
-    expect(prompt.toLowerCase()).toContain('appendix');
-    expect(prompt).toContain('Image Prompt');
+    expect(prompt).toContain('## Comparison & Recommendation');
+    expect(prompt).toMatch(/NO two versions may use the same nav pattern/i);
   });
 });
 
@@ -188,6 +189,19 @@ describe('architecture — diagram requirements', () => {
   it('buildUserPrompt contains ```mermaid fenced block instruction', () => {
     const prompt = def.buildUserPrompt(CTX);
     expect(prompt).toContain('```mermaid');
+  });
+
+  it('requires four separate image-renderable architecture views', () => {
+    const prompt = def.buildUserPrompt(CTX);
+    expect(prompt).toMatch(/at least FOUR separate/i);
+    expect(prompt).toContain('System Context');
+    expect(prompt).toContain('Container / Component');
+    expect(prompt).toContain('Deployment / Infrastructure');
+    expect(prompt).toContain('sequenceDiagram');
+  });
+
+  it('goal self-check requires at least four Mermaid blocks', () => {
+    expect(def.goal?.(CTX)).toMatch(/four separate.*mermaid/i);
   });
 
   it('systemPrompt references architecture domain', () => {

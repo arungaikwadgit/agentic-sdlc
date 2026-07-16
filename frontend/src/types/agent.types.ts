@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import type { ModelCatalogEntry } from './model.types';
@@ -8,6 +8,8 @@ export type AgentStatus = 'idle' | 'running' | 'complete' | 'error' | 'skipped';
 
 export type PhaseId =
   | 'phase0'
+  | 'phase0a'  // tokenOptimizer (depends on phase0 orchestration plan)
+  | 'phase0b'  // aiGovernance (reviews orchestration + token optimization before gate0)
   | 'phase1'
   | 'phase1b'
   | 'phase2'
@@ -26,6 +28,9 @@ export type PhaseId =
 export type AgentId =
   // Phase 0
   | 'sdlcOrchestrator'
+  // Governed preflight
+  | 'tokenOptimizer'
+  | 'aiGovernance'
   // Phase 1
   | 'manager'
   // Phase 1B
@@ -121,6 +126,13 @@ export interface L3RuntimeMeta {
    * them. Surfaced as a warning in AgentThinkingPanel.
    */
   incompleteRequiredTools?: string[];
+  /** Mechanical validation of the required Validation & Confidence footer. */
+  outputGovernance?: {
+    passed: boolean;
+    score: number | null;
+    issues: string[];
+    blocked: boolean;
+  };
 }
 
 export interface AgentDefinition {
@@ -129,6 +141,8 @@ export interface AgentDefinition {
   phase: PhaseId;
   description: string;
   outputLabel: string;
+  /** Internal agents execute and remain auditable but are hidden from normal project UX/export. */
+  visibility?: 'standard' | 'internal';
   systemPrompt: string;
   /** Function returning the user prompt given project context */
   buildUserPrompt: (ctx: AgentPromptContext) => string;
@@ -217,6 +231,21 @@ export interface PhaseRulesSnapshot {
   reviewGates: Record<string, PhaseId[]>;
 }
 
+export interface AgentRunMetric {
+  agentId: AgentId;
+  status: AgentStatus;
+  tokensUsed: number;
+  provider?: AgentRun['provider'];
+  model?: string;
+}
+
+export interface GovernanceSnapshot {
+  reviewGates: Array<{ id: string; approved: boolean; approvedAt?: number; approvedBy?: string }>;
+  promptOverrideAgentIds: AgentId[];
+  contextDocuments: Array<{ name: string; kind: string; sizeKb: number }>;
+  creationApproval: { approverRole?: string; approvedAt?: number } | null;
+}
+
 export interface AgentPromptContext {
   projectName: string;
   projectDescription: string;
@@ -255,6 +284,10 @@ export interface AgentPromptContext {
   /** Admin-configured model catalog (paid + free/open models), same availability scope
    *  as agentCatalog. See types/model.types.ts. */
   modelCatalog?: ModelCatalogEntry[];
+  /** Read-only token/provider telemetry for completed and in-flight project agent runs. */
+  agentRunMetrics?: AgentRunMetric[];
+  /** Read-only governance evidence metadata; never includes hidden prompts or document content. */
+  governanceSnapshot?: GovernanceSnapshot;
   /** This agent's own saved Q&A pairs from the pre-generation clarifying-
    *  questions flow, if any (see AgentDefinition.needsClarifyingQuestions).
    *  Populated per-agent by PipelineEngine.buildContext(), not shared across

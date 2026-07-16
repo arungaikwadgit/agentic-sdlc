@@ -401,6 +401,32 @@ describe('ProjectWorkspace — re-run flow', () => {
     });
   });
 
+  it('passes an edited architecture prompt unchanged to runSingleAgent', async () => {
+    currentProject = baseProject({
+      agentRuns: withCompleteRun('architecture', '## Old architecture'),
+    });
+    extractTextMock.mockReturnValue('## Updated architecture');
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    const user = await selectAgent(ARCHITECTURE_DEF.name);
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
+    const textarea = await screen.findByRole('textbox');
+    await user.clear(textarea);
+    await user.type(textarea, 'LATEST ARCHITECTURE INSTRUCTIONS');
+    await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
+
+    await waitFor(() => {
+      expect(runSingleAgentMock).toHaveBeenCalledWith(
+        'proj-1',
+        'architecture',
+        'LATEST ARCHITECTURE INSTRUCTIONS',
+        expect.any(Object),
+        expect.any(String),
+        expect.any(Object),
+      );
+    });
+  });
+
   it('Confirm Re-run for an agent in a gated phase resets that gate and reopens ReviewGateModal (TS-193)', async () => {
     currentProject = baseProject({
       currentPhase: 'phase4',

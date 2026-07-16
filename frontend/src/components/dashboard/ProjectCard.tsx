@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { getDomain } from '@/agents/domains';
@@ -71,6 +71,14 @@ export default function ProjectCard({ project, onOpen, onDelete, onDetails, onEd
       </div>
 
       <h3 className={styles.name}>{project.name}</h3>
+
+      {project.creatorName && (
+        <div className={styles.creator}>
+          <span>Created by</span>
+          <strong>{project.creatorName}</strong>
+          {project.creatorRole && <span className={styles.creatorRole}>{project.creatorRole}</span>}
+        </div>
+      )}
 
       <div className={styles.status}>
         <span className={styles.dot} style={{ background: statusColor }} />

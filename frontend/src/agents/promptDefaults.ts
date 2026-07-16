@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -16,6 +16,7 @@ import { AGENT_DEFINITIONS } from './definitions';
 import type { AgentId } from '@/types/agent.types';
 import type { LlmProvider } from '@/services/api';
 import { getAppConfigValue, setAppConfigValue } from '@/services/appStateApi';
+import { getGovernedEffectivePrompt, saveGlobalPromptVersion, seedGlobalPromptVersions } from '@/services/promptGovernance';
 
 const SETTINGS_KEY = 'app:promptDefaults';
 const PROVIDER_HINTS_KEY = 'app:agentProviderHints';
@@ -85,6 +86,12 @@ export async function getPromptDefaults(): Promise<PromptDefaultsMap> {
 
 /** Get the effective default prompt for an agent: app-level override if set, else the hardcoded definition. */
 export async function getEffectivePromptDefault(agentId: AgentId): Promise<string> {
+  try {
+    const governed = await getGovernedEffectivePrompt(agentId);
+    if (governed.prompt) return governed.prompt;
+  } catch {
+    // Keep legacy app-state and built-in defaults available during migration.
+  }
   const defaults = await getPromptDefaults();
   return defaults[agentId] ?? AGENT_DEFINITIONS[agentId]?.systemPrompt ?? '';
 }
@@ -94,6 +101,18 @@ export async function savePromptDefault(agentId: AgentId, prompt: string): Promi
   const defaults = await getPromptDefaults();
   const next: PromptDefaultsMap = { ...defaults, [agentId]: prompt };
   await setAppConfigValue(SETTINGS_KEY, next);
+  await saveGlobalPromptVersion(agentId, AGENT_DEFINITIONS[agentId]?.name ?? agentId, prompt);
+}
+
+/** Seed built-in prompts only when an agent has no active governed global version. */
+export async function seedBuiltInPromptGovernanceDefaults(): Promise<{ created: number; skipped: number }> {
+  return seedGlobalPromptVersions(
+    Object.values(AGENT_DEFINITIONS).map((definition) => ({
+      agentId: definition.id,
+      agentName: definition.name,
+      content: definition.systemPrompt,
+    })),
+  );
 }
 
 /** Remove the app-level override for an agent, reverting it to the hardcoded definition. */
@@ -103,6 +122,10 @@ export async function resetPromptDefault(agentId: AgentId): Promise<void> {
     const next = { ...defaults };
     delete next[agentId];
     await setAppConfigValue(SETTINGS_KEY, next);
+  }
+  const definition = AGENT_DEFINITIONS[agentId];
+  if (definition?.systemPrompt) {
+    await saveGlobalPromptVersion(agentId, definition.name, definition.systemPrompt);
   }
 }
 

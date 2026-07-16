@@ -9,7 +9,7 @@
 import type { Project, ProjectSummary } from '@/types/project.types';
 import type { AgentId, AgentRun } from '@/types/agent.types';
 import type { ProjectDocument } from '@/types/extraction.types';
-import { TOTAL_AGENTS } from '@/agents/constants';
+import { getUserVisibleAgentIds, isInternalAgent } from '@/lib/agentEnablement';
 import { supabase } from '@/lib/supabase';
 import { getInviteSession } from '@/services/inviteSession';
 import { getAuthHeader, getProxyToken } from '@/services/api';
@@ -102,6 +102,9 @@ interface ApiProjectRow {
   data: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  creator_name?: string;
+  creator_email?: string;
+  creator_role?: string;
   members?: unknown[];
 }
 
@@ -124,6 +127,9 @@ function rowToProject(row: ApiProjectRow): Project {
     createdAt: new Date(row.created_at).getTime(),
     updatedAt: new Date(row.updated_at).getTime(),
     ownerId: row.owner_id,
+    creatorName: row.creator_name,
+    creatorEmail: row.creator_email,
+    creatorRole: row.creator_role,
     version: (blob.version as number) ?? 1,
     agentRuns: (blob.agentRuns as Project['agentRuns']) ?? {},
     reviewGates: (blob.reviewGates as Project['reviewGates']) ?? {},
@@ -223,8 +229,11 @@ function toSummary(p: Project): ProjectSummary {
     status: p.status,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
-    completedAgents: Object.values(p.agentRuns).filter((r) => r?.status === 'complete').length,
-    totalAgents: TOTAL_AGENTS,
+    completedAgents: Object.entries(p.agentRuns).filter(([agentId, run]) => !isInternalAgent(agentId as AgentId) && run?.status === 'complete').length,
+    totalAgents: getUserVisibleAgentIds().length,
+    creatorName: p.creatorName,
+    creatorEmail: p.creatorEmail,
+    creatorRole: p.creatorRole,
     archived: p.archived,
     archivedReason: p.archivedReason,
     archivedAt: p.archivedAt,

@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState } from 'react';
@@ -10,9 +10,11 @@ import { getDomain } from '@/agents/domains';
 import { updateAgentRun, updateProject } from '@/db/projectRepository';
 import { api } from '@/services/api';
 import { checkPromptInjection } from '@/utils/sanitize';
+import { activateProjectPromptOverride } from '@/services/promptGovernance';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { useAuth } from '@/contexts/AuthContext';
 import { getProjectExportPermission, isProjectAdminUser } from '@/lib/projectAccess';
+import { isInternalAgent } from '@/lib/agentEnablement';
 import DocumentViewer from '../documents/DocumentViewer';
 import ExportMenu from '../documents/ExportMenu';
 import type { Project, ReviewGateId } from '@/types/project.types';
@@ -26,7 +28,7 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
 }
 
 const GATE_LABELS: Record<ReviewGateId, string> = {
-  gate0: 'Plan Approval Gate',
+  gate0: 'Governed Plan Approval Gate',
   gate1: 'Phase 1 Review Gate',
   gate2: 'Phase 2 Review Gate',
   gate3: 'Phase 3 & 3B Review Gate',
@@ -73,7 +75,7 @@ function getGateAssignees(project: Project, agents: AgentId[]) {
 export default function ReviewGateModal({ gateId, project, onApprove, onReject, onClose }: Props) {
   const { user, adminMode } = useAuth();
   const phases = REVIEW_GATES[gateId];
-  const agents: AgentId[] = phases.flatMap((p) => PHASE_AGENTS[p as PhaseId] ?? []);
+  const agents: AgentId[] = phases.flatMap((p) => PHASE_AGENTS[p as PhaseId] ?? []).filter((agentId) => !isInternalAgent(agentId));
   const exportPermission = getProjectExportPermission(project, {
     adminMode,
     userEmail: user?.email ?? null,
@@ -81,7 +83,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     fallbackMemberId: project.activeAdminId ?? null,
   });
 
-  // gate0 (the SDLC Orchestrator's execution plan) may only be approved by
+  // gate0 (orchestration, token optimization, and AI governance preflight) may only be approved by
   // the project owner or an app admin — no agent past phase0 may run until
   // one of them signs off. Other gates keep their existing, looser behavior
   // (anyone who can reach this modal can approve).
@@ -424,7 +426,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                     canExport={exportPermission.canExport}
                     disabledReason={exportPermission.reason}
                   />
-                  
+
                 </div>
               )}
             </div>

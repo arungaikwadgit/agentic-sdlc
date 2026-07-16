@@ -15,6 +15,13 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import MockupPreview from '../../frontend/src/components/documents/MockupPreview';
 
+vi.mock('../../frontend/src/contexts/ToastContext', () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}));
+vi.mock('../../frontend/src/contexts/AlertContext', () => ({
+  useAlert: () => ({ showAlert: vi.fn() }),
+}));
+
 afterEach(() => vi.restoreAllMocks());
 
 // ─────────────────────────────────────────────────────────────────
@@ -83,8 +90,8 @@ describe('MockupPreview — block label derivation', () => {
       '```html', SIMPLE_HTML, '```',
     ].join('\n');
     const { container } = render(<MockupPreview markdown={md} />);
-    const titles = Array.from(container.querySelectorAll('iframe')).map(f => f.getAttribute('title'));
-    expect(titles).toEqual(['Mockup 1', 'Mockup 2']);
+    const titles = Array.from(container.querySelectorAll('button[title]')).map(b => b.getAttribute('title'));
+    expect(titles).toEqual(expect.arrayContaining(['Mockup 1', 'Mockup 2']));
   });
 
   it('each block uses the most recent heading independently', () => {
@@ -96,8 +103,8 @@ describe('MockupPreview — block label derivation', () => {
       '```html', SIMPLE_HTML, '```',
     ].join('\n');
     const { container } = render(<MockupPreview markdown={md} />);
-    const titles = Array.from(container.querySelectorAll('iframe')).map(f => f.getAttribute('title'));
-    expect(titles).toEqual(['Screen A', 'Screen B']);
+    const titles = Array.from(container.querySelectorAll('button[title]')).map(b => b.getAttribute('title'));
+    expect(titles).toEqual(expect.arrayContaining(['Screen A', 'Screen B']));
   });
 
   it('matches h1 through h6 headings as labels', () => {
@@ -106,8 +113,8 @@ describe('MockupPreview — block label derivation', () => {
       '### H3', '```html', SIMPLE_HTML, '```',
     ].join('\n');
     const { container } = render(<MockupPreview markdown={md} />);
-    const titles = Array.from(container.querySelectorAll('iframe')).map(f => f.getAttribute('title'));
-    expect(titles).toEqual(['H1', 'H3']);
+    const titles = Array.from(container.querySelectorAll('button[title]')).map(b => b.getAttribute('title'));
+    expect(titles).toEqual(expect.arrayContaining(['H1', 'H3']));
   });
 
   it('ignores ```mermaid blocks and does not count them as mockups', () => {
@@ -190,14 +197,14 @@ describe('MockupPreview — applyStyleOverrides', () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
 
-    await userEvent.click(screen.getByTitle('Ocean'));
+    await userEvent.click(screen.getByTitle('Ocean (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-secondary: #00b4d8');
     expect(srcDoc).toContain('--color-text: #1a2533');
   });
 
-  it('applies overrides to every iframe simultaneously', () => {
+  it('keeps style overrides isolated to the selected version', async () => {
     const md = htmlMd([
       { heading: 'Screen 1', code: SIMPLE_HTML },
       { heading: 'Screen 2', code: SIMPLE_HTML },
@@ -206,11 +213,10 @@ describe('MockupPreview — applyStyleOverrides', () => {
 
     const swatches = container.querySelectorAll('input[type="color"]');
     fireEvent.change(swatches[0], { target: { value: '#123456' } });
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).toContain('--color-primary: #123456');
 
-    const iframes = container.querySelectorAll('iframe');
-    iframes.forEach((iframe) => {
-      expect(iframe.getAttribute('srcdoc')).toContain('--color-primary: #123456');
-    });
+    await userEvent.click(screen.getByTitle('Screen 2'));
+    expect(container.querySelector('iframe')?.getAttribute('srcdoc')).not.toContain('--color-primary: #123456');
   });
 });
 
@@ -256,21 +262,21 @@ describe('MockupPreview — viewport switcher', () => {
 // 5. Palette presets
 // ─────────────────────────────────────────────────────────────────
 describe('MockupPreview — palette presets', () => {
-  const EXPECTED_PRESETS = ['Original', 'Ocean', 'Forest', 'Sunset', 'Violet', 'Rose', 'Dark'];
+  const EXPECTED_PRESETS = ['Original', 'Ocean', 'Forest', 'Sunset', 'Violet', 'Rose', 'Slate'];
 
   it('renders all 7 palette preset buttons', () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     render(<MockupPreview markdown={md} />);
     // The preset label row shows all names in a text node
     for (const label of EXPECTED_PRESETS) {
-      expect(screen.getByTitle(label)).toBeInTheDocument();
+      expect(screen.getByTitle(label + ' (Version A)')).toBeInTheDocument();
     }
   });
 
   it('Ocean preset sets primary to #0077b6', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Ocean'));
+    await userEvent.click(screen.getByTitle('Ocean (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-primary: #0077b6');
@@ -279,7 +285,7 @@ describe('MockupPreview — palette presets', () => {
   it('Forest preset sets primary to #2d6a4f', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Forest'));
+    await userEvent.click(screen.getByTitle('Forest (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-primary: #2d6a4f');
@@ -288,7 +294,7 @@ describe('MockupPreview — palette presets', () => {
   it('Sunset preset sets primary to #e85d04', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Sunset'));
+    await userEvent.click(screen.getByTitle('Sunset (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-primary: #e85d04');
@@ -297,7 +303,7 @@ describe('MockupPreview — palette presets', () => {
   it('Violet preset sets primary to #6d28d9', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Violet'));
+    await userEvent.click(screen.getByTitle('Violet (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-primary: #6d28d9');
@@ -306,19 +312,19 @@ describe('MockupPreview — palette presets', () => {
   it('Rose preset sets primary to #be123c', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Rose'));
+    await userEvent.click(screen.getByTitle('Rose (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-primary: #be123c');
   });
 
-  it('Dark preset sets surface to #0f172a', async () => {
+  it('Slate preset sets surface to #f8fafc', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Dark'));
+    await userEvent.click(screen.getByTitle('Slate (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
-    expect(srcDoc).toContain('--color-surface: #0f172a');
+    expect(srcDoc).toContain('--color-surface: #f8fafc');
   });
 
   it('Original preset clears all color overrides (primary becomes blank)', async () => {
@@ -326,8 +332,8 @@ describe('MockupPreview — palette presets', () => {
     const { container } = render(<MockupPreview markdown={md} />);
 
     // Apply Ocean first, then reset to Original
-    await userEvent.click(screen.getByTitle('Ocean'));
-    await userEvent.click(screen.getByTitle('Original'));
+    await userEvent.click(screen.getByTitle('Ocean (Version A)'));
+    await userEvent.click(screen.getByTitle('Original (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).not.toContain('--color-primary:');
@@ -336,7 +342,7 @@ describe('MockupPreview — palette presets', () => {
   it('each preset also sets secondary and text colors', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
-    await userEvent.click(screen.getByTitle('Ocean'));
+    await userEvent.click(screen.getByTitle('Ocean (Version A)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--color-secondary: #00b4d8');
@@ -353,14 +359,14 @@ describe('MockupPreview — palette presets', () => {
 describe('MockupPreview — font family selector', () => {
   it('renders the "Aa" font menu toggle button', () => {
     render(<MockupPreview markdown={htmlMd([{ code: SIMPLE_HTML }])} />);
-    expect(screen.getByTitle('Font family')).toBeInTheDocument();
+    expect(screen.getByTitle('Font family (active version)')).toBeInTheDocument();
   });
 
   it('selecting Roboto injects --font-family into the iframe', async () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
 
-    await userEvent.click(screen.getByTitle('Font family'));
+    await userEvent.click(screen.getByTitle('Font family (active version)'));
     await userEvent.click(screen.getByText('Roboto'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
@@ -372,9 +378,9 @@ describe('MockupPreview — font family selector', () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
 
-    await userEvent.click(screen.getByTitle('Font family'));
+    await userEvent.click(screen.getByTitle('Font family (active version)'));
     await userEvent.click(screen.getByText('Roboto'));
-    await userEvent.click(screen.getByTitle('Font family'));
+    await userEvent.click(screen.getByTitle('Font family (active version)'));
     await userEvent.click(screen.getByText('Use original'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
@@ -385,7 +391,7 @@ describe('MockupPreview — font family selector', () => {
     const md = htmlMd([{ code: SIMPLE_HTML }]);
     const { container } = render(<MockupPreview markdown={md} />);
 
-    await userEvent.click(screen.getByTitle('Font family'));
+    await userEvent.click(screen.getByTitle('Font family (active version)'));
     await userEvent.click(screen.getByText('Georgia (Serif)'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
@@ -440,7 +446,7 @@ describe('MockupPreview — border radius slider', () => {
 describe('MockupPreview — reset button', () => {
   it('renders the reset button', () => {
     render(<MockupPreview markdown={htmlMd([{ code: SIMPLE_HTML }])} />);
-    expect(screen.getByTitle('Reset all style overrides')).toBeInTheDocument();
+    expect(screen.getByTitle('Reset style for Version A')).toBeInTheDocument();
   });
 
   it('clicking reset clears all color overrides', async () => {
@@ -448,10 +454,10 @@ describe('MockupPreview — reset button', () => {
     const { container } = render(<MockupPreview markdown={md} />);
 
     // Apply Ocean palette
-    await userEvent.click(screen.getByTitle('Ocean'));
+    await userEvent.click(screen.getByTitle('Ocean (Version A)'));
 
     // Now reset (resets back to DEFAULT_STYLE: colors blank, radius/spacing 8, font blank)
-    await userEvent.click(screen.getByTitle('Reset all style overrides'));
+    await userEvent.click(screen.getByTitle('Reset style for Version A'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).not.toContain('--color-primary:');
@@ -468,7 +474,7 @@ describe('MockupPreview — reset button', () => {
     const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
     fireEvent.change(slider, { target: { value: '24' } });
 
-    await userEvent.click(screen.getByTitle('Reset all style overrides'));
+    await userEvent.click(screen.getByTitle('Reset style for Version A'));
 
     const srcDoc = (container.querySelector('iframe') as HTMLIFrameElement).getAttribute('srcdoc') ?? '';
     expect(srcDoc).toContain('--radius: 8px');
@@ -480,14 +486,17 @@ describe('MockupPreview — reset button', () => {
 // 10. Iframe attributes
 // ─────────────────────────────────────────────────────────────────
 describe('MockupPreview — iframe attributes', () => {
-  it('renders one iframe per html block', () => {
+  it('renders one active iframe and a tab per html block', () => {
     const md = htmlMd([
       { heading: 'A', code: SIMPLE_HTML },
       { heading: 'B', code: SIMPLE_HTML },
       { heading: 'C', code: SIMPLE_HTML },
     ]);
     const { container } = render(<MockupPreview markdown={md} />);
-    expect(container.querySelectorAll('iframe')).toHaveLength(3);
+    expect(container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(screen.getAllByTitle('A').length).toBeGreaterThan(0);
+    expect(screen.getByTitle('B')).toBeInTheDocument();
+    expect(screen.getByTitle('C')).toBeInTheDocument();
   });
 
   it('each iframe has sandbox="allow-scripts"', () => {
@@ -554,9 +563,9 @@ describe('MockupPreview — color picker inputs', () => {
     expect(screen.getByText('Primary')).toBeInTheDocument();
   });
 
-  it('Surface label is present', () => {
+  it('background label is present', () => {
     render(<MockupPreview markdown={htmlMd([{ code: SIMPLE_HTML }])} />);
-    expect(screen.getByText('Surface')).toBeInTheDocument();
+    expect(screen.getByText('Bg')).toBeInTheDocument();
   });
 });
 
@@ -582,7 +591,8 @@ describe('MockupPreview — fence parsing edge cases', () => {
       '```html', SIMPLE_HTML, '```',
     ].join('\n');
     const { container } = render(<MockupPreview markdown={md} />);
-    expect(container.querySelectorAll('iframe')).toHaveLength(2);
+    expect(container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(screen.getByTitle('Mockup 2')).toBeInTheDocument();
   });
 
   it('trims leading/trailing whitespace from extracted code', () => {

@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useState, useEffect } from 'react';
@@ -355,7 +355,7 @@ function ProjectTable({ projects, isAppAdmin, showArchived, onOpenProject, onDet
     <div className={styles.tableWrap}>
       <table className={styles.projectTable} aria-label="Projects">
         <thead>
-          <tr><th>Project</th><th>Domain</th><th>Status</th><th>Progress</th><th>Updated</th><th>Actions</th></tr>
+          <tr><th>Project</th><th>Created by</th><th>Domain</th><th>Status</th><th>Progress</th><th>Updated</th><th>Actions</th></tr>
         </thead>
         <tbody>
           {projects.map((project) => {
@@ -365,6 +365,10 @@ function ProjectTable({ projects, isAppAdmin, showArchived, onOpenProject, onDet
             return (
               <tr key={project.id}>
                 <td><button className={styles.projectLink} onClick={() => onOpenProject(project.id)}>{project.name}</button></td>
+                <td>
+                  <strong className={styles.creatorName}>{project.creatorName ?? 'Unknown creator'}</strong>
+                  {project.creatorRole && <span className={styles.creatorRole}>{project.creatorRole}</span>}
+                </td>
                 <td>{String(project.domain)}</td>
                 <td><span className={styles.statusText}>{project.status}</span></td>
                 <td>

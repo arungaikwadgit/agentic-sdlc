@@ -47,12 +47,19 @@ vi.mock('../../frontend/src/agents/promptDefaults', () => ({
 // the rest of the file's top-level statements. A plain `const callAgentMock` closed
 // over by the factory below hits it before initialization. vi.hoisted() runs at the
 // same hoisted point as vi.mock(), so callAgentMock exists before the factory needs it.
-const { callAgentMock } = vi.hoisted(() => ({
+const { callAgentMock, runL3AgentMock } = vi.hoisted(() => ({
   callAgentMock: vi.fn(async () => ({
     choices: [{ message: { content: 'mock output' }, finish_reason: 'stop' }],
     usage: { total_tokens: 10 },
     provider: 'openai' as const,
     model: 'gpt-4o',
+  })),
+  runL3AgentMock: vi.fn(async () => ({
+    output: 'l3 mock output',
+    tokensUsed: 42,
+    provider: 'openai' as const,
+    model: 'gpt-4o',
+    l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 2 },
   })),
 }));
 
@@ -73,13 +80,11 @@ vi.mock('../../frontend/src/services/runtimeApi', () => ({
 // l3Runtime — we mock it to avoid the 1500ms delay and real LLM calls in most tests.
 // For truncation tests we test the pure helper functions directly (imported separately).
 vi.mock('../../frontend/src/services/l3Runtime', () => ({
-  runL3Agent: vi.fn(async () => ({
-    output: 'l3 mock output',
-    tokensUsed: 42,
-    provider: 'openai' as const,
-    model: 'gpt-4o',
-    l3Meta: { iterations: 2, toolCallCount: 3, truncatedTurns: 0 },
-  })),
+  runL3Agent: runL3AgentMock,
+}));
+
+vi.mock('../../frontend/src/services/lifecycleEvents', () => ({
+  emitLifecycleEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { runSingleAgent } from '../../frontend/src/services/pipelineEngine';
@@ -115,12 +120,12 @@ describe('runSingleAgent — basic execution', () => {
   beforeEach(() => {
     mockProject = freshProject();
     vi.clearAllMocks();
-    // Default: L2 path (no tools on sdlcOrchestrator)
-    callAgentMock.mockResolvedValue({
-      choices: [{ message: { content: 'completed output' }, finish_reason: 'stop' }],
-      usage: { total_tokens: 10 },
+    runL3AgentMock.mockResolvedValue({
+      output: 'completed output',
+      tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
     });
   });
 
@@ -144,8 +149,8 @@ describe('runSingleAgent — basic execution', () => {
     expect(mockProject.agentRuns['sdlcOrchestrator']?.status).toBe('complete');
   });
 
-  it('calls onError and sets status "error" when callAgent throws', async () => {
-    callAgentMock.mockRejectedValueOnce(new Error('Network timeout'));
+  it('calls onError and sets status "error" when L3 execution throws', async () => {
+    runL3AgentMock.mockRejectedValueOnce(new Error('Network timeout'));
     const onError = vi.fn();
 
     await runSingleAgent('proj-test', 'sdlcOrchestrator', 'sys', { onError });
@@ -155,7 +160,7 @@ describe('runSingleAgent — basic execution', () => {
   });
 
   it('does not throw when onError is not provided (error is swallowed)', async () => {
-    callAgentMock.mockRejectedValueOnce(new Error('boom'));
+    runL3AgentMock.mockRejectedValueOnce(new Error('boom'));
     await expect(
       runSingleAgent('proj-test', 'sdlcOrchestrator', 'sys', {})
     ).resolves.toBeUndefined();
@@ -166,11 +171,12 @@ describe('runSingleAgent — providerOverride (B2)', () => {
   beforeEach(() => {
     mockProject = freshProject();
     vi.clearAllMocks();
-    callAgentMock.mockResolvedValue({
-      choices: [{ message: { content: 'done' }, finish_reason: 'stop' }],
-      usage: { total_tokens: 5 },
+    runL3AgentMock.mockResolvedValue({
+      output: 'done',
+      tokensUsed: 5,
       provider: 'openai' as const,
       model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
     });
   });
 
@@ -184,9 +190,10 @@ describe('runSingleAgent — providerOverride (B2)', () => {
       { providerOverride: 'claude' },
     );
 
-    // callAgent is called with provider: 'claude'
-    expect(callAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'claude' })
+    expect(runL3AgentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ provider: 'claude' }),
     );
   });
 
@@ -200,9 +207,8 @@ describe('runSingleAgent — providerOverride (B2)', () => {
       { providerOverride: 'auto' },
     );
 
-    // provider key should be absent or undefined (not 'auto')
-    const callArgs = callAgentMock.mock.calls[0][0] as Record<string, unknown>;
-    expect(callArgs.provider).toBeUndefined();
+    const options = runL3AgentMock.mock.calls[0][2];
+    expect(options.provider).toBeUndefined();
   });
 
   it('passes providerOverride="openai" to callAgent when set', async () => {
@@ -215,8 +221,10 @@ describe('runSingleAgent — providerOverride (B2)', () => {
       { providerOverride: 'openai' },
     );
 
-    expect(callAgentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'openai' })
+    expect(runL3AgentMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ provider: 'openai' }),
     );
   });
 });
@@ -231,17 +239,17 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
 
   it('keeps original output when it already has enough html blocks', async () => {
     const twoBlockOutput = '```html\n<html>v1</html>\n```\n\n```html\n<html>v2</html>\n```';
-    callAgentMock.mockResolvedValueOnce({
-      choices: [{ message: { content: twoBlockOutput }, finish_reason: 'stop' }],
-      usage: { total_tokens: 10 },
+    runL3AgentMock.mockResolvedValueOnce({
+      output: twoBlockOutput,
+      tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
     });
 
     await runSingleAgent('proj-test', 'uxMockups', 'sys', {});
 
-    // Only 1 callAgent call — corrective retry NOT triggered
-    expect(callAgentMock).toHaveBeenCalledTimes(1);
+    expect(callAgentMock).not.toHaveBeenCalled();
     expect(mockProject.agentRuns['uxMockups']?.output).toContain('```html');
   });
 
@@ -249,25 +257,23 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
     const oneBlockOutput = '```html\n<html>v1 only</html>\n```';
     const twoBlockOutput = '```html\n<html>v1</html>\n```\n\n```html\n<html>v2</html>\n```';
 
-    // First call returns only 1 block; corrective retry returns 2
-    callAgentMock
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: oneBlockOutput }, finish_reason: 'stop' }],
-        usage: { total_tokens: 10 },
-        provider: 'openai' as const,
-        model: 'gpt-4o',
-      })
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: twoBlockOutput }, finish_reason: 'stop' }],
-        usage: { total_tokens: 20 },
-        provider: 'openai' as const,
-        model: 'gpt-4o',
-      });
+    runL3AgentMock.mockResolvedValueOnce({
+      output: oneBlockOutput,
+      tokensUsed: 10,
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+    });
+    callAgentMock.mockResolvedValueOnce({
+      choices: [{ message: { content: twoBlockOutput }, finish_reason: 'stop' }],
+      usage: { total_tokens: 20 },
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+    });
 
     await runSingleAgent('proj-test', 'uxMockups', 'sys', {});
 
-    // 2 callAgent calls — original + corrective
-    expect(callAgentMock).toHaveBeenCalledTimes(2);
+    expect(callAgentMock).toHaveBeenCalledTimes(1);
     // Final stored output is the corrected 2-block version
     expect(mockProject.agentRuns['uxMockups']?.output).toBe(twoBlockOutput);
   });
@@ -275,20 +281,19 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
   it('keeps original output when corrective retry also fails to improve block count', async () => {
     const oneBlockOutput = '```html\n<html>only one</html>\n```';
 
-    callAgentMock
-      .mockResolvedValueOnce({
-        choices: [{ message: { content: oneBlockOutput }, finish_reason: 'stop' }],
-        usage: { total_tokens: 10 },
-        provider: 'openai' as const,
-        model: 'gpt-4o',
-      })
-      .mockResolvedValueOnce({
-        // Retry also returns only 1 block — no improvement
-        choices: [{ message: { content: oneBlockOutput }, finish_reason: 'stop' }],
-        usage: { total_tokens: 10 },
-        provider: 'openai' as const,
-        model: 'gpt-4o',
-      });
+    runL3AgentMock.mockResolvedValueOnce({
+      output: oneBlockOutput,
+      tokensUsed: 10,
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+    });
+    callAgentMock.mockResolvedValueOnce({
+      choices: [{ message: { content: oneBlockOutput }, finish_reason: 'stop' }],
+      usage: { total_tokens: 10 },
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+    });
 
     const onComplete = vi.fn();
     await runSingleAgent('proj-test', 'uxMockups', 'sys', { onComplete });
@@ -296,6 +301,39 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
     // onComplete still called — failure to improve is non-fatal
     expect(onComplete).toHaveBeenCalled();
     expect(mockProject.agentRuns['uxMockups']?.output).toBe(oneBlockOutput);
+  });
+});
+
+describe('runSingleAgent — architecture diagram corrective check', () => {
+  beforeEach(() => {
+    mockProject = freshProject();
+    vi.clearAllMocks();
+    callAgentMock.mockReset();
+  });
+
+  it('retries and stores a complete four-diagram ADD when L3 output is incomplete', async () => {
+    const corrected = [
+      '## Architecture',
+      '```mermaid\nflowchart LR\nA-->B\n```',
+      '```mermaid\nflowchart TB\nC-->D\n```',
+      '```mermaid\nflowchart LR\nE-->F\n```',
+      '```mermaid\nsequenceDiagram\nA->>B: Request\n```',
+    ].join('\n\n');
+    callAgentMock.mockResolvedValueOnce({
+      choices: [{ message: { content: corrected }, finish_reason: 'stop' }],
+      usage: { total_tokens: 20 },
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+    });
+
+    await runSingleAgent('proj-test', 'architecture', 'LATEST EDITED ARCHITECTURE PROMPT', {});
+
+    expect(callAgentMock).toHaveBeenCalledTimes(1);
+    expect(callAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      systemPrompt: 'LATEST EDITED ARCHITECTURE PROMPT',
+      agentId: 'architecture',
+    }));
+    expect(mockProject.agentRuns.architecture?.output).toBe(corrected);
   });
 });
 

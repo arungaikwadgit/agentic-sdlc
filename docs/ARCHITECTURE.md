@@ -1,4 +1,26 @@
-# Architecture Decision Records
+# Agentic SDLC Architecture
+
+Last updated: 2026-07-14
+
+This document describes the current main-branch implementation of Agentic SDLC:
+a Postgres-backed, API-mediated, multi-service agentic delivery platform.
+
+![Agentic SDLC current implementation architecture](architecture/assets/current-implementation-architecture.svg)
+
+## Current Implementation Snapshot
+
+| Area | Current implementation |
+|------|------------------------|
+| Frontend | React + Vite SPA deployed on Vercel. The browser is a thin client for project/app/runtime data. |
+| API gateway / LLM proxy | `backend/src/proxy.js` on Railway. Owns LLM calls, app-state APIs, master catalog API, invite/session APIs, CORS, rate limiting, and selected forwarding to the project API server. |
+| Project/admin API | `server/src/` on Railway. Owns authenticated project CRUD, app-admin checks, project permissions, and canonical `team_members` role access. |
+| Runtime API | `backend/src/index.ts` on Railway. Owns agent runs, jobs, memory records, action proposals, rollback logs, `/health`, and `/ready`. |
+| Identity | Supabase Auth JWT is the production identity mechanism. Local admin bypass exists only outside production. Invite sessions are project-scoped. |
+| Data plane | Supabase Postgres is authoritative for projects, memberships, runtime records, app-state, integrations, backlog, master catalogs, and invite data. |
+| Agent orchestration | The frontend pipeline engine still initiates phase execution and agent reruns, while runtime services persist run/job/memory telemetry. |
+| LLM providers | OpenAI is the default backend provider. Claude and OpenAI-compatible model catalog entries are routed server-side when enabled. |
+
+## Architecture Decision Records
 
 ## ADR-001: Postgres is the single source of truth
 
@@ -80,7 +102,7 @@ flowchart LR
 - `projectRepository.ts` loads and saves projects through backend APIs.
 - App-wide mutable state such as theme, model, prompt defaults, domain defaults, integration credentials, and backlog items persists through proxy-backed Postgres tables.
 - Master catalogs such as phases, review gates, agents, domains, and role templates are served from Postgres through the proxy catalog API.
-- Invite access is project-scoped, accepted once, and resolved server-side through `team_members` plus `invite_sessions`. Invite creation/revocation is restricted to app Admins and that project's Owner (`authorizeInviteAction()` in `backend/src/proxy.js`); the invite token itself is never stored in plaintext — only its SHA-256 hash (`team_members.invite_token_hash`) — see `docs/security-review-2026-07-05.md`.
+- Invite access is project-scoped, accepted once, and resolved server-side through `team_members` plus `invite_sessions`. Invite creation/revocation is restricted to app Admins and that project's Owner (`authorizeInviteAction()` in `backend/src/proxy.js`); the invite token itself is never stored in plaintext â€” only its SHA-256 hash (`team_members.invite_token_hash`) â€” see `docs/security-review-2026-07-05.md`.
 - The runtime API stores agent runs, jobs, memory records, and action proposals in Postgres.
 
 ### Data ownership and API flow
@@ -122,6 +144,14 @@ flowchart TB
 Master catalogs are no longer part of the gap list: they are modeled as Postgres-backed tables with API hydration. The remaining client-local items above are browser convenience state only, not the authoritative source of project or admin data.
 
 ---
+
+## Combined Architecture and Agentic Flow
+
+This diagram combines the platform architecture with the generated agentic flow so one view shows the cloud services, Postgres data plane, SDLC Orchestrator, Gate 0 negative workflow, downstream phase chain, and L3 thinking loop.
+
+![Agentic SDLC combined architecture and agentic flow](architecture/assets/agentic-sdlc-architecture-with-agent-flow.png)
+
+Use the detailed agent-flow appendix for implementation-level diagrams: [AGENTIC_AGENT_FLOW.md](architecture/AGENTIC_AGENT_FLOW.md) and [AGENT_FLOW_CATALOG.md](architecture/AGENT_FLOW_CATALOG.md).
 
 ## Master Catalog Tables
 
@@ -202,3 +232,66 @@ Parallel tiers run with bounded concurrency. Dependency tiers were split so agen
 | `RUNTIME_API_TOKEN` | runtime env | Secret - runtime API protection |
 
 The frontend never holds secret provider keys, proxy shared secrets, or production admin credentials. All LLM calls, app-state writes, project CRUD, and invite flows go through backend services, with Postgres as the authoritative store.
+
+---
+
+## Operational Verification Checklist
+
+Use these checks when validating the deployed architecture:
+
+| Check | Expected result |
+|------|-----------------|
+| Frontend URL | Vercel SPA loads and initializes the master catalog without a catalog error. |
+| Proxy health | `GET https://agentic-sdlc-production.up.railway.app/api/health` returns `status: ok`, selected model, and provider flags. |
+| Project/admin API | `GET /api/projects/permissions/me` succeeds only with a valid Supabase JWT or approved local-dev bypass. |
+| Runtime health | Runtime `/health` returns 200; `/ready` confirms Postgres connectivity. |
+| Master catalog | `GET /api/master-data/catalog` returns phases, agents, review gates, domains, and role templates from Postgres-backed tables. |
+| Project CRUD | Create, list, update, archive, and restore project flows call backend APIs and persist in Supabase Postgres. |
+| Invite flow | Invite links are project-scoped, non-admin by default, and resolved through backend invite/session APIs. |
+| Agent calls | Frontend agent execution calls the proxy; provider keys are never exposed to the browser. |
+
+## Architecture Documentation and Diagram Skill Recommendations
+
+| Need | Recommended skill | Why |
+|------|-------------------|-----|
+| Architecture review and target-state design | `engineering:architecture` | Best fit for validating system boundaries, data ownership, deployment topology, and tradeoffs. |
+| Implementation plan before code/docs changes | `superpowers:writing-plans` | Produces step-by-step implementation plans with files, validation, and acceptance criteria. |
+| Code-level safety review | `engineering:code-review` | Best fit for security, correctness, performance, and maintainability findings. |
+| Polished document output | `anthropic-skills:docx` or `documents:documents` | Best for creating stakeholder-ready architecture documents beyond Markdown. |
+| Diagram as an image | `visualize:visualize` or `figma:figma-generate-diagram` | Best when the diagram must be a rendered image instead of Mermaid text. Use `figma` for presentation-grade editable diagrams and `visualize` for fast static diagrams. |
+| Deployment architecture validation | `engineering:deploy-checklist` | Best for checking env vars, health endpoints, CORS, and production readiness. |
+
+For future executive architecture packs, the recommended sequence is: `engineering:architecture` -> `visualize:visualize` or `figma:figma-generate-diagram` -> `anthropic-skills:docx`/`pptx`.
+
+---
+
+## Agentic Agent Flow
+
+The following diagram shows how the SDLC Orchestrator starts the pipeline, what happens when Gate 0 is not approved, and how downstream L3-enabled agents perform input -> planning -> thinking loop -> output behavior.
+
+![Agentic SDLC agentic agent flow and negative workflow](architecture/assets/professional-10-agentic-agent-flow.png)
+
+See the detailed Mermaid source and explanation in [AGENTIC_AGENT_FLOW.md](architecture/AGENTIC_AGENT_FLOW.md), and the per-agent input/planning/output catalog in [AGENT_FLOW_CATALOG.md](architecture/AGENT_FLOW_CATALOG.md).
+
+
+## Background Optimization and AI Governance Lifecycle
+
+The Token Optimizer Agent and AI Governance Agent are internal agents. They are not rendered in the normal workspace, review-gate artifact tabs, progress totals, or user exports. Their latest results remain in `projects.data.agentRuns`, while each execution is retained as an append-only `agent_runs` record for admin audit.
+
+```mermaid
+flowchart LR
+  UI["Authenticated frontend"] -->|agent completion / rerun| PX["Proxy API"]
+  CFG["Prompt, model, or domain-data change"] --> PX
+  PX -->|X-API-Token| LE["Runtime lifecycle API"]
+  LE --> EV[("lifecycle_events")]
+  LE --> JOB[("agent_jobs")]
+  JOB --> WK["Durable lifecycle worker"]
+  WK -->|server-to-server LLM call| PX
+  WK --> RUN[("agent_runs audit history")]
+  WK --> LATEST[("projects.data latest assessment")]
+  SCH["Opt-in scheduled review"] --> LE
+```
+
+Lifecycle events are idempotent per project and event key. Jobs are claimed atomically with `FOR UPDATE SKIP LOCKED`, retry with backoff, and stop after the configured retry limit. When the browser does not provide context, the runtime resolves the active governed prompt, project state, and master-agent metadata from Postgres. Scheduled reviews are disabled by default and require `BACKGROUND_SCHEDULED_REVIEW_HOURS` to avoid unapproved recurring model spend.
+
+Deployment requires migration `009_background_agent_lifecycle.sql`. The proxy service requires `RUNTIME_API_URL` and `RUNTIME_API_TOKEN`; the runtime requires `PROXY_API_URL`, `PROXY_TOKEN`, and `BACKGROUND_WORKER_ENABLED=true`.

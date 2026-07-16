@@ -1,5 +1,5 @@
 /*
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 .card {
@@ -34,6 +34,18 @@
   color: var(--text);
   line-height: 1.3;
 }
+
+.creator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.creator strong { color: var(--text); font-weight: 600; }
+.creatorRole { padding: 1px 6px; border-radius: 999px; background: var(--surface2); color: var(--accent); }
 
 .status {
   display: flex;

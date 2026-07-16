@@ -1,11 +1,11 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { updateProject, updateAgentRun } from '@/db/projectRepository';
 import { PipelineEngine, runSingleAgent } from '@/services/pipelineEngine';
-import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE, TOTAL_AGENTS } from '@/agents/constants';
+import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getPromptDefaults } from '@/agents/promptDefaults';
 import { api } from '@/services/api';
@@ -29,12 +29,13 @@ import { useProject } from '@/hooks/useProject';
 import { useAuth } from '@/contexts/AuthContext';
 import { exportTraceabilityCSV } from '@/services/traceability';
 import { checkPromptInjection } from '@/utils/sanitize';
+import { activateProjectPromptOverride, getGovernedEffectivePrompt } from '@/services/promptGovernance';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
-import { getUnassignedAgents, computeSkippedAgentIdsAfterConfirm } from '@/lib/agentEnablement';
+import { getUnassignedAgents, computeSkippedAgentIdsAfterConfirm, getUserVisibleAgentIds, isInternalAgent } from '@/lib/agentEnablement';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
@@ -43,13 +44,13 @@ import styles from './ProjectWorkspace.module.css';
 // ── Gate locking ──────────────────────────────────────────────────────────────
 // Maps gate → last phase covered by the gate. Phases AFTER this phase are
 // locked until the gate is approved. Must stay in sync with REVIEW_GATES.
-// gate0 (plan approval) is intentionally NOT listed here. Unlike gate1-gate5,
+// gate0 (governed preflight approval) is intentionally NOT listed here. Unlike gate1-gate5,
 // gate0 didn't exist for projects created before it shipped, so any such
 // project's reviewGates has no gate0 entry — if gate0 were included in this
 // map, getLockedPhases() below would treat that as "unapproved" and lock
 // EVERY phase after phase0 for every pre-existing project, including ones
 // already complete. The real safety guarantee (no agent past phase0 runs
-// without gate0 approval) is already enforced at the engine level by
+// without gate0 approval) is already enforced at the engine level after phase0b by
 // pipelineEngine.ts's GATE_AFTER_PHASE_INDEX.gate0 — clicking "Run" on a
 // locked-by-engine phase still correctly pops the approval modal via
 // onGateReached('gate0'). This map only controls the pre-emptive padlock
@@ -627,6 +628,9 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         {
           onComplete: async (output: string) => {
             agentSucceeded = true;
+            if (agentIdToRun === 'architecture' && hasMermaid(output)) {
+              setDocViewMode('preview');
+            }
             // CSS post-processing for workingPrototype: inject selected style vars into HTML blocks
             if (capturedStyleSelection && output) {
               const { style } = capturedStyleSelection;
@@ -852,7 +856,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   });
   const canExportArtifacts = exportPermission.canExport;
   const exportDisabledReason = exportPermission.reason;
-  const allAgentIds = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
+  const allAgentIds = getUserVisibleAgentIds();
   const teamReady = members.length > 0;
   const lockedPhases = getLockedPhases(project);
   const selectedRun = selectedAgent ? project.agentRuns[selectedAgent] : null;
@@ -949,7 +953,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             if (completedCount === 0 && !engineRunning) return null;
             return (
               <span className={styles.progressCounter + (engineRunning ? ' ' + styles.running : '')}>
-                {completedCount}/{TOTAL_AGENTS}
+                {completedCount}/{allAgentIds.length}
               </span>
             );
           })()}
@@ -1057,8 +1061,8 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               You can run the agents assigned to you, once the phases before them are complete. Every other agent is view-only.
             </div>
           )}
-          {PHASE_ORDER.map((phase) => {
-            const agents = PHASE_AGENTS[phase];
+          {PHASE_ORDER.filter((phase) => PHASE_AGENTS[phase].some((agentId) => !isInternalAgent(agentId))).map((phase) => {
+            const agents = PHASE_AGENTS[phase].filter((agentId) => !isInternalAgent(agentId));
             const allComplete = agents.every((a) => {
               const s = project.agentRuns[a]?.status;
               return s === 'complete' || s === 'skipped';

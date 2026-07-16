@@ -17,7 +17,16 @@ describe('invite default-password provisioning', () => {
   beforeEach(() => {
     jest.resetModules();
     jest.dontMock('@supabase/supabase-js');
-    process.env = { ...ORIGINAL_ENV, PORT: '0', RESEND_API_KEY: '', RESEND_FROM_EMAIL: '', POSTGRES_URL: '', POSTGRES_URL_LOCAL: '' };
+    process.env = {
+      ...ORIGINAL_ENV,
+      PORT: '0',
+      RESEND_API_KEY: '',
+      RESEND_FROM_EMAIL: '',
+      POSTGRES_URL: '',
+      POSTGRES_URL_LOCAL: '',
+      POSTGRES_URL_PRODUCTION: '',
+      DATABASE_URL: '',
+    };
   });
 
   afterAll(() => {

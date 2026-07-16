@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -470,6 +470,40 @@ export const getAvailableModelsTool: AgentTool = {
   },
 };
 
+// ─── Tool: get_token_usage_summary ───────────────────────────────────────────
+export const getTokenUsageSummaryTool: AgentTool = {
+  name: 'get_token_usage_summary',
+  description:
+    'Return read-only token, provider, and model telemetry for agent runs in this project. ' +
+    'Use it to establish a measurable baseline before recommending prompt, context, model, or workflow optimizations.',
+  inputSchema: { type: 'object', properties: {} },
+  execute: async (_args, ctx) => {
+    const runs = ctx.agentRunMetrics ?? [];
+    const totalTokens = runs.reduce((sum, run) => sum + Math.max(0, run.tokensUsed || 0), 0);
+    return {
+      found: runs.length > 0,
+      totalTokens,
+      measuredRuns: runs.length,
+      runs,
+    };
+  },
+};
+
+// ─── Tool: get_governance_snapshot ────────────────────────────────────────────
+export const getGovernanceSnapshotTool: AgentTool = {
+  name: 'get_governance_snapshot',
+  description:
+    'Return a read-only governance evidence inventory: review-gate state, prompt override scope, ' +
+    'context-document metadata, and project-creation approval metadata. It never exposes hidden prompts, secrets, or document content.',
+  inputSchema: { type: 'object', properties: {} },
+  execute: async (_args, ctx) => {
+    if (!ctx.governanceSnapshot) {
+      return { found: false, message: 'No governance snapshot was provided for this project.' };
+    }
+    return { found: true, snapshot: ctx.governanceSnapshot };
+  },
+};
+
 // ─── Convenience bundles ──────────────────────────────────────────────────────
 
 /** Full tool set for document-producing agents (all tools) */
@@ -515,4 +549,24 @@ export const RESEARCH_TOOLS: AgentTool[] = [
   getAgentOutputTool,
   getDomainContextTool,
   getTeamRosterTool,
+];
+
+/** Governed preflight tools for measurable cost optimization. */
+export const OPTIMIZATION_TOOLS: AgentTool[] = [
+  getAgentOutputTool,
+  getAgentCatalogTool,
+  getAvailableModelsTool,
+  getTokenUsageSummaryTool,
+  validateOutputCompletenessTool,
+];
+
+/** Governed preflight tools for evidence-based AI risk assessment. */
+export const GOVERNANCE_TOOLS: AgentTool[] = [
+  getAgentOutputTool,
+  getGovernanceSnapshotTool,
+  getTeamRosterTool,
+  getDomainContextTool,
+  getAgentCatalogTool,
+  getPhaseRulesTool,
+  validateOutputCompletenessTool,
 ];

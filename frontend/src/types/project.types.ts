@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import type { AgentId, AgentRun, PhaseId, ClarifyingAnswer } from './agent.types';
@@ -225,6 +225,9 @@ export interface Project {
    * and are always visible (backward-compatible).
    */
   ownerId?: string;
+  creatorName?: string;
+  creatorEmail?: string;
+  creatorRole?: string;
   owner?: string;
   team?: string;
   projectType?: ProjectType;
@@ -301,6 +304,9 @@ export interface ProjectSummary {
   updatedAt: number;
   completedAgents: number;
   totalAgents: number;
+  creatorName?: string;
+  creatorEmail?: string;
+  creatorRole?: string;
   archived?: boolean;
   archivedReason?: string;
   archivedAt?: number;

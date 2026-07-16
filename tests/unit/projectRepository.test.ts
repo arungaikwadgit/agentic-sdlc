@@ -36,6 +36,9 @@ interface FakeRow {
   data: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  creator_name?: string;
+  creator_email?: string;
+  creator_role?: string;
 }
 
 const rows = new Map<string, FakeRow>();
@@ -270,6 +273,23 @@ describe('projectRepository', () => {
 
       expect(summary.completedAgents).toBe(2);
       expect(summary.totalAgents).toBeGreaterThan(0);
+    });
+
+    it('maps creator metadata from the backend into project summaries', async () => {
+      const project = await createProject(baseProjectData());
+      Object.assign(rows.get(project.id)!, {
+        creator_name: 'Priya Owner',
+        creator_email: 'priya@example.com',
+        creator_role: 'Project Owner',
+      });
+
+      const [summary] = await listProjects();
+
+      expect(summary).toEqual(expect.objectContaining({
+        creatorName: 'Priya Owner',
+        creatorEmail: 'priya@example.com',
+        creatorRole: 'Project Owner',
+      }));
     });
 
     it('includes archive fields when present (TS-7)', async () => {

@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -29,6 +29,7 @@
  */
 
 import { api } from './api';
+import { assessGovernedOutput } from './outputGovernance';
 import type {
   AgentDefinition,
   AgentPromptContext,
@@ -287,6 +288,11 @@ export async function runL3Agent(
   const requiredTools = def.requiredTools ?? [];
   const MAX_CORRECTION_ATTEMPTS = 2;
   let correctionAttempts = 0;
+  const requiresGovernedOutput =
+    def.systemPrompt.includes('Agentic Governance Requirements') ||
+    options.systemPrompt.includes('Agentic Governance Requirements');
+  const MAX_GOVERNANCE_CORRECTIONS = 1;
+  let governanceCorrectionAttempts = 0;
 
   // L3 loop
   for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -355,7 +361,43 @@ export async function runL3Agent(
         continue;
       }
 
-      finalOutput = parsed.finalOutput ?? rawText;
+      const candidateOutput = parsed.finalOutput ?? rawText;
+      if (requiresGovernedOutput) {
+        const assessment = assessGovernedOutput(candidateOutput);
+        if (!assessment.passed && governanceCorrectionAttempts < MAX_GOVERNANCE_CORRECTIONS && iteration < maxIterations - 1) {
+          governanceCorrectionAttempts++;
+          l3Meta.decisions.push({
+            type: 'retry',
+            rationale: 'Output governance validation failed: ' + assessment.issues.join(' '),
+            confidence: assessment.score ?? 0.1,
+            timestamp: Date.now(),
+          });
+          turns.push({ role: 'assistant', content: rawText });
+          turns.push({
+            role: 'user',
+            content:
+              'Your artifact cannot be finalized because governance validation failed: ' + assessment.issues.join(' ') + '\n' +
+              'Reassess the evidence and produce a corrected complete artifact ending with a "Validation & Confidence" section and an evidence-based Confidence Score of at least 98%.',
+          });
+          continue;
+        }
+        l3Meta.outputGovernance = { ...assessment, blocked: !assessment.passed };
+        if (!assessment.passed) {
+          finalOutput =
+            '[Artifact blocked by the agent governance confidence gate]\n\n' +
+            'The agent did not satisfy the required 98% evidence-based completion threshold.\n\n' +
+            assessment.issues.map((issue) => '- ' + issue).join('\n') +
+            '\n\nRequired next action: provide the missing evidence or resolve the listed validation gaps, then re-run the agent.';
+          l3Meta.decisions.push({
+            type: 'output_accepted',
+            rationale: 'Artifact blocked after the bounded governance correction attempt failed.',
+            confidence: assessment.score ?? 0.1,
+            timestamp: Date.now(),
+          });
+          break;
+        }
+      }
+      finalOutput = candidateOutput;
       if (missingRequired.length > 0) {
         // Retries exhausted (or no iterations left) — accept what we have
         // rather than loop forever, but flag it so the UI and anyone
@@ -521,6 +563,20 @@ export async function runL3Agent(
       `[This agent did not produce a complete document within ${maxIterations} iteration(s), ` +
       'and a forced finalization attempt also failed to produce usable output. Try re-running ' +
       'this agent — if this happens consistently, its maxIterations may need to be increased.]';
+  }
+
+  // Forced finalization can bypass the normal FINAL_OUTPUT branch; apply the same
+  // gate before returning so governed agents cannot save an unvalidated artifact.
+  if (requiresGovernedOutput && !l3Meta.outputGovernance) {
+    const assessment = assessGovernedOutput(finalOutput);
+    l3Meta.outputGovernance = { ...assessment, blocked: !assessment.passed };
+    if (!assessment.passed) {
+      finalOutput =
+        '[Artifact blocked by the agent governance confidence gate]\n\n' +
+        'Forced output governance assessment failed.\n\n' +
+        assessment.issues.map((issue) => '- ' + issue).join('\n') +
+        '\n\nRequired next action: provide the missing evidence or resolve the listed validation gaps, then re-run the agent.';
+    }
   }
 
   return {

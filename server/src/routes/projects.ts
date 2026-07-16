@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 
@@ -165,54 +165,82 @@ function pickArchiveFields(data: Record<string, unknown> | null | undefined): Re
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/projects/permissions/me — lets the frontend know whether the
- * current user is an app-wide admin, so it can show/hide delete & restore
- * controls without guessing from 403s. Placed before /:id so "permissions"
- * is never matched as a project id. */
+/** GET /api/projects/permissions/me — expose app-admin status to the frontend. */
 router.get('/permissions/me', requireAuth, (req, res) => {
   res.json({ isAppAdmin: isAppAdmin(req.user?.email) });
 });
 
-/** GET /api/projects — list all projects the authenticated user has access to.
- * Every project (including one you created) has a team_members row for you
- * now -- see 006_consolidate_team_members.sql's backfill and POST / below --
- * so this is a single query instead of a separate owned/member-projects
- * dance that then had to be de-duplicated. */
+type ProjectListRow = Record<string, unknown> & {
+  id: string;
+  owner_id?: string;
+  updated_at?: string;
+};
+
+async function attachCreatorMetadata(projects: ProjectListRow[]): Promise<ProjectListRow[]> {
+  if (projects.length === 0) return projects;
+
+  const { data: owners, error } = await supabaseAdmin
+    .from('team_members')
+    .select('project_id, user_id, email, name, app_role, job_role')
+    .in('project_id', projects.map((project) => project.id))
+    .eq('app_role', 'project_owner')
+    .eq('invite_status', 'accepted');
+
+  if (error) throw error;
+  const ownersByProject = new Map<string, typeof owners>();
+  for (const owner of owners ?? []) {
+    const projectOwners = ownersByProject.get(owner.project_id as string) ?? [];
+    projectOwners.push(owner);
+    ownersByProject.set(owner.project_id as string, projectOwners);
+  }
+
+  return projects.map((project) => {
+    const projectOwners = ownersByProject.get(project.id) ?? [];
+    const owner = projectOwners.find((candidate) => candidate.user_id === project.owner_id)
+      ?? projectOwners[0];
+    return {
+      ...project,
+      creator_name: owner?.name ?? owner?.email ?? 'Unknown creator',
+      creator_email: owner?.email ?? null,
+      creator_role: 'Project Owner',
+    };
+  });
+}
+
+/** GET /api/projects — list visible projects, or all projects for an app admin. */
 router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = req.user!.id;
+    let projects: ProjectListRow[];
 
-    // PGRST201 fix (2026-07-11): `projects` has two FKs pointing at
-    // team_members -- team_members_project_id_fkey (team_members.project_id
-    // -> projects.id, the one we actually want) and fk_projects_active_admin
-    // (projects.active_admin_id -> team_members.id). Plain `projects(...)`
-    // is ambiguous between them and PostgREST 500s on every call with
-    // "Could not embed because more than one relationship was found" --
-    // silently, since the frontend just renders that as an empty project
-    // list ("No projects yet") instead of surfacing the error. Naming the
-    // constraint explicitly (the exact fix PostgREST's own error message
-    // suggests) resolves it.
-    const { data: memberOf, error } = await supabaseAdmin
-      .from('team_members')
-      .select('app_role, projects!team_members_project_id_fkey(id, name, description, domain, status, data, created_at, updated_at, owner_id)')
-      .eq('user_id', userId)
-      .eq('invite_status', 'accepted');
+    if (isAppAdmin(req.user?.email)) {
+      const { data, error } = await supabaseAdmin
+        .from('projects')
+        .select('id, name, description, domain, status, data, created_at, updated_at, owner_id')
+        .order('updated_at', { ascending: false });
 
-    if (error) throw error;
+      if (error) throw error;
+      projects = (data ?? []) as ProjectListRow[];
+    } else {
+      const { data: memberOf, error } = await supabaseAdmin
+        .from('team_members')
+        .select('app_role, projects!team_members_project_id_fkey(id, name, description, domain, status, data, created_at, updated_at, owner_id)')
+        .eq('user_id', userId)
+        .eq('invite_status', 'accepted');
 
-    const projects = (memberOf ?? [])
-      .filter((m) => m.projects)
-      .map((m) => ({
-        ...(m.projects as object),
-        userRole: (m.projects as { owner_id?: string }).owner_id === userId ? 'owner' : m.app_role,
-      }))
-      .sort((a, b) => {
-        const au = (a as { updated_at?: string }).updated_at ?? '';
-        const bu = (b as { updated_at?: string }).updated_at ?? '';
-        return bu.localeCompare(au);
-      });
+      if (error) throw error;
+      projects = (memberOf ?? [])
+        .filter((membership) => membership.projects)
+        .map((membership) => ({
+          ...(membership.projects as unknown as ProjectListRow),
+          userRole: (membership.projects as { owner_id?: string }).owner_id === userId
+            ? 'owner'
+            : membership.app_role,
+        }))
+        .sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''));
+    }
 
-    res.json(projects);
+    res.json(await attachCreatorMetadata(projects));
   } catch (err) {
     console.error('[GET /projects]', err);
     res.status(500).json({ error: 'Failed to fetch projects' });

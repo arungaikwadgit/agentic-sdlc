@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -24,7 +24,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     title: 'Product Manager',
     description: 'Owns product vision, requirements, and stakeholder communication.',
     color: '#4f46e5',
-    suggestedAgents: ['manager', 'projectCharter', 'brd', 'stakeholder', 'userStory', 'businessRules', 'feasibility'],
+    suggestedAgents: ['manager', 'projectCharter', 'brd', 'stakeholder', 'userStory', 'businessRules', 'feasibility', 'tokenOptimizer'],
   },
   {
     id: 'tech-lead',
@@ -66,7 +66,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     title: 'Security Engineer',
     description: 'Reviews security posture, compliance, and threat modelling.',
     color: '#dc2626',
-    suggestedAgents: ['securityCompliance'],
+    suggestedAgents: ['securityCompliance', 'aiGovernance'],
   },
   {
     id: 'devops-engineer',

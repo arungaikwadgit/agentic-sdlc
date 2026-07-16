@@ -8,6 +8,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+// The mandatory-field workflow performs many realistic user interactions.
+// Allow enough time when the full suite is running under constrained CI workers.
+vi.setConfig({ testTimeout: 20_000 });
+
 const createProjectMock = vi.fn();
 vi.mock('@/db/projectRepository', () => ({
   createProject: (...args: unknown[]) => createProjectMock(...args),

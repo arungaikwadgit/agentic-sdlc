@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -92,7 +92,7 @@ function parseSegments(markdown: string): Segment[] {
   let blockIndex = 0;
   let lastIndex = 0;
 
-  const htmlBlockRe = /^```html\s*\n([\s\S]*?)^```\s*$/gm;
+  const htmlBlockRe = /^```html[ \t]*\n([\s\S]*?)^```[ \t]*$/gm;
   let match: RegExpExecArray | null;
 
   while ((match = htmlBlockRe.exec(markdown)) !== null) {

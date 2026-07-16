@@ -21,8 +21,8 @@ const MOCK_CTX: AgentPromptContext = {
 const ALL_AGENT_IDS: AgentId[] = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
 
 describe('PHASE_ORDER and PHASE_AGENTS', () => {
-  it('PHASE_ORDER has 15 phases', () => {
-    expect(PHASE_ORDER.length).toBe(15);
+  it('PHASE_ORDER has 17 phases', () => {
+    expect(PHASE_ORDER.length).toBe(17);
   });
 
   it('starts with phase0 (SDLC Orchestrator)', () => {
@@ -41,8 +41,8 @@ describe('PHASE_ORDER and PHASE_AGENTS', () => {
     expect(new Set(PHASE_ORDER).size).toBe(PHASE_ORDER.length);
   });
 
-  it('covers exactly 30 agents across all phases', () => {
-    expect(ALL_AGENT_IDS).toHaveLength(30);
+  it('covers exactly 32 agents across all phases', () => {
+    expect(ALL_AGENT_IDS).toHaveLength(32);
   });
 
   it('has no duplicate agent IDs across phases', () => {
@@ -61,8 +61,8 @@ describe('AGENT_DEFINITIONS registry completeness', () => {
     }
   });
 
-  it('has exactly 30 entries — no extra definitions', () => {
-    expect(Object.keys(AGENT_DEFINITIONS)).toHaveLength(30);
+  it('has exactly 32 entries — no extra definitions', () => {
+    expect(Object.keys(AGENT_DEFINITIONS)).toHaveLength(32);
   });
 
   it('every definition has a non-empty name', () => {

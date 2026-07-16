@@ -87,6 +87,15 @@ describe('ProjectCard (active view)', () => {
     expect(fill?.style.width).not.toContain('Infinity');
   });
 
+  it('shows the project creator name and role on the tile', () => {
+    const project = baseSummary({ creatorName: 'Priya Owner', creatorRole: 'Project Owner' });
+
+    render(<ProjectCard project={project} onOpen={vi.fn()} onDetails={vi.fn()} />);
+
+    expect(screen.getByText('Priya Owner')).toBeInTheDocument();
+    expect(screen.getByText('Project Owner')).toBeInTheDocument();
+  });
+
   it('clicking the card body calls onOpen (TS-188)', async () => {
     const user = userEvent.setup();
     const onOpen = vi.fn();

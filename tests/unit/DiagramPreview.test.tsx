@@ -14,7 +14,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import DiagramPreview from '../../frontend/src/components/documents/DiagramPreview';
 
 // ── Mock mermaid ───────────────────────────────────────────────────────────────
 const { mockRender, mockInitialize } = vi.hoisted(() => ({
@@ -22,12 +21,12 @@ const { mockRender, mockInitialize } = vi.hoisted(() => ({
   mockInitialize: vi.fn(),
 }));
 
-vi.mock('mermaid', () => ({
-  default: {
-    initialize: mockInitialize,
-    render: mockRender,
-  },
+vi.mock('../../frontend/src/services/mermaidRenderer', () => ({
+  initializeMermaid: mockInitialize,
+  renderMermaid: mockRender,
 }));
+
+const { default: DiagramPreview } = await import('../../frontend/src/components/documents/DiagramPreview');
 
 // jsdom stubs
 if (typeof URL.createObjectURL !== 'function') {
@@ -54,7 +53,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  // Keep the module-level Mermaid mock installed across tests.
+  vi.clearAllMocks();
 });
 
 // ── 1. Empty state ─────────────────────────────────────────────────────────────

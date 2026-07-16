@@ -5,17 +5,17 @@
  * Each diagram is rendered into a div using mermaid.render() and the resulting
  * SVG is injected into the DOM.
  *
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  */
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import mermaid from 'mermaid';
+import { initializeMermaid, renderMermaid } from '@/services/mermaidRenderer';
 import styles from './DiagramPreview.module.css';
 
 // mermaid.initialize is idempotent — safe to call before every render.
 // Calling it each time avoids a module-level singleton flag that would
 // survive vi.clearAllMocks() in tests and prevent init assertions.
 function ensureMermaid() {
-  mermaid.initialize({
+  initializeMermaid({
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'loose',
@@ -251,7 +251,7 @@ function DiagramFrame({
       const cleanCode = sanitize(block.code);
       const renderId = block.id + '-' + Date.now();
       try {
-        const { svg } = await mermaid.render(renderId, cleanCode);
+        const { svg } = await renderMermaid(renderId, cleanCode);
         if (cancelled) return;
         setSvgSrc(svg);
         if (containerRef.current) {

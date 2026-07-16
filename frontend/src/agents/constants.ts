@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import type { PhaseId, AgentId } from '@/types/agent.types';
@@ -8,6 +8,8 @@ import type { PhaseId, AgentId } from '@/types/agent.types';
 /** Ordered phase execution sequence */
 export const PHASE_ORDER: PhaseId[] = [
   'phase0',
+  'phase0a',
+  'phase0b',
   'phase1',
   'phase1b',
   'phase2',
@@ -38,6 +40,8 @@ export const PARALLEL_PHASES: Set<PhaseId> = new Set([
 /** Agents per phase — each phase contains only agents whose dependencies are all in prior phases */
 export const PHASE_AGENTS: Record<PhaseId, AgentId[]> = {
   phase0:  ['sdlcOrchestrator'],
+  phase0a: ['tokenOptimizer'],
+  phase0b: ['aiGovernance'],
   phase1:  ['manager'],
   phase1b: ['projectCharter', 'brd'],
 
@@ -77,7 +81,7 @@ export const REVIEW_GATES = {
   // plan. The plan must be approved by a project owner or admin before any
   // other agent runs — see ReviewGateModal.tsx's gate0-specific permission
   // check and pipelineEngine.ts's GATE_AFTER_PHASE_INDEX.gate0.
-  gate0: ['phase0'] as PhaseId[],
+  gate0: ['phase0', 'phase0a', 'phase0b'] as PhaseId[],
   gate1: ['phase1', 'phase1b'] as PhaseId[],
   // gate2 fires after ALL requirements phases (including phase2a: dataModel)
   gate2: ['phase2', 'phase2a'] as PhaseId[],
@@ -91,6 +95,8 @@ export const REVIEW_GATES = {
 
 export const PHASE_LABELS: Record<PhaseId, string> = {
   phase0:  'Phase 0 — SDLC Orchestrator',
+  phase0a: 'Phase 0A — Token Optimization',
+  phase0b: 'Phase 0B — AI Governance',
   phase1:  'Phase 1 — PRD',
   phase1b: 'Phase 1B — Foundation',
   phase2:  'Phase 2 — Requirements',
@@ -113,6 +119,8 @@ export const PHASE_LABELS: Record<PhaseId, string> = {
  */
 export const PHASE_SDLC_STAGE: Record<PhaseId, string> = {
   phase0:  'Orchestration',
+  phase0a: 'Governed Preflight',
+  phase0b: 'Governed Preflight',
   phase1:  'Initiation',
   phase1b: 'Initiation',
   phase2:  'Requirements',

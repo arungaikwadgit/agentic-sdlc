@@ -1,5 +1,5 @@
 /**
- * Copyright 2025 Arun Gaikwad. All rights reserved.
+ * Copyright 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential - Unauthorized use prohibited.
  *
  * App - root component. Handles client-side routing and global keyboard shortcuts.
@@ -153,7 +153,7 @@ export default function App() {
             projectId={view.projectId}
             onBack={() => setView({ page: 'dashboard' })}
           />
-          <ChatWidget isAdmin={isAdminMode() || isAppAdmin} />
+          <ChatWidget isAdmin={isAdminMode() || isAppAdmin} projectId={view.projectId} currentView="project" />
         </ErrorBoundary>
       )}
 
@@ -162,6 +162,7 @@ export default function App() {
           <Dashboard
             onOpenProject={(id) => setView({ page: 'project', projectId: id })}
           />
+          <ChatWidget isAdmin={isAdminMode() || isAppAdmin} currentView="dashboard" />
         </>
       )}
     </>

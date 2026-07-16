@@ -1,5 +1,5 @@
 /**
- * © 2025 Arun Gaikwad. All rights reserved.
+ * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 /**
@@ -15,6 +15,7 @@ import PQueue from 'p-queue';
 import { PHASE_ORDER, PARALLEL_PHASES, PHASE_AGENTS, REVIEW_GATES } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getPromptDefaults, getAgentProviderHints, getAgentModelAssignments } from '@/agents/promptDefaults';
+import { getGovernedEffectivePrompt } from '@/services/promptGovernance';
 import { getDomain } from '@/agents/domains';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { api } from './api';
@@ -22,10 +23,11 @@ import { runL3Agent } from './l3Runtime';
 import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
-import { isAgentSkipped } from '@/lib/agentEnablement';
+import { isAgentSkipped, isInternalAgent } from '@/lib/agentEnablement';
 import { generateClarifyingQuestions } from './clarifyingQuestions';
+import { emitLifecycleEvent } from './lifecycleEvents';
 import type { Project, ReviewGateId } from '@/types/project.types';
-import type { AgentCatalogEntry, AgentId, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
+import type { AgentCatalogEntry, AgentId, AgentPromptContext, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
 
 // Lightweight, read-only view of the agent fleet for the get_agent_catalog tool.
 // Built once per context — deliberately excludes systemPrompt/goal/tools so the
@@ -50,6 +52,39 @@ function buildPhaseRules(): PhaseRulesSnapshot {
     phaseAgents: PHASE_AGENTS,
     parallelPhases: [...PARALLEL_PHASES],
     reviewGates: REVIEW_GATES,
+  };
+}
+
+function buildAgentRunMetrics(project: Project) {
+  return Object.entries(project.agentRuns).map(([id, run]) => ({
+    agentId: id as AgentId,
+    status: run?.status ?? 'idle',
+    tokensUsed: Math.max(0, run?.tokensUsed ?? 0),
+    provider: run?.provider,
+    model: run?.model,
+  }));
+}
+
+function buildGovernanceSnapshot(project: Project) {
+  return {
+    reviewGates: Object.entries(project.reviewGates ?? {}).map(([id, gate]) => ({
+      id,
+      approved: !!gate?.approved,
+      approvedAt: gate?.approvedAt,
+      approvedBy: gate?.approvedBy,
+    })),
+    promptOverrideAgentIds: (project.promptOverrides ?? []).map((item) => item.agentId),
+    contextDocuments: (project.contextDocuments ?? []).map((doc) => ({
+      name: doc.name,
+      kind: doc.kind,
+      sizeKb: doc.sizeKb,
+    })),
+    creationApproval: project.creationApproval
+      ? {
+          approverRole: project.creationApproval.approverRole,
+          approvedAt: project.creationApproval.approvedAt,
+        }
+      : null,
   };
 }
 
@@ -85,7 +120,7 @@ for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
 
 // Map gate → which phase follows it
 const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
-  // gate0 blocks phase1 (and everything after) until the SDLC Orchestrator's
+  // gate0 blocks phase1 (and everything after) until orchestration, token optimization,
   // plan (phase0) is approved by a project owner or admin.
   gate0: PHASE_ORDER.indexOf('phase1'),
   gate1: PHASE_ORDER.indexOf('phase2'),
@@ -284,9 +319,15 @@ export class PipelineEngine {
       // 3. hardcoded AGENT_DEFINITIONS[agentId].systemPrompt
       const appDefaults = await getPromptDefaults();
       let systemPrompt = appDefaults[agentId] ?? def.systemPrompt;
+      try {
+        const governed = await getGovernedEffectivePrompt(agentId, this.projectId);
+        if (governed.prompt) systemPrompt = governed.prompt;
+      } catch {
+        // Governance APIs are progressive enhancement; keep legacy resolution available.
+      }
 
       const override = project.promptOverrides.find((o) => o.agentId === agentId);
-      if (override) {
+      if (override && systemPrompt === (appDefaults[agentId] ?? def.systemPrompt)) {
         if (override.fullPrompt) {
           // Full replacement prompt saved by the user
           systemPrompt = override.fullPrompt;
@@ -344,6 +385,14 @@ export class PipelineEngine {
           if (corrected.provider) respProvider = corrected.provider;
           if (corrected.model) respModel = corrected.model;
         }
+      } else if (agentId === 'architecture') {
+        const corrected = await applyArchitectureCorrectiveCheck(systemPrompt, userPrompt, output, provider, this.projectId);
+        if (corrected.output !== output) {
+          output = corrected.output;
+          tokensUsed += corrected.extraTokens;
+          if (corrected.provider) respProvider = corrected.provider;
+          if (corrected.model) respModel = corrected.model;
+        }
       }
 
       await updateAgentRun(this.projectId, agentId, {
@@ -356,6 +405,21 @@ export class PipelineEngine {
         completedAt: Date.now(),
         ...(l3Meta ? { l3: l3Meta } : {}),
       });
+      if (!isInternalAgent(agentId)) {
+        const eventContext: AgentPromptContext = {
+          ...ctx,
+          priorOutputs: { ...ctx.priorOutputs, [agentId]: output },
+        };
+        void emitLifecycleEvent({
+          projectId: this.projectId,
+          eventType: 'agent_completed',
+          idempotencyKey: 'agent-completed:' + this.projectId + ':' + agentId + ':' + (runtimeRunId ?? Date.now()),
+          agentKey: agentId,
+          tokensUsed,
+          contextChars: JSON.stringify(eventContext).length,
+          context: eventContext,
+        }).catch((error) => console.warn('[lifecycle] completion event was not queued:', error));
+      }
       syncRunSucceed(runtimeRunId, output);
       this.callbacks.onAgentComplete(agentId, output);
     } catch (err) {
@@ -404,6 +468,8 @@ export class PipelineEngine {
       agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
+      agentRunMetrics: buildAgentRunMetrics(project),
+      governanceSnapshot: buildGovernanceSnapshot(project),
       clarifyingAnswers: agentId ? project.clarifyingAnswers?.[agentId] : undefined,
     };
   }
@@ -470,6 +536,43 @@ async function applyUxMockupsCorrectiveCheck(
     }
   } catch {
     /* corrective retry failed — keep original output */
+  }
+  return { output: existingOutput, extraTokens: 0 };
+}
+
+async function applyArchitectureCorrectiveCheck(
+  systemPrompt: string,
+  userPrompt: string,
+  existingOutput: string,
+  provider?: 'openai' | 'claude' | (string & {}),
+  projectId?: string,
+): Promise<{ output: string; extraTokens: number; provider?: 'openai' | 'claude' | 'openai-compatible'; model?: string }> {
+  const diagramCount = (existingOutput.match(/```mermaid\s*[\r\n]/gi) ?? []).length;
+  if (diagramCount >= 4) return { output: existingOutput, extraTokens: 0 };
+
+  try {
+    const retryResp = await api.callAgent({
+      systemPrompt,
+      userPrompt: userPrompt +
+        '\n---\nARCHITECTURE OUTPUT CORRECTION REQUIRED: The response contained ' + diagramCount +
+        ' fenced Mermaid diagram(s), but at least four separate image-renderable diagrams are required. Regenerate the COMPLETE ADD and include separate mermaid fenced blocks for: (1) System Context flowchart, (2) Container/Component flowchart, (3) Deployment/Infrastructure flowchart, and (4) Core Runtime sequenceDiagram. Preserve the user latest rerun instructions and all ten ADD sections. Do not substitute ASCII diagrams.',
+      agentId: 'architecture',
+      provider,
+      projectId,
+      signal: AbortSignal.timeout(180_000),
+    });
+    const retryOutput = api.extractText(retryResp);
+    const retryDiagramCount = (retryOutput.match(/```mermaid\s*[\r\n]/gi) ?? []).length;
+    if (retryDiagramCount >= 4) {
+      return {
+        output: retryOutput,
+        extraTokens: retryResp.usage?.total_tokens ?? 0,
+        provider: retryResp.provider,
+        model: retryResp.model,
+      };
+    }
+  } catch {
+    // Keep the original output when the targeted correction fails.
   }
   return { output: existingOutput, extraTokens: 0 };
 }
@@ -544,6 +647,8 @@ export async function runSingleAgent(
       agentCatalog: buildAgentCatalog(project),
       phaseRules: buildPhaseRules(),
       modelCatalog: DEFAULT_MODEL_CATALOG,
+      agentRunMetrics: buildAgentRunMetrics(project),
+      governanceSnapshot: buildGovernanceSnapshot(project),
       // Re-running a single agent (e.g. via ProjectWorkspace's Re-run panel)
       // should still see any previously-collected clarifying answers for it —
       // this path deliberately does NOT trigger a fresh question round, since
@@ -609,6 +714,14 @@ ${userPromptExtra.trim()}` : '');
         if (corrected.provider) respProvider = corrected.provider;
         if (corrected.model) respModel = corrected.model;
       }
+    } else if (agentId === 'architecture') {
+      const corrected = await applyArchitectureCorrectiveCheck(systemPromptOverride, userPrompt, output, provider, projectId);
+      if (corrected.output !== output) {
+        output = corrected.output;
+        tokensUsed += corrected.extraTokens;
+        if (corrected.provider) respProvider = corrected.provider;
+        if (corrected.model) respModel = corrected.model;
+      }
     }
 
     await updateAgentRun(projectId, agentId, {
@@ -622,6 +735,21 @@ ${userPromptExtra.trim()}` : '');
       ...(l3Meta ? { l3: l3Meta } : {}),
     });
 
+    if (!isInternalAgent(agentId)) {
+      const eventContext: AgentPromptContext = {
+        ...ctx,
+        priorOutputs: { ...ctx.priorOutputs, [agentId]: output },
+      };
+      void emitLifecycleEvent({
+        projectId,
+        eventType: 'agent_rerun',
+        idempotencyKey: 'agent-rerun:' + projectId + ':' + agentId + ':' + (runtimeRunId ?? Date.now()),
+        agentKey: agentId,
+        tokensUsed,
+        contextChars: JSON.stringify(eventContext).length,
+        context: eventContext,
+      }).catch((error) => console.warn('[lifecycle] rerun event was not queued:', error));
+    }
     syncRunSucceed(runtimeRunId, output);
     callbacks.onComplete?.(output);
   } catch (err) {

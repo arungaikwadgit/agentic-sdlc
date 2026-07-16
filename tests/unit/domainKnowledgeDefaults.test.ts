@@ -21,6 +21,13 @@ vi.mock('@/db/database', () => ({
   },
 }));
 
+vi.mock('@/services/appStateApi', () => ({
+  getAppConfigValue: async (key: string, fallback: unknown) =>
+    settingsStore.get(key)?.value ?? fallback,
+  setAppConfigValue: async (key: string, value: unknown) =>
+    putMock({ key, value }),
+}));
+
 // ── Mock @/agents/domainKnowledgeTemplates ──
 // NOTE: vi.mock factories are hoisted above top-level const declarations, so
 // any value referenced inside the factory must itself be created via
