@@ -10,6 +10,10 @@ describe('proxy app-state fallback', () => {
       SUPABASE_URL: '',
       SUPABASE_ANON_KEY: '',
       SUPABASE_SERVICE_KEY: '',
+      POSTGRES_URL_LOCAL: '',
+      POSTGRES_URL_PRODUCTION: '',
+      DATABASE_URL: '',
+      SERVER_API_URL: '',
       POSTGRES_URL: '',
       NODE_ENV: 'test',
     };

@@ -92,6 +92,11 @@ vi.mock('../../frontend/src/contexts/ToastContext', () => ({
   useToast: () => ({ toast: toastMock }),
 }));
 
+vi.mock('../../frontend/src/services/userPreferencesApi', () => ({
+  getDashboardViewPreference: vi.fn(async () => 'tiles'),
+  setDashboardViewPreference: vi.fn(async () => undefined),
+}));
+
 // Import after mocks are registered.
 import Dashboard from '../../frontend/src/components/dashboard/Dashboard';
 
@@ -171,7 +176,7 @@ describe('Dashboard — archived projects', () => {
     expect(newProjectBtns.length).toBeGreaterThan(0);
   });
 
-  it('renders archived metadata ("{archivedBy}: {archivedReason}" and "Archived {date}") on a card (TS-55)', async () => {
+  it('renders archived metadata ("{archivedBy}: {archivedReason}" and "Deleted {date}") on a card (TS-55)', async () => {
     const archivedDate = new Date('2026-03-10').getTime();
     summariesStore = [
       makeSummary({
@@ -190,7 +195,7 @@ describe('Dashboard — archived projects', () => {
     await user.click(screen.getByRole('button', { name: /archived \(1\)/i }));
 
     expect(screen.getByText('Alice Admin: "Scope merged into Project X"')).toBeInTheDocument();
-    const expectedDateText = `Archived ${new Date(archivedDate).toLocaleDateString()}`;
+    const expectedDateText = `Deleted ${new Date(archivedDate).toLocaleDateString()}`;
     expect(screen.getByText(expectedDateText)).toBeInTheDocument();
   });
 

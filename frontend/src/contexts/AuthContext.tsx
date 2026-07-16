@@ -136,6 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (cancelled) return;
       console.log('[auth] onAuthStateChange: event=' + _event + ' session=' + (nextSession ? 'present' : 'null'));
+      // Supabase can emit SIGNED_OUT while the dev-only bypass session is active.
+      // That event describes Supabase state, not the independent local admin session.
+      if (!nextSession && isAdminMode()) return;
       if (nextSession) {
         setAdminMode(false);
         setAdminModeState(false);

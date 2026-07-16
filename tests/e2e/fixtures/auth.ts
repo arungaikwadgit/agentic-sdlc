@@ -31,8 +31,10 @@ const USE_ADMIN_BYPASS  = process.env.CI_ADMIN_BYPASS === 'true';
 export async function signIn(page: Page): Promise<void> {
   await page.goto(BASE_URL);
 
-  const isLoginPage = await page.locator('input[type="email"]')
-    .isVisible({ timeout: 3000 }).catch(() => false);
+  const isLoginPage = await page.locator('input[autocomplete="email"]')
+    .waitFor({ state: 'visible', timeout: 25_000 })
+    .then(() => true)
+    .catch(() => false);
 
   if (!isLoginPage) return;
 
@@ -46,12 +48,11 @@ export async function signIn(page: Page): Promise<void> {
     );
   }
 
-  await page.locator('input[type="email"]').fill(email);
+  await page.locator('input[autocomplete="email"]').fill(email);
   await page.locator('input[type="password"]').fill(password);
   await page.locator('button[type="submit"]').click();
 
-  await page.waitForURL(
-    (url) => !url.toString().includes('/login'),
-    { timeout: 10_000 }
-  );
+  // This SPA keeps the same URL while switching from login to dashboard.
+  // Waiting for a /login URL transition can therefore succeed before auth finishes.
+  await page.locator('input[autocomplete="email"]').waitFor({ state: 'hidden', timeout: 10_000 });
 }

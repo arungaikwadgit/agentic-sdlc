@@ -96,3 +96,97 @@
   color: var(--text);
   border-color: var(--accent);
 }
+
+
+.viewToggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface2);
+}
+
+.viewToggleBtn {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.viewToggleBtn:hover,
+.viewToggleBtn:focus-visible {
+  color: var(--text);
+}
+
+.viewToggleActive {
+  background: var(--accent);
+  color: #fff;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.projectTable {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.projectTable th,
+.projectTable td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.projectTable th {
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.projectTable tbody tr:last-child td { border-bottom: 0; }
+.projectTable tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+.projectLink {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+.projectLink:hover { color: var(--accent); }
+.statusText { text-transform: capitalize; }
+
+.tableProgress {
+  width: 130px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface2);
+}
+.tableProgress span { display: block; height: 100%; background: var(--accent); }
+.progressText { display: block; margin-top: 5px; color: var(--text-muted); font-size: 11px; }
+.tableActions { display: flex; gap: 6px; white-space: nowrap; }
+.tableActions button { padding: 5px 8px; font-size: 11px; }
+.dangerBtn { border: 1px solid #ef4444; border-radius: 6px; background: transparent; color: #ef4444; cursor: pointer; }
+
+@media (max-width: 900px) {
+  .header { align-items: flex-start; gap: 12px; }
+  .actions { flex-wrap: wrap; justify-content: flex-end; }
+}

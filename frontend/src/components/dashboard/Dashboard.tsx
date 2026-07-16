@@ -13,6 +13,11 @@ import {
 import type { ProjectSummary } from '@/types/project.types';
 import { getInviteSession, clearInviteSession } from '@/services/inviteSession';
 import { importLegacyProjectsIfNeeded } from '@/services/legacyProjectImport';
+import {
+  getDashboardViewPreference,
+  setDashboardViewPreference,
+  type DashboardView,
+} from '@/services/userPreferencesApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import NewProjectModal from './NewProjectModal';
@@ -58,6 +63,7 @@ export default function Dashboard({ onOpenProject }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmSwitchUser, setConfirmSwitchUser] = useState(false);
   const [isAppAdmin, setIsAppAdmin] = useState(false);
+  const [viewMode, setViewMode] = useState<DashboardView>('tiles');
 
   useEffect(() => {
     const inviteSession = getInviteSession();
@@ -74,6 +80,19 @@ export default function Dashboard({ onOpenProject }: Props) {
     checkIsAppAdmin().then((result) => { if (active) setIsAppAdmin(result); });
     return () => { active = false; };
   }, [authLoading, user]);
+
+  useEffect(() => {
+    const inviteSession = getInviteSession();
+    if (authLoading || (!user && !inviteSession)) {
+      setViewMode('tiles');
+      return;
+    }
+    let active = true;
+    getDashboardViewPreference()
+      .then((savedView) => { if (active) setViewMode(savedView); })
+      .catch(() => { if (active) setViewMode('tiles'); });
+    return () => { active = false; };
+  }, [authLoading, user?.email, user?.id]);
 
   const [allProjects, setAllProjects] = useState<ProjectSummary[] | undefined>(undefined);
 
@@ -141,6 +160,18 @@ export default function Dashboard({ onOpenProject }: Props) {
     }
   }
 
+  async function handleViewModeChange(nextView: DashboardView) {
+    if (nextView === viewMode) return;
+    const previousView = viewMode;
+    setViewMode(nextView);
+    try {
+      await setDashboardViewPreference(nextView);
+    } catch {
+      setViewMode(previousView);
+      toast('Could not save the dashboard view preference.', 'error');
+    }
+  }
+
   return (
     <div className={styles.layout}>
       <header className={styles.header}>
@@ -148,6 +179,24 @@ export default function Dashboard({ onOpenProject }: Props) {
           <AppLogo className={styles.brandMark} wordmarkClassName={styles.brandText} />
         </div>
         <div className={styles.actions}>
+          <div className={styles.viewToggle} role="group" aria-label="Project view">
+            <button
+              className={styles.viewToggleBtn + (viewMode === 'tiles' ? ' ' + styles.viewToggleActive : '')}
+              aria-label="Tiles view"
+              aria-pressed={viewMode === 'tiles'}
+              onClick={() => void handleViewModeChange('tiles')}
+            >
+              Tiles
+            </button>
+            <button
+              className={styles.viewToggleBtn + (viewMode === 'table' ? ' ' + styles.viewToggleActive : '')}
+              aria-label="Table view"
+              aria-pressed={viewMode === 'table'}
+              onClick={() => void handleViewModeChange('table')}
+            >
+              Table
+            </button>
+          </div>
           {userEmail && (
             <span
               className={styles.userBadge}
@@ -201,6 +250,17 @@ export default function Dashboard({ onOpenProject }: Props) {
           </div>
         ) : projects.length === 0 ? (
           <EmptyState onNew={() => setShowWizard(true)} canCreate={!isInvitedOnly} />
+        ) : viewMode === 'table' ? (
+          <ProjectTable
+            projects={projects}
+            isAppAdmin={isAppAdmin}
+            showArchived={showArchived}
+            onOpenProject={onOpenProject}
+            onDetails={setDetailsProjectId}
+            onEdit={setEditProjectId}
+            onDelete={setConfirmDelete}
+            onRestore={(id) => void handleRestore(id)}
+          />
         ) : (
           <div className={styles.grid}>
             {projects.map((p) => (
@@ -274,6 +334,60 @@ export default function Dashboard({ onOpenProject }: Props) {
           onCancel={() => setConfirmSwitchUser(false)}
         />
       )}
+    </div>
+  );
+}
+
+
+interface ProjectTableProps {
+  projects: ProjectSummary[];
+  isAppAdmin: boolean;
+  showArchived: boolean;
+  onOpenProject: (id: string) => void;
+  onDetails: (id: string) => void;
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRestore: (id: string) => void;
+}
+
+function ProjectTable({ projects, isAppAdmin, showArchived, onOpenProject, onDetails, onEdit, onDelete, onRestore }: ProjectTableProps) {
+  return (
+    <div className={styles.tableWrap}>
+      <table className={styles.projectTable} aria-label="Projects">
+        <thead>
+          <tr><th>Project</th><th>Domain</th><th>Status</th><th>Progress</th><th>Updated</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          {projects.map((project) => {
+            const progress = project.totalAgents > 0
+              ? Math.round((project.completedAgents / project.totalAgents) * 100)
+              : 0;
+            return (
+              <tr key={project.id}>
+                <td><button className={styles.projectLink} onClick={() => onOpenProject(project.id)}>{project.name}</button></td>
+                <td>{String(project.domain)}</td>
+                <td><span className={styles.statusText}>{project.status}</span></td>
+                <td>
+                  <div className={styles.tableProgress} aria-label={progress + '% complete'}><span style={{ width: progress + '%' }} /></div>
+                  <span className={styles.progressText}>{project.completedAgents}/{project.totalAgents} agents</span>
+                </td>
+                <td>{new Date(project.updatedAt).toLocaleDateString()}</td>
+                <td>
+                  <div className={styles.tableActions}>
+                    <button className="btn-secondary" onClick={() => onDetails(project.id)}>Details</button>
+                    {!project.archived && <button className="btn-secondary" onClick={() => onEdit(project.id)}>Edit</button>}
+                    {showArchived && project.archived && isAppAdmin ? (
+                      <button className="btn-secondary" onClick={() => onRestore(project.id)}>Restore</button>
+                    ) : !project.archived && isAppAdmin ? (
+                      <button className={styles.dangerBtn} onClick={() => onDelete(project.id)}>Delete</button>
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
