@@ -32,7 +32,39 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL ?? 'gpt-4o';
 const PROXY_TOKEN    = process.env.PROXY_TOKEN ?? '';
 const SERVER_API_URL = (process.env.SERVER_API_URL ?? '').replace(/\/$/, '');
+const RUNTIME_API_URL = (process.env.RUNTIME_API_URL ?? '').replace(/\/$/, '');
+const RUNTIME_API_TOKEN = process.env.RUNTIME_API_TOKEN ?? '';
 const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+
+async function enqueueRuntimeLifecycleEvent(payload) {
+  if (!RUNTIME_API_URL || !RUNTIME_API_TOKEN) return false;
+  const response = await fetch(RUNTIME_API_URL + '/api/v1/lifecycle-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': RUNTIME_API_TOKEN },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error('Runtime lifecycle enqueue returned ' + response.status);
+  return true;
+}
+
+async function fanOutRuntimeLifecycleEvent(eventType, sourceKey, agentKey) {
+  if (!dbPool || !RUNTIME_API_URL || !RUNTIME_API_TOKEN) return;
+  const { rows } = await dbPool.query('SELECT id FROM projects');
+  await Promise.allSettled(rows.map((row) => enqueueRuntimeLifecycleEvent({
+    project_id: row.id,
+    event_type: eventType,
+    agent_key: agentKey,
+    idempotency_key: eventType + ':' + sourceKey + ':' + row.id + ':' + Date.now(),
+  })));
+}
+
+function lifecycleTypeForConfigKey(key) {
+  if (key === 'app:promptDefaults') return 'prompt_changed';
+  if (key === 'app:agentProviderHints' || key === 'app:modelAssignments' || key === 'app:model') return 'model_changed';
+  if (key === 'app:domainKnowledgeDefaults') return 'data_changed';
+  return null;
+}
 const ADMIN_EMAIL_ALLOWLIST = Array.from(new Set(
   [
     process.env.ADMIN_EMAIL_ALLOWLIST ?? '',
@@ -975,6 +1007,31 @@ function extractChatModelText(result) {
   return typeof contentText === 'string' ? contentText : '';
 }
 
+// Authenticated browser-to-runtime bridge for durable background lifecycle work.
+app.post('/api/lifecycle-events', checkToken, async (req, res) => {
+  if (!RUNTIME_API_URL || !RUNTIME_API_TOKEN) {
+    return res.status(503).json({ error: 'Background lifecycle runtime is not configured.' });
+  }
+  try {
+    const response = await fetch(RUNTIME_API_URL + '/api/v1/lifecycle-events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Token': RUNTIME_API_TOKEN,
+      },
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await response.text();
+    res.status(response.status);
+    res.type(response.headers.get('content-type') ?? 'application/json');
+    return res.send(text);
+  } catch (error) {
+    console.error('[lifecycle-events] runtime forwarding failed:', error instanceof Error ? error.message : error);
+    return res.status(502).json({ error: 'Background lifecycle runtime is unavailable.' });
+  }
+});
+
 app.post('/api/chat/respond', checkToken, createChatRouteHandler({
   orchestrate: async ({ request, caller }) => {
     const target = resolveDispatchTarget(undefined, 'helpAssistant');
@@ -1691,6 +1748,18 @@ async function activatePromptVersion({ versionId, projectId, agentId, scope, req
   `, [versionId, approvalComments, promptActor(req)]);
   if (!rows[0]) return null;
   await dbAuditPrompt({ promptVersionId: versionId, projectId: rows[0].project_id, agentId: rows[0].agent_id, action: 'activated', req });
+  const promptEvent = {
+    event_type: 'prompt_changed',
+    agent_key: rows[0].agent_id,
+    idempotency_key: 'prompt-changed:' + versionId,
+  };
+  if (rows[0].project_id) {
+    void enqueueRuntimeLifecycleEvent({ ...promptEvent, project_id: rows[0].project_id })
+      .catch((error) => console.error('[lifecycle-events] prompt trigger failed:', error.message));
+  } else {
+    void fanOutRuntimeLifecycleEvent('prompt_changed', versionId, rows[0].agent_id)
+      .catch((error) => console.error('[lifecycle-events] global prompt trigger failed:', error.message));
+  }
   return rows[0];
 }
 
@@ -2019,6 +2088,11 @@ app.put('/api/app-state/config/:key', checkToken, requireAdmin, async (req, res)
   const key = normalizeConfigKey(req.params.key);
   if (!key) return res.status(400).json({ error: 'key is required' });
   await dbSetAppConfigValue(key, req.body?.value ?? null);
+  const lifecycleType = lifecycleTypeForConfigKey(key);
+  if (lifecycleType) {
+    void fanOutRuntimeLifecycleEvent(lifecycleType, key)
+      .catch((error) => console.error('[lifecycle-events] config trigger failed:', error.message));
+  }
   return res.json({ ok: true });
 });
 
@@ -2028,10 +2102,18 @@ app.post('/api/app-state/config/batch', checkToken, requireAdmin, async (req, re
   if (!values || typeof values !== 'object' || Array.isArray(values)) {
     return res.status(400).json({ error: 'values must be an object' });
   }
+  const lifecycleChanges = new Set();
   for (const [key, value] of Object.entries(values)) {
     const normalizedKey = normalizeConfigKey(key);
     if (!normalizedKey) continue;
     await dbSetAppConfigValue(normalizedKey, value);
+    const lifecycleType = lifecycleTypeForConfigKey(normalizedKey);
+    if (lifecycleType) lifecycleChanges.add(lifecycleType + ':' + normalizedKey);
+  }
+  for (const change of lifecycleChanges) {
+    const [eventType, sourceKey] = change.split(':', 2);
+    void fanOutRuntimeLifecycleEvent(eventType, sourceKey)
+      .catch((error) => console.error('[lifecycle-events] batch config trigger failed:', error.message));
   }
   return res.json({ ok: true });
 });

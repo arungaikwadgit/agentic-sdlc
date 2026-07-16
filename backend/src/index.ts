@@ -19,6 +19,8 @@ import { actionProposalsRouter } from './routes/actionProposals';
 import { memoryRecordsRouter } from './routes/memoryRecords';
 import { rollbackLogsRouter } from './routes/rollbackLogs';
 import { requireApiToken } from './middleware/requireApiToken';
+import { lifecycleEventsRouter } from './routes/lifecycleEvents';
+import { startLifecycleWorker, startScheduledLifecycleReviews } from './lifecycle/lifecycleWorker';
 
 dotenv.config();
 
@@ -86,6 +88,7 @@ db.on('error', (err) => {
 // without a token.
 app.use('/api/v1/agent-runs', requireApiToken, agentRunsRouter(db));
 app.use('/api/v1/agent-jobs', requireApiToken, agentJobsRouter(db));
+app.use('/api/v1/lifecycle-events', requireApiToken, lifecycleEventsRouter(db));
 // ADR-004/ADR-005 routes (Finding #10 / ADR-006 Option B) — previously the
 // repositories existed with no route exposing them at all.
 app.use('/api/v1/action-proposals', requireApiToken, actionProposalsRouter(db));
@@ -134,6 +137,8 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // ── Start ───────────────────────────────────────────────────────────────────
 if (require.main === module) {
   app.listen(PORT, () => {
+    startLifecycleWorker(db);
+    startScheduledLifecycleReviews(db, PORT);
     console.log(`[runtime] Agent Runtime API  http://localhost:${PORT}`);
     console.log(`[runtime] POSTGRES_URL: ${process.env.POSTGRES_URL ? 'set' : 'NOT SET'}`);
   });

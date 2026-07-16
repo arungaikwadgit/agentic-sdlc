@@ -72,6 +72,8 @@ export interface AgentJob {
   agent_key: string;
   status: AgentJobStatus;
   input_payload: unknown;
+  trigger_type?: string;
+  idempotency_key?: string;
   result?: string;
   error?: string;
   attempts: number;

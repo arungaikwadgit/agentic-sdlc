@@ -8,12 +8,17 @@ export class AgentJobRepository {
     project_id: string;
     agent_key: string;
     input_payload?: unknown;
+    trigger_type?: string;
+    idempotency_key?: string;
   }): Promise<AgentJob> {
     const { rows } = await this.db.query<AgentJob>(
-      `INSERT INTO agent_jobs (project_id, agent_key, input_payload)
-       VALUES ($1, $2, $3)
+      `INSERT INTO agent_jobs (project_id, agent_key, input_payload, trigger_type, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (project_id, agent_key, idempotency_key)
+       WHERE idempotency_key IS NOT NULL
+       DO UPDATE SET input_payload = EXCLUDED.input_payload
        RETURNING *`,
-      [data.project_id, data.agent_key, JSON.stringify(data.input_payload ?? {})]
+      [data.project_id, data.agent_key, JSON.stringify(data.input_payload ?? {}), data.trigger_type ?? null, data.idempotency_key ?? null]
     );
     return rows[0];
   }
@@ -65,6 +70,17 @@ export class AgentJobRepository {
        ORDER BY created_at ASC
        LIMIT 1
        FOR UPDATE SKIP LOCKED`
+    );
+    return rows[0] ?? null;
+  }
+
+  async claimNextQueued(): Promise<AgentJob | null> {
+    const { rows } = await this.db.query<AgentJob>(
+      `UPDATE agent_jobs SET status = 'running', started_at = NOW(), attempts = attempts + 1
+       WHERE id = (SELECT id FROM agent_jobs WHERE status = 'queued'
+         AND (next_attempt_after IS NULL OR next_attempt_after <= NOW())
+         ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED)
+       RETURNING *`
     );
     return rows[0] ?? null;
   }
