@@ -14,9 +14,70 @@
  * runs inside an agent's own tool loop, so it has no access to agent tools.
  */
 import { api } from './api';
-import type { AgentId, AgentPromptContext } from '@/types/agent.types';
+import type { AgentId, AgentPromptContext, ClarifyingAnswer } from '@/types/agent.types';
 
 const REQUIREMENT_ID_PATTERN = /\b([A-Z]{2,4}-\d{3,})\b/g;
+
+export function hasMeaningfulClarifyingAnswers(
+  answers: ClarifyingAnswer[] | undefined,
+  expectedCount = 1,
+): boolean {
+  if (!answers || expectedCount < 1) return false;
+  return answers.filter((item) => item.question.trim() && item.answer.trim()).length >= expectedCount;
+}
+
+export function mergeClarifyingAnswers(
+  existing: ClarifyingAnswer[] = [],
+  incoming: ClarifyingAnswer[] = [],
+): ClarifyingAnswer[] {
+  const merged = new Map<string, ClarifyingAnswer>();
+  for (const item of [...existing, ...incoming]) {
+    const question = item.question.trim();
+    const answer = item.answer.trim();
+    if (question && answer) merged.set(question.toLocaleLowerCase(), { question, answer });
+  }
+  return [...merged.values()];
+}
+
+function freshQuestions(
+  generated: string[],
+  fallback: string[],
+  ctx: AgentPromptContext,
+  finalFallback: string,
+): string[] {
+  const answered = new Set(
+    (ctx.clarifyingAnswers ?? [])
+      .filter((item) => item.answer.trim())
+      .map((item) => item.question.trim().toLocaleLowerCase()),
+  );
+  const filterFresh = (questions: string[]) => questions.filter(
+    (question) => !answered.has(question.trim().toLocaleLowerCase()),
+  );
+  const freshGenerated = filterFresh(generated);
+  if (freshGenerated.length > 0) return freshGenerated;
+  const freshFallback = filterFresh(fallback);
+  return freshFallback.length > 0 ? freshFallback : [finalFallback];
+}
+
+function projectContextBlock(ctx: AgentPromptContext): string {
+  const documents = (ctx.contextDocuments ?? []).slice(0, 4).map((doc) =>
+    `### ${doc.name} (${doc.kind})\n${doc.content.slice(0, 700)}`,
+  ).join('\n\n');
+  const priorAnswers = (ctx.clarifyingAnswers ?? []).filter((item) => item.answer.trim()).map((item) =>
+    `- Q: ${item.question}\n  A: ${item.answer}`,
+  ).join('\n');
+  return [
+    `Project: ${ctx.projectName}`,
+    `Domain: ${ctx.domain}`,
+    `Project Description: ${ctx.projectDescription}`,
+    ctx.projectType ? `Project Type: ${ctx.projectType}` : '',
+    ctx.projectExecutionStyle ? `Execution Style: ${ctx.projectExecutionStyle}` : '',
+    ctx.techStack ? `Technology Stack: ${ctx.techStack}` : '',
+    `Domain Knowledge:\n${ctx.domainContext.slice(0, 1800)}`,
+    documents ? `Uploaded Project Context:\n${documents}` : '',
+    priorAnswers ? `Previously Answered Clarifications (do not ask these again):\n${priorAnswers}` : '',
+  ].filter(Boolean).join('\n');
+}
 
 /**
  * Extracts unique requirement IDs with the given prefix (e.g. "BR") from
@@ -84,16 +145,17 @@ const DEFAULT_BRD_QUESTIONS = [
 
 async function generateBrdQuestions(ctx: AgentPromptContext, projectId?: string): Promise<string[]> {
   const userPrompt = [
-    `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
-    `Project Description: ${ctx.projectDescription}`,
-    `PRD Summary:\n${ctx.priorOutputs.manager?.slice(0, 1500) ?? '(not yet available)'}`,
+    projectContextBlock(ctx),
+    `PRD Dependency Output:\n${ctx.priorOutputs.manager?.slice(0, 2500) ?? '(not yet available)'}`,
+    ctx.priorOutputs.brd
+      ? `Current BRD Output (rerun context; ask only about unresolved or changed gaps):\n${ctx.priorOutputs.brd.slice(0, 1800)}`
+      : '',
     '',
     "You're about to write a Business Requirements Document. Ask 3-4 clarifying questions whose answers would " +
       'change the business requirements, current/future-state process descriptions, or compliance section — e.g. ' +
       'legacy systems being replaced, budget/timeline constraints on the business case, or compliance bodies ' +
-      "beyond the domain's typical defaults. Return ONLY a JSON array of question strings.",
-  ].join('\n');
+      "beyond the domain's typical defaults. Do not repeat previously answered clarifications. Return ONLY a JSON array of question strings.",
+  ].filter(Boolean).join('\n');
 
   try {
     const resp = await api.callAgent({
@@ -103,13 +165,22 @@ async function generateBrdQuestions(ctx: AgentPromptContext, projectId?: string)
       projectId,
       signal: AbortSignal.timeout(45_000),
     });
-    const questions = parseQuestionList(api.extractText(resp), 4);
-    return questions.length > 0 ? questions : DEFAULT_BRD_QUESTIONS;
+    return freshQuestions(
+      parseQuestionList(api.extractText(resp), 4),
+      DEFAULT_BRD_QUESTIONS,
+      ctx,
+      `What material requirement, constraint, or assumption has changed for ${ctx.projectName} since the previous BRD clarifications?`,
+    );
   } catch {
     // Question generation failing must never block the pipeline — fall back
     // to a fixed, still-useful question set rather than surfacing an error
     // for what's meant to be a lightweight, optional-value step.
-    return DEFAULT_BRD_QUESTIONS;
+    return freshQuestions(
+      [],
+      DEFAULT_BRD_QUESTIONS,
+      ctx,
+      `What material requirement, constraint, or assumption has changed for ${ctx.projectName} since the previous BRD clarifications?`,
+    );
   }
 }
 
@@ -125,36 +196,33 @@ async function generateUserStoryQuestions(ctx: AgentPromptContext, projectId?: s
   const brdText = ctx.priorOutputs.brd ?? '';
   const brIds = extractRequirementIds(brdText, 'BR');
 
-  if (brIds.length === 0) {
-    // BRD hasn't run yet, or produced no numbered BR-xxx items — fall back
-    // to generic story-scoping questions rather than blocking on something
-    // that can't be extracted.
-    return DEFAULT_USER_STORY_QUESTIONS;
-  }
-
   // Give the LLM the actual BR text (not just IDs) so it can ask something
   // specific, and let IT decide how to group when there are more BRs than
   // the question cap allows — that's a judgment call the model is better
   // positioned to make than a mechanical slice/cluster here.
-  const brExcerpts = brIds
-    .map((id) => {
-      const idx = brdText.indexOf(id);
-      const excerpt = idx >= 0 ? brdText.slice(idx, idx + 200).replace(/\n/g, ' ') : '';
-      return `${id}: ${excerpt}`;
-    })
-    .join('\n');
+  const brExcerpts = brIds.length > 0
+    ? brIds.map((id) => {
+        const idx = brdText.indexOf(id);
+        const excerpt = idx >= 0 ? brdText.slice(idx, idx + 300).replace(/\n/g, ' ') : '';
+        return `${id}: ${excerpt}`;
+      }).join('\n')
+    : brdText.slice(0, 2500) || '(BRD dependency output not available)';
 
+  const idInstruction = brIds.length > 0
+    ? 'Prefix each question with the BR-xxx ID(s) it addresses, e.g. "[BR-003] ...". Group related BRs when needed.'
+    : 'The BRD has no numbered BR-xxx IDs yet, so cite the specific BRD statement or project fact that triggered each question.';
   const userPrompt = [
-    `Project: ${ctx.projectName}`,
-    `Domain: ${ctx.domain}`,
-    `Business Requirements from the BRD:\n${brExcerpts}`,
+    projectContextBlock(ctx),
+    `PRD Dependency Output:\n${ctx.priorOutputs.manager?.slice(0, 2200) ?? '(not yet available)'}`,
+    `BRD Dependency Output:\n${brExcerpts}`,
+    ctx.priorOutputs.userStory
+      ? `Current User Story Output (rerun context; ask only about unresolved or changed gaps):\n${ctx.priorOutputs.userStory.slice(0, 1800)}`
+      : '',
     '',
-    `You're about to write the User Story backlog for these business requirements. Ask at most ${MAX_USER_STORY_QUESTIONS} ` +
-      'clarifying questions, each about persona, workflow variation, edge cases, or acceptance criteria for one or ' +
-      'more of the BR-xxx items above. Prefix each question with the BR-xxx ID(s) it addresses in brackets, e.g. ' +
-      '"[BR-003] ...". If there are more BRs than questions, group related BRs into a single question rather than ' +
-      'dropping any BR entirely. Return ONLY a JSON array of question strings.',
-  ].join('\n');
+    `You're about to write the User Story backlog. Ask at most ${MAX_USER_STORY_QUESTIONS} project-specific questions ` +
+      'about personas, workflow variations, exception paths, acceptance criteria, and measurable non-functional needs. ' +
+      `${idInstruction} Do not repeat previously answered clarifications. Return ONLY a JSON array of question strings.`,
+  ].filter(Boolean).join('\n');
 
   try {
     const resp = await api.callAgent({
@@ -164,10 +232,19 @@ async function generateUserStoryQuestions(ctx: AgentPromptContext, projectId?: s
       projectId,
       signal: AbortSignal.timeout(45_000),
     });
-    const questions = parseQuestionList(api.extractText(resp), MAX_USER_STORY_QUESTIONS);
-    return questions.length > 0 ? questions : DEFAULT_USER_STORY_QUESTIONS;
+    return freshQuestions(
+      parseQuestionList(api.extractText(resp), MAX_USER_STORY_QUESTIONS),
+      DEFAULT_USER_STORY_QUESTIONS,
+      ctx,
+      `What persona, workflow, exception, or acceptance condition has changed for ${ctx.projectName} since the previous backlog clarifications?`,
+    );
   } catch {
-    return DEFAULT_USER_STORY_QUESTIONS;
+    return freshQuestions(
+      [],
+      DEFAULT_USER_STORY_QUESTIONS,
+      ctx,
+      `What persona, workflow, exception, or acceptance condition has changed for ${ctx.projectName} since the previous backlog clarifications?`,
+    );
   }
 }
 

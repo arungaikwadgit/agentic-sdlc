@@ -11,6 +11,8 @@ import {
   extractRequirementIds,
   parseQuestionList,
   generateClarifyingQuestions,
+  hasMeaningfulClarifyingAnswers,
+  mergeClarifyingAnswers,
 } from '../../frontend/src/services/clarifyingQuestions';
 import type { AgentPromptContext } from '../../frontend/src/types/agent.types';
 
@@ -132,12 +134,26 @@ describe('generateClarifyingQuestions', () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it('userStory: falls back to generic questions when the BRD has no numbered BR-xxx items', async () => {
+  it('brd: removes questions that were already answered on an earlier run', async () => {
+    vi.mocked(api.callAgent).mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: '["Who approves refunds?", "What is the refund SLA?"]' }, finish_reason: 'stop' }],
+    });
+    const result = await generateClarifyingQuestions('brd', {
+      ...CTX,
+      clarifyingAnswers: [{ question: 'Who approves refunds?', answer: 'Finance lead' }],
+    });
+    expect(result).toEqual(['What is the refund SLA?']);
+  });
+  it('userStory: uses available project, PRD, and BRD context even when the BRD has no numbered IDs', async () => {
+    vi.mocked(api.callAgent).mockResolvedValue({
+      choices: [{ message: { role: 'assistant', content: '["Which shop owner persona approves refunds?"]' }, finish_reason: 'stop' }],
+    });
     const ctxNoBrIds: AgentPromptContext = { ...CTX, priorOutputs: { brd: 'A BRD with no numbered requirements.' } };
     const result = await generateClarifyingQuestions('userStory', ctxNoBrIds);
-    expect(result.length).toBeGreaterThan(0);
-    // Falling back means no LLM call was made — nothing to ask questions about yet.
-    expect(api.callAgent).not.toHaveBeenCalled();
+    expect(result).toEqual(['Which shop owner persona approves refunds?']);
+    const callArgs = vi.mocked(api.callAgent).mock.calls[0][0];
+    expect(callArgs.userPrompt).toContain(CTX.projectDescription);
+    expect(callArgs.userPrompt).toContain('A BRD with no numbered requirements.');
   });
 
   it('userStory: calls the LLM with BR excerpts when the BRD has numbered BR-xxx items', async () => {
@@ -152,5 +168,30 @@ describe('generateClarifyingQuestions', () => {
     expect(result).toEqual(['[BR-001] Which persona initiates this?']);
     const callArgs = vi.mocked(api.callAgent).mock.calls[0][0];
     expect(callArgs.userPrompt).toContain('BR-001');
+  });
+});
+describe('clarifying answer handling', () => {
+  it('requires every generated question to have a meaningful answer', () => {
+    expect(hasMeaningfulClarifyingAnswers([
+      { question: 'Q1?', answer: 'Known answer' },
+      { question: 'Q2?', answer: '   ' },
+    ], 2)).toBe(false);
+    expect(hasMeaningfulClarifyingAnswers([
+      { question: 'Q1?', answer: 'Known answer' },
+      { question: 'Q2?', answer: 'Not known yet' },
+    ], 2)).toBe(true);
+  });
+
+  it('merges rerun answers without losing prior context or duplicating a question', () => {
+    expect(mergeClarifyingAnswers(
+      [{ question: 'Who approves refunds?', answer: 'Finance lead' }],
+      [
+        { question: 'Who approves refunds?', answer: 'Operations manager' },
+        { question: 'What is the refund SLA?', answer: 'Two days' },
+      ],
+    )).toEqual([
+      { question: 'Who approves refunds?', answer: 'Operations manager' },
+      { question: 'What is the refund SLA?', answer: 'Two days' },
+    ]);
   });
 });

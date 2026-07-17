@@ -58,6 +58,16 @@ vi.mock('@/services/pipelineEngine', () => ({
     run: vi.fn().mockResolvedValue(undefined),
     abort: vi.fn(),
   })),
+  buildAgentPromptContext: (project: Project, agentId: string) => ({
+    projectName: project.name,
+    projectDescription: project.description,
+    domain: project.domain,
+    domainContext: project.domainKnowledge ?? 'FINTECH DOMAIN CONTEXT',
+    priorOutputs: Object.fromEntries(Object.entries(project.agentRuns).flatMap(([id, run]) =>
+      run?.status === 'complete' && run.output ? [[id, run.output]] : [])),
+    teamRoster: [],
+    clarifyingAnswers: (project.clarifyingAnswers as Record<string, unknown[]> | undefined)?.[agentId],
+  }),
   runSingleAgent: (...args: unknown[]) => runSingleAgentMock(...args),
 }));
 
@@ -245,6 +255,39 @@ describe('ProjectWorkspace — re-run flow', () => {
     expect(screen.queryByText(/Using saved custom prompt/i)).not.toBeInTheDocument();
   });
 
+  it('asks fresh context-aware questions before rerunning the BRD agent', async () => {
+    currentProject = baseProject({
+      agentRuns: {
+        ...withCompleteRun('manager', 'FR-001: Refund processing'),
+        ...withCompleteRun('brd', 'BR-001: Refunds require approval'),
+      },
+      clarifyingAnswers: {
+        brd: [{ question: 'Who approves refunds?', answer: 'Finance lead' }],
+      },
+    });
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    const user = await selectAgent(AGENT_DEFINITIONS.brd!.name);
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
+    await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
+
+    expect(await screen.findByText(/A few questions before Business Requirements runs/i)).toBeInTheDocument();
+    expect(runSingleAgentMock).not.toHaveBeenCalled();
+
+    for (const input of screen.getAllByPlaceholderText(/Your answer \(required\)/i)) {
+      await user.type(input, 'Confirmed project-specific answer');
+    }
+    await user.click(screen.getByRole('button', { name: /Continue to Business Requirements/i }));
+
+    await waitFor(() => expect(runSingleAgentMock).toHaveBeenCalledWith(
+      'proj-1',
+      'brd',
+      expect.any(String),
+      expect.any(Object),
+      expect.any(String),
+      expect.any(Object),
+    ));
+  });
   it('opening re-run with a saved override pre-fills fullPrompt and shows the custom-prompt notice (TS-187)', async () => {
     currentProject = baseProject({
       agentRuns: withCompleteRun('sprintPlanner', '## Sprint Plan output'),

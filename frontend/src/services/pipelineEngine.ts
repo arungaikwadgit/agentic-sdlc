@@ -24,7 +24,7 @@ import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
 import { isAgentSkipped, isInternalAgent } from '@/lib/agentEnablement';
-import { generateClarifyingQuestions } from './clarifyingQuestions';
+import { generateClarifyingQuestions, hasMeaningfulClarifyingAnswers } from './clarifyingQuestions';
 import { emitLifecycleEvent } from './lifecycleEvents';
 import type { Project, ReviewGateId } from '@/types/project.types';
 import type { AgentCatalogEntry, AgentId, AgentPromptContext, PhaseId, PhaseRulesSnapshot, L3RuntimeMeta } from '@/types/agent.types';
@@ -88,6 +88,33 @@ function buildGovernanceSnapshot(project: Project) {
   };
 }
 
+export function buildAgentPromptContext(project: Project, agentId?: AgentId): AgentPromptContext {
+  const domain = getDomain(project.domain);
+  const priorOutputs: Partial<Record<AgentId, string>> = {};
+  for (const [completedAgentId, run] of Object.entries(project.agentRuns)) {
+    if (run?.status === 'complete' && run.output) priorOutputs[completedAgentId as AgentId] = run.output;
+  }
+  return {
+    projectName: project.name,
+    projectDescription: project.description,
+    domain: domain.id,
+    domainContext: project.domainKnowledge ? `${project.domainKnowledge}\n\n---\n\n${domain.context}` : domain.context,
+    priorOutputs,
+    teamRoster: buildTeamRoster(project),
+    brandingGuidelines: project.brandingGuidelines,
+    techStack: project.techStack,
+    contextDocuments: project.contextDocuments,
+    mockupVersionCount: project.mockupVersionCount,
+    projectType: project.projectType,
+    projectExecutionStyle: project.projectExecutionStyle,
+    agentCatalog: buildAgentCatalog(project),
+    phaseRules: buildPhaseRules(),
+    modelCatalog: DEFAULT_MODEL_CATALOG,
+    agentRunMetrics: buildAgentRunMetrics(project),
+    governanceSnapshot: buildGovernanceSnapshot(project),
+    clarifyingAnswers: agentId ? project.clarifyingAnswers?.[agentId] : undefined,
+  };
+}
 export interface PipelineCallbacks {
   onAgentStart: (agentId: AgentId) => void;
   onAgentComplete: (agentId: AgentId, output: string) => void;
@@ -266,14 +293,14 @@ export class PipelineEngine {
     }
 
     // Pre-generation clarifying questions (see AgentDefinition.needsClarifyingQuestions,
-    // services/clarifyingQuestions.ts). Only fires once per agent per project —
-    // once project.clarifyingAnswers[agentId] has any entries, this is skipped
-    // even if some answers were left blank, so re-running the same phase never
-    // re-asks. Halts the pipeline exactly like a review gate: sets this.aborted
+    // services/clarifyingQuestions.ts). Initial pipeline execution pauses until
+    // the agent has at least one persisted, meaningful answer set. Manual reruns
+    // deliberately ask a fresh round in ProjectWorkspace using the latest
+    // project and dependency context. Halts exactly like a review gate: sets this.aborted
     // so the outer run() loop stops advancing (same mechanism the Stop button
     // uses), and leaves the project 'paused' at this agent's phase for the UI
     // to resume from once the modal is answered.
-    if (def.needsClarifyingQuestions && !(project.clarifyingAnswers?.[agentId]?.length)) {
+    if (def.needsClarifyingQuestions && !hasMeaningfulClarifyingAnswers(project.clarifyingAnswers?.[agentId])) {
       const ctx = this.buildContext(project, agentId);
       const questions = await generateClarifyingQuestions(agentId, ctx, this.projectId);
       this.aborted = true;
@@ -438,40 +465,7 @@ export class PipelineEngine {
 
 
   private buildContext(project: Project, agentId?: AgentId) {
-    const domain = getDomain(project.domain);
-    const priorOutputs: Partial<Record<AgentId, string>> = {};
-    for (const [agentId, run] of Object.entries(project.agentRuns)) {
-      if (run?.status === 'complete' && run.output) {
-        priorOutputs[agentId as AgentId] = run.output;
-      }
-    }
-
-    const teamRoster = buildTeamRoster(project);
-
-    const domainContext = project.domainKnowledge
-      ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
-      : domain.context;
-
-    return {
-      projectName: project.name,
-      projectDescription: project.description,
-      domain: domain.id,
-      domainContext,
-      priorOutputs,
-      teamRoster,
-      brandingGuidelines: project.brandingGuidelines,
-      techStack: project.techStack,
-      contextDocuments: project.contextDocuments,
-      mockupVersionCount: project.mockupVersionCount,
-      projectType: project.projectType,
-      projectExecutionStyle: project.projectExecutionStyle,
-      agentCatalog: buildAgentCatalog(project),
-      phaseRules: buildPhaseRules(),
-      modelCatalog: DEFAULT_MODEL_CATALOG,
-      agentRunMetrics: buildAgentRunMetrics(project),
-      governanceSnapshot: buildGovernanceSnapshot(project),
-      clarifyingAnswers: agentId ? project.clarifyingAnswers?.[agentId] : undefined,
-    };
+    return buildAgentPromptContext(project, agentId);
   }
 }
 
@@ -620,43 +614,7 @@ export async function runSingleAgent(
   });
 
   try {
-    // Build context from current project state
-    const domain = getDomain(project.domain);
-    const priorOutputs: Partial<Record<AgentId, string>> = {};
-    for (const [id, run] of Object.entries(project.agentRuns)) {
-      if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;
-    }
-    const teamRoster = buildTeamRoster(project);
-    const domainContext = project.domainKnowledge
-      ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
-      : domain.context;
-
-    const ctx = {
-      projectName: project.name,
-      projectDescription: project.description,
-      domain: domain.id,
-      domainContext,
-      priorOutputs,
-      teamRoster,
-      brandingGuidelines: project.brandingGuidelines,
-      techStack: project.techStack,
-      contextDocuments: project.contextDocuments,
-      mockupVersionCount: project.mockupVersionCount,
-      projectType: project.projectType,
-      projectExecutionStyle: project.projectExecutionStyle,
-      agentCatalog: buildAgentCatalog(project),
-      phaseRules: buildPhaseRules(),
-      modelCatalog: DEFAULT_MODEL_CATALOG,
-      agentRunMetrics: buildAgentRunMetrics(project),
-      governanceSnapshot: buildGovernanceSnapshot(project),
-      // Re-running a single agent (e.g. via ProjectWorkspace's Re-run panel)
-      // should still see any previously-collected clarifying answers for it —
-      // this path deliberately does NOT trigger a fresh question round, since
-      // runSingleAgent has no pause/resume mechanism; it only threads through
-      // answers already saved from the agent's original pipeline run, if any.
-      clarifyingAnswers: project.clarifyingAnswers?.[agentId],
-    };
-
+    const ctx = buildAgentPromptContext(project, agentId);
     const userPrompt = def.buildUserPrompt(ctx) +
       (userPromptExtra.trim() ? `
 

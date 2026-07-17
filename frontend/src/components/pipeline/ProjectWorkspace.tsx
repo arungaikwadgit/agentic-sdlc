@@ -4,7 +4,8 @@
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { updateProject, updateAgentRun } from '@/db/projectRepository';
-import { PipelineEngine, runSingleAgent } from '@/services/pipelineEngine';
+import { PipelineEngine, buildAgentPromptContext, runSingleAgent } from '@/services/pipelineEngine';
+import { generateClarifyingQuestions, mergeClarifyingAnswers } from '@/services/clarifyingQuestions';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getPromptDefaults } from '@/agents/promptDefaults';
@@ -204,7 +205,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   // Set by PipelineEngine's onClarifyingQuestionsNeeded callback — see
   // AgentClarifyingQuestionsModal rendering below and services/clarifyingQuestions.ts.
   const [pendingClarifyingQuestions, setPendingClarifyingQuestions] =
-    useState<{ agentId: AgentId; questions: string[] } | null>(null);
+    useState<{ agentId: AgentId; questions: string[]; source: 'pipeline' | 'rerun' } | null>(null);
   // Which phase to resume from once the team-assignment warning is
   // confirmed — undefined means "start from the very beginning" (mirrors
   // startPipeline(undefined)'s own semantics for a full restart).
@@ -228,6 +229,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const [docViewMode, setDocViewMode] = useState<'spec' | 'preview' | 'thinking'>('spec');
   const [showReview, setShowReview] = useState(false);
   const engineRef = useRef<PipelineEngine | null>(null);
+  const rerunClarificationsConfirmedRef = useRef(false);
 
   // ── Re-run state ────────────────────────────────────────────────────────────
   const [rerunAgent, setRerunAgent] = useState<AgentId | null>(null);
@@ -358,7 +360,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       onGateReached: (gateId) => { setEngineRunning(false); setPendingGate(gateId); },
       onClarifyingQuestionsNeeded: (agentId, questions) => {
         setEngineRunning(false);
-        setPendingClarifyingQuestions({ agentId, questions });
+        setPendingClarifyingQuestions({ agentId, questions, source: 'pipeline' });
       },
       onPipelineComplete: () => { setEngineRunning(false); },
       onPipelineError: (_err) => { setEngineRunning(false); },
@@ -424,6 +426,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       effectivePrompt = appDefaults[agentId] ?? def?.systemPrompt ?? '';  // Level 2 or 3
     }
     setRerunAgent(agentId);
+    rerunClarificationsConfirmedRef.current = false;
     setRerunPrompt(effectivePrompt);
     setRerunUserExtra('');
     setProtoStyleSelection(null);
@@ -570,6 +573,27 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       }
     }
 
+    if (def.needsClarifyingQuestions && !rerunClarificationsConfirmedRef.current) {
+      setRerunning(true);
+      setRerunError(null);
+      try {
+        const questions = await generateClarifyingQuestions(
+          agentIdToRun,
+          buildAgentPromptContext(project, agentIdToRun),
+          projectId,
+        );
+        if (questions.length > 0) {
+          setPendingClarifyingQuestions({ agentId: agentIdToRun, questions, source: 'rerun' });
+          return;
+        }
+        rerunClarificationsConfirmedRef.current = true;
+      } catch (error) {
+        setRerunError(`Could not prepare clarification questions: ${String(error)}`);
+        return;
+      } finally {
+        setRerunning(false);
+      }
+    }
     setRerunning(true);
     setRerunError(null);
     setRerunSuccess(false);
@@ -738,6 +762,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       setRerunError(String(e));
     } finally {
       setRerunning(false);
+      rerunClarificationsConfirmedRef.current = false;
     }
   }
 
@@ -1651,15 +1676,23 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         <AgentClarifyingQuestionsModal
           agentName={AGENT_DEFINITIONS[pendingClarifyingQuestions.agentId]?.name ?? pendingClarifyingQuestions.agentId}
           questions={pendingClarifyingQuestions.questions}
-          onCancel={() => setPendingClarifyingQuestions(null)}
+          onCancel={() => {
+            rerunClarificationsConfirmedRef.current = false;
+            setPendingClarifyingQuestions(null);
+          }}
           onSubmit={async (answers) => {
-            const { agentId } = pendingClarifyingQuestions;
+            const { agentId, source } = pendingClarifyingQuestions;
             const resumePhase = AGENT_DEFINITIONS[agentId]?.phase;
             await updateProject(projectId, (p) => {
               p.clarifyingAnswers = p.clarifyingAnswers ?? {};
-              p.clarifyingAnswers[agentId] = answers;
+              p.clarifyingAnswers[agentId] = mergeClarifyingAnswers(p.clarifyingAnswers[agentId], answers);
             });
             setPendingClarifyingQuestions(null);
+            if (source === 'rerun') {
+              rerunClarificationsConfirmedRef.current = true;
+              await confirmRerun();
+              return;
+            }
             attemptStartPipeline(resumePhase);
           }}
         />

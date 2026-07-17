@@ -8,8 +8,8 @@
  * Shown when PipelineEngine fires onClarifyingQuestionsNeeded — the first
  * time an agent flagged with AgentDefinition.needsClarifyingQuestions (brd,
  * userStory) is about to run and no answers are saved yet for it. Answers
- * are optional per-question: leaving one blank just means the agent falls
- * back to its own judgment for that question, it doesn't block submission.
+ * must all be answered before execution continues so the artifact is based
+ * on confirmed project information rather than silent assumptions.
  * See services/clarifyingQuestions.ts for how the question set was
  * generated, and ProjectWorkspace.tsx for how the answers get persisted to
  * project.clarifyingAnswers[agentId] and the pipeline resumed.
@@ -27,6 +27,7 @@ interface Props {
 export default function AgentClarifyingQuestionsModal({ agentName, questions, onSubmit, onCancel }: Props) {
   const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ''));
   const [submitting, setSubmitting] = useState(false);
+  const allAnswered = questions.length > 0 && answers.every((answer) => answer.trim().length > 0);
 
   function setAnswer(i: number, value: string) {
     setAnswers((prev) => {
@@ -37,6 +38,7 @@ export default function AgentClarifyingQuestionsModal({ agentName, questions, on
   }
 
   async function handleSubmit() {
+    if (!allAnswered) return;
     setSubmitting(true);
     try {
       await onSubmit(questions.map((question, i) => ({ question, answer: answers[i].trim() })));
@@ -51,8 +53,8 @@ export default function AgentClarifyingQuestionsModal({ agentName, questions, on
         <div className={styles.header}>
           <h2>A few questions before {agentName} runs</h2>
           <p className={styles.subtitle}>
-            Answers here shape what {agentName} generates — leave any of these blank to let it use its own
-            judgment instead.
+            These questions are based on the project and completed dependencies. Answer each one before the agent
+            runs; use &quot;Not known yet&quot; when the information is genuinely unavailable.
           </p>
         </div>
 
@@ -64,7 +66,7 @@ export default function AgentClarifyingQuestionsModal({ agentName, questions, on
                 className={styles.answerInput}
                 value={answers[i]}
                 onChange={(e) => setAnswer(i, e.target.value)}
-                placeholder="Your answer (optional)"
+                placeholder="Your answer (required)"
                 rows={2}
                 disabled={submitting}
               />
@@ -76,7 +78,7 @@ export default function AgentClarifyingQuestionsModal({ agentName, questions, on
           <button className="btn-secondary" onClick={onCancel} disabled={submitting}>
             Cancel
           </button>
-          <button className="btn-primary" onClick={handleSubmit} disabled={submitting}>
+          <button className="btn-primary" onClick={handleSubmit} disabled={submitting || !allAnswered}>
             {submitting ? 'Continuing…' : `Continue to ${agentName}`}
           </button>
         </div>
