@@ -848,6 +848,18 @@ details[open] .roleReferenceSummary::before { content: '▼ '; }
 }
 .clearBtn:hover { border-color: var(--error); color: var(--error); }
 
+.assignAllBtn {
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.assignAllBtn:hover { background: var(--accent); color: #fff; }
+
 .filterRow {
   display: flex;
   align-items: center;

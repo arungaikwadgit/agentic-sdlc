@@ -854,6 +854,28 @@ export default function ProjectSettings({
     });
   }
 
+  // Assigns every agent across every phase to this member in one click — a
+  // superset of applyRoleTemplate (which only applies one role template's
+  // suggested subset). Enumerates PHASE_ORDER/PHASE_AGENTS, the exact same
+  // set the matrix below renders, so "Assign All" is WYSIWYG with what's
+  // visible — it never silently touches an agent that isn't shown. Already-
+  // assigned agents are left untouched (idempotent, same push-if-missing
+  // pattern as applyRoleTemplate) rather than resetting the whole array, so
+  // running it twice or alongside a role template never drops another
+  // member's existing assignment on the same agent.
+  async function assignAllAgentsToMember(memberId: string) {
+    if (!isAdmin) return;
+    await updateProject(project.id, (p) => {
+      for (const phase of PHASE_ORDER) {
+        for (const agentId of PHASE_AGENTS[phase]) {
+          const existing = p.agentAssignments.find((a) => a.agentId === agentId);
+          if (existing) { if (!existing.memberIds.includes(memberId)) existing.memberIds.push(memberId); }
+          else p.agentAssignments.push({ agentId, memberIds: [memberId] });
+        }
+      }
+    });
+  }
+
   async function clearMemberAssignments(memberId: string) {
     if (!isAdmin) return;
     await updateProject(project.id, (p) => {
@@ -1645,6 +1667,7 @@ export default function ProjectSettings({
                                   <option key={r.id} value={r.id}>{r.title}</option>
                                 ))}
                               </select>
+                              <button className={styles.assignAllBtn} onClick={() => assignAllAgentsToMember(m.id)} title="Assign every agent to this member">Assign All</button>
                               <button className={styles.clearBtn} onClick={() => clearMemberAssignments(m.id)} title="Clear all assignments">Clear</button>
                             </div>
                           ))}

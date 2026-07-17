@@ -317,6 +317,54 @@ describe('ProjectSettings — Agent Assignments tab', () => {
     expect(brdEntry?.memberIds).toContain(ADMIN_MEMBER.id);
   });
 
+  it('"Assign All" adds the member to every agent across every phase in one click (TS-109)', async () => {
+    currentProject = baseProject({
+      teamMembers: [ADMIN_MEMBER, NON_ADMIN_MEMBER],
+      agentAssignments: [
+        { agentId: 'brd' as const, memberIds: [ADMIN_MEMBER.id] },
+      ] as Project['agentAssignments'],
+      activeAdminId: ADMIN_MEMBER.id,
+    });
+    render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
+
+    const user = userEvent.setup();
+    await openAssignmentsTab(user);
+
+    const devRow = screen.getByText('Dev Dave').closest('div[class*="quickApplyRow"]') as HTMLElement;
+    await user.click(within(devRow).getByRole('button', { name: /assign all/i }));
+
+    expect(updateProjectMock).toHaveBeenCalledTimes(1);
+    const [, updater] = updateProjectMock.mock.calls[0];
+    const draft = structuredClone(currentProject);
+    updater(draft);
+
+    const allAgentIds = Object.values(PHASE_AGENTS).flat();
+    for (const agentId of allAgentIds) {
+      const entry = draft.agentAssignments.find((a) => a.agentId === agentId);
+      expect(entry?.memberIds).toContain(NON_ADMIN_MEMBER.id);
+    }
+
+    // Pre-existing assignment for ADMIN_MEMBER on 'brd' is preserved, not overwritten.
+    const brdEntry = draft.agentAssignments.find((a) => a.agentId === 'brd');
+    expect(brdEntry?.memberIds).toEqual(expect.arrayContaining([ADMIN_MEMBER.id, NON_ADMIN_MEMBER.id]));
+  });
+
+  it('"Assign All" is a no-op for a non-admin session (TS-110)', async () => {
+    currentProject = baseProject({
+      teamMembers: [ADMIN_MEMBER, NON_ADMIN_MEMBER],
+      agentAssignments: [],
+      activeAdminId: NON_ADMIN_MEMBER.id,
+    });
+    render(<ProjectSettings project={currentProject} onClose={vi.fn()} />);
+
+    const user = userEvent.setup();
+    await openAssignmentsTab(user);
+
+    // Non-admin session: the whole Quick-apply section (and its Assign All
+    // button) isn't rendered at all — see the `isAdmin &&` guard around it.
+    expect(screen.queryByRole('button', { name: /assign all/i })).not.toBeInTheDocument();
+  });
+
   it('role-template pills on each agent row reflect visibleRoleTemplates only (TS-108)', async () => {
     currentProject = baseProject({
       teamMembers: [ADMIN_MEMBER],
