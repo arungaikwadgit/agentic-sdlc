@@ -28,6 +28,7 @@ import ProjectDetailsModal from './ProjectDetailsModal';
 import EditProjectModal from './EditProjectModal';
 import ConfirmDialog from '../common/ConfirmDialog';
 import AppLogo from '../common/AppLogo';
+import { humanizeName } from '@/utils/text';
 import styles from './Dashboard.module.css';
 
 interface Props {
@@ -371,7 +372,19 @@ function ProjectTable({ projects, isAppAdmin, showArchived, onOpenProject, onDet
                 <td><button className={styles.projectLink} onClick={() => onOpenProject(project.id)}>{project.name}</button></td>
                 {isAppAdmin && (
                   <td>
-                    <strong className={styles.creatorName}>{project.creatorName ?? 'Unknown creator'}</strong>
+                    {/* No account in this app collects a real full name at
+                        signup — the raw value is an email local-part slug
+                        (e.g. "arun.gaikwad"). humanizeName() formats that
+                        into a display-friendly name ("Arun Gaikwad") without
+                        fabricating data; see utils/text.ts for the caveat.
+                        The original slug is kept as a title tooltip so
+                        admins can still see exactly what's stored. */}
+                    <strong
+                      className={styles.creatorName}
+                      title={project.creatorName ?? undefined}
+                    >
+                      {project.creatorName ? humanizeName(project.creatorName) : 'Unknown creator'}
+                    </strong>
                     {project.creatorRole && <span className={styles.creatorRole}>{project.creatorRole}</span>}
                   </td>
                 )}

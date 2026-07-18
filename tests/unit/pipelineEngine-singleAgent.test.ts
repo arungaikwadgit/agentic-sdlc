@@ -59,7 +59,7 @@ const { callAgentMock, runL3AgentMock } = vi.hoisted(() => ({
     tokensUsed: 42,
     provider: 'openai' as const,
     model: 'gpt-4o',
-    l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 2 },
+    l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 2, iterationTokens: [] },
   })),
 }));
 
@@ -125,7 +125,7 @@ describe('runSingleAgent — basic execution', () => {
       tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
-      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
     });
   });
 
@@ -176,7 +176,7 @@ describe('runSingleAgent — providerOverride (B2)', () => {
       tokensUsed: 5,
       provider: 'openai' as const,
       model: 'gpt-4o',
-      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
     });
   });
 
@@ -244,7 +244,7 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
       tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
-      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
     });
 
     await runSingleAgent('proj-test', 'uxMockups', 'sys', {});
@@ -262,7 +262,7 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
       tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
-      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
     });
     callAgentMock.mockResolvedValueOnce({
       choices: [{ message: { content: twoBlockOutput }, finish_reason: 'stop' }],
@@ -286,7 +286,7 @@ describe('runSingleAgent — uxMockups corrective check (TG-3)', () => {
       tokensUsed: 10,
       provider: 'openai' as const,
       model: 'gpt-4o',
-      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1 },
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
     });
     callAgentMock.mockResolvedValueOnce({
       choices: [{ message: { content: oneBlockOutput }, finish_reason: 'stop' }],

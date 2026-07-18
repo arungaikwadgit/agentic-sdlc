@@ -580,7 +580,11 @@ describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
     await userEvent.type(screen.getByPlaceholderText(/Add notes or feedback for this review gate/), 'Needs rework.');
     expect(rejectBtn).not.toBeDisabled();
     await userEvent.click(rejectBtn);
-    expect(onReject).toHaveBeenCalledWith('Needs rework.', undefined);
+    // The "Approving as..." selection made above (m1) persists and is reused
+    // for the reject call too (audit purposes) — see the onReject prop doc
+    // comment in ReviewGateModal.tsx. Not a bug: selecting an approver isn't
+    // required to reject, but if one was already selected it's carried over.
+    expect(onReject).toHaveBeenCalledWith('Needs rework.', 'm1');
   });
 
   it('a non-owner member with a permitted title (Engineering Manager) can both Approve and Reject at gate0', async () => {

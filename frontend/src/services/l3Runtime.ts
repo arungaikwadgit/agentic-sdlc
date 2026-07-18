@@ -267,6 +267,7 @@ export async function runL3Agent(
     toolTrace: [],
     decisions: [],
     iterationCount: 0,
+    iterationTokens: [],
   };
 
   // Build the enriched system prompt
@@ -375,9 +376,16 @@ export async function runL3Agent(
     });
 
     const rawText = api.extractText(resp);
-    totalTokens += resp.usage?.total_tokens ?? 0;
+    const iterationTokenCount = resp.usage?.total_tokens ?? 0;
+    totalTokens += iterationTokenCount;
     lastProvider = resp.provider;
     lastModel = resp.model;
+    l3Meta.iterationTokens.push({
+      iteration: iteration + 1,
+      tokens: iterationTokenCount,
+      promptVariant: useIntermediatePrompt ? 'intermediate' : 'full',
+      timestamp: Date.now(),
+    });
 
     const parsed = parseResponse(rawText);
 
@@ -599,9 +607,16 @@ export async function runL3Agent(
         provider: options.provider,
       });
       const forcedRawText = api.extractText(forcedResp);
-      totalTokens += forcedResp.usage?.total_tokens ?? 0;
+      const forcedTokenCount = forcedResp.usage?.total_tokens ?? 0;
+      totalTokens += forcedTokenCount;
       lastProvider = forcedResp.provider;
       lastModel = forcedResp.model;
+      l3Meta.iterationTokens.push({
+        iteration: -1,
+        tokens: forcedTokenCount,
+        promptVariant: 'forced-final',
+        timestamp: Date.now(),
+      });
 
       const forcedParsed = parseResponse(forcedRawText);
       // If it STILL tries to call a tool even with none offered, reject it

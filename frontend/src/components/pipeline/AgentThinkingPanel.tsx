@@ -16,7 +16,7 @@
  * L2 agents show a simple "single-shot" notice.
  */
 import { useState } from 'react';
-import type { AgentRun, L3RuntimeMeta, ToolTraceEntry, PlanRevision, AgentDecision } from '@/types/agent.types';
+import type { AgentRun, L3RuntimeMeta, ToolTraceEntry, PlanRevision, AgentDecision, IterationTokenEntry } from '@/types/agent.types';
 import styles from './AgentThinkingPanel.module.css';
 
 interface Props {
@@ -151,6 +151,48 @@ function DecisionBlock({ decision }: { decision: AgentDecision }) {
   );
 }
 
+function variantLabel(variant: IterationTokenEntry['promptVariant']): string {
+  switch (variant) {
+    case 'intermediate': return 'condensed';
+    case 'forced-final':  return 'forced final';
+    default:              return 'full';
+  }
+}
+
+function TokenBreakdown({ entries }: { entries: IterationTokenEntry[] }) {
+  const [open, setOpen] = useState(false);
+  const total = entries.reduce((sum, e) => sum + e.tokens, 0);
+  const condensedCount = entries.filter((e) => e.promptVariant === 'intermediate').length;
+
+  return (
+    <div className={styles.planBlock}>
+      <div
+        className={styles.planHeader}
+        onClick={() => setOpen((o) => !o)}
+        role="button"
+        tabIndex={0}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className={styles.planBadge}>
+          🪙 Token Usage — {total.toLocaleString()} total across {entries.length} call{entries.length === 1 ? '' : 's'}
+          {condensedCount > 0 ? ` (${condensedCount} condensed)` : ''}
+        </span>
+        <span className={styles.planTime}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && (
+        <ol className={styles.planSteps}>
+          {entries.map((e, i) => (
+            <li key={i} className={styles.planStep}>
+              {e.iteration === -1 ? 'Forced finalization' : `Iteration ${e.iteration}`}
+              {' — '}{e.tokens.toLocaleString()} tokens ({variantLabel(e.promptVariant)} prompt)
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 // ── L3 full trace ─────────────────────────────────────────────────────────────
 
 function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
@@ -199,6 +241,22 @@ function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
         </div>
       )}
 
+      {/* Diagram requirement warning — set when AgentDefinition.requiresDiagram
+          is true and the final output still has no detectable ```mermaid
+          block after the runtime's bounded correction attempt (see
+          MAX_DIAGRAM_CORRECTIONS in l3Runtime.ts). The "Show Diagram" view
+          will be empty/unavailable for this run until it's re-run. */}
+      {l3.missingDiagram && (
+        <div className={styles.gapWarning}>
+          <span className={styles.gapWarningIcon}>⚠</span>
+          <div>
+            <strong>This run is missing its required diagram</strong>
+            {' '}No fenced ```mermaid block was found in the output, so "Show Diagram" will have nothing to render.
+            Re-run this agent to generate the diagram, or add one manually via Edit Output.
+          </div>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className={styles.statsBar}>
         <div className={styles.stat}>
@@ -218,6 +276,16 @@ function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
           <span className={styles.statLabel}>decisions</span>
         </div>
       </div>
+
+      {/* Per-call token breakdown (2026-07-17) — added so "why did this run
+          use N tokens" can be answered by looking at real per-call data
+          instead of estimating from the aggregate total. Shows which
+          system-prompt variant each call used (see
+          AgentDefinition.intermediateSystemPrompt) alongside its measured
+          token cost. */}
+      {l3.iterationTokens && l3.iterationTokens.length > 0 && (
+        <TokenBreakdown entries={l3.iterationTokens} />
+      )}
 
       {/* Initial plan */}
       {initialPlan && <PlanBlock revision={initialPlan} />}

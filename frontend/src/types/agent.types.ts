@@ -111,6 +111,24 @@ export interface AgentDecision {
   timestamp: number;
 }
 
+/** One LLM call's measured token cost within an L3 run — recorded so token
+ *  usage can be inspected per-call instead of only as a single aggregate
+ *  total (added 2026-07-17 after having to guess at where a run's tokens
+ *  went from the total alone). See L3RuntimeMeta.iterationTokens. */
+export interface IterationTokenEntry {
+  /** 1-indexed iteration number, or -1 for the tool-free forced-finalization call. */
+  iteration: number;
+  tokens: number;
+  /** Which system prompt variant this call used — 'intermediate' means
+   *  AgentDefinition.intermediateSystemPrompt was used instead of the full
+   *  prompt (see l3Runtime.ts); 'full' covers iteration 0 once gathering is
+   *  done, the near-limit iteration, and every call for agents that don't
+   *  define intermediateSystemPrompt; 'forced-final' is the tool-free
+   *  finalization call, which always uses the original full systemPrompt. */
+  promptVariant: 'full' | 'intermediate' | 'forced-final';
+  timestamp: number;
+}
+
 /** L3 runtime metadata stored alongside AgentRun */
 export interface L3RuntimeMeta {
   goal: string;
@@ -118,6 +136,9 @@ export interface L3RuntimeMeta {
   toolTrace: ToolTraceEntry[];
   decisions: AgentDecision[];
   iterationCount: number;
+  /** Per-call token usage — see IterationTokenEntry. Sums to the run's
+   *  total tokensUsed (AgentRun.tokensUsed / L3RunResult.tokensUsed). */
+  iterationTokens: IterationTokenEntry[];
   /**
    * Set only when the run finished (FINAL_OUTPUT or passthrough) while one
    * or more of AgentDefinition.requiredTools had never been called, after

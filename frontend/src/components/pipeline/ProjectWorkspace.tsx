@@ -37,6 +37,7 @@ import { getDownstreamDependents } from '@/agents/dependencyGraph';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
 import { getUnassignedAgents, computeSkippedAgentIdsAfterConfirm, getUserVisibleAgentIds, isInternalAgent } from '@/lib/agentEnablement';
+import { DIAGRAM_AGENTS, hasMermaidDiagram } from '@/agents/diagramUtils';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
@@ -82,12 +83,10 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
     .find(([, phases]) => phases.includes(phase))?.[0];
 }
 
-// Agents whose output contains Mermaid diagrams
-const DIAGRAM_AGENTS = new Set<AgentId>([
-  'dataModel', 'architecture', 'apiDesign', 'devopsEngineer', 'infraEngineer', 'observabilityEngineer',
-]);
-
-const MERMAID_START_RE = /(?:^|\n)(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|journey|gantt|pie|mindmap|timeline|C4Context|C4Container|C4Component|C4Dynamic)\b/i;
+// DIAGRAM_AGENTS and the mermaid-detection logic now live in
+// agents/diagramUtils.ts (2026-07-17) so ReviewGateModal.tsx and
+// l3Runtime.ts's requiresDiagram enforcement share the exact same
+// definition instead of drifting from a copy local to this file.
 
 function providerLabel(p?: string): string {
   if (!p || p === 'auto') return '';
@@ -199,6 +198,20 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const { user, adminMode, isAppAdmin, loading: authLoading } = useAuth();
   const { project, loading: projectLoading, refreshing: projectRefreshing } = useProject(projectId);
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
+  // Collapsible phase sidebar (2026-07-17) — session-only (not persisted),
+  // defaults to every phase expanded so existing behavior is unchanged
+  // until the user actively collapses something. Only the agent list
+  // within a phase collapses; the phase header and its review-gate
+  // indicator (if any) stay visible so locked/pending state is never
+  // hidden by collapsing.
+  const [collapsedPhases, setCollapsedPhases] = useState<Set<PhaseId>>(new Set());
+  const togglePhaseCollapsed = useCallback((phase: PhaseId) => {
+    setCollapsedPhases((prev) => {
+      const next = new Set(prev);
+      if (next.has(phase)) next.delete(phase); else next.add(phase);
+      return next;
+    });
+  }, []);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamWarning, setShowTeamWarning] = useState(false);
@@ -985,10 +998,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
   // Helpers: avoid backtick string literals inside JSX (causes TSC JSX parse errors)
   const BACKTICK = String.fromCharCode(96);
-  const hasMermaid = (s?: string | null) => {
-    const text = s ?? '';
-    return text.includes(BACKTICK + BACKTICK + BACKTICK + 'mermaid') || MERMAID_START_RE.test(text);
-  };
+  // Delegates to the shared agents/diagramUtils.ts detector (see import
+  // above) — kept as a local alias so every existing call site below is
+  // unaffected.
+  const hasMermaid = hasMermaidDiagram;
   const hasHtml    = (s?: string | null) => (s ?? '').includes(BACKTICK + BACKTICK + BACKTICK + 'html');
 
   return (
@@ -1168,7 +1181,21 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
 
             return (
               <div key={phase} className={styles.phaseGroup + ' ' + (isPhaseGateLocked ? styles.phaseGroupLocked : '')}>
-                <div className={styles.phaseHeader}>
+                <div
+                  className={styles.phaseHeader}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!collapsedPhases.has(phase)}
+                  onClick={() => togglePhaseCollapsed(phase)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      togglePhaseCollapsed(phase);
+                    }
+                  }}
+                  title={collapsedPhases.has(phase) ? 'Expand phase' : 'Collapse phase'}
+                >
+                  <span className={styles.phaseChevron}>{collapsedPhases.has(phase) ? '▸' : '▾'}</span>
                   <span className={styles.phaseHeaderText}>
                     <span className={styles.phaseLabel}>{PHASE_LABELS[phase]}</span>
                     {PHASE_SDLC_STAGE[phase] && (
@@ -1179,12 +1206,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                     ? <span className={styles.phaseLockIcon}>&#x1F512;</span>
                     : allComplete && <span style={{ color: 'var(--success)', fontSize: 12 }}>&#x2713;</span>}
                 </div>
-                {isPhaseGateLocked && (
+                {!collapsedPhases.has(phase) && isPhaseGateLocked && (
                   <div className={styles.phaseLockedHint}>
                     Approve {blockingGateState ? 'the review gate above' : 'preceding gate'} to unlock
                   </div>
                 )}
-                {agents.map((agentId) => {
+                {!collapsedPhases.has(phase) && agents.map((agentId) => {
                   const run = project.agentRuns[agentId];
                   const def = AGENT_DEFINITIONS[agentId];
                   const status = run?.status ?? 'idle';
@@ -1485,7 +1512,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                   {selectedAgent && DIAGRAM_AGENTS.has(selectedAgent) && hasMermaid(selectedRun.output) && (
                     <div className={styles.docTabs}>
                       <button className={styles.docTab + ' ' + (docViewMode === 'spec' ? styles.docTabActive : '')} onClick={() => setDocViewMode('spec')}>Spec</button>
-                      <button className={styles.docTab + ' ' + (docViewMode === 'preview' ? styles.docTabActive : '')} onClick={() => setDocViewMode('preview')}>Diagrams</button>
+                      <button className={styles.docTab + ' ' + (docViewMode === 'preview' ? styles.docTabActive : '')} onClick={() => setDocViewMode('preview')}>Show Diagram</button>
                     </div>
                   )}
                   {selectedAgent === 'uxMockups' && hasHtml(selectedRun.output) && (

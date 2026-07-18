@@ -77,12 +77,28 @@
   justify-content: space-between;
   align-items: center;
   padding: 6px 14px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.phaseHeader:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.03));
+}
+
+.phaseChevron {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-right: 6px;
+  flex-shrink: 0;
+  display: inline-block;
+  width: 8px;
 }
 
 .phaseHeaderText {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  flex: 1;
 }
 
 .phaseLabel {

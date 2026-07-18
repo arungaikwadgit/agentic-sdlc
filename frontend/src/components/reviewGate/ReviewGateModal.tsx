@@ -16,7 +16,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getProjectExportPermission, getReviewGatePermission } from '@/lib/projectAccess';
 import { isInternalAgent } from '@/lib/agentEnablement';
 import { applyContextBudget, parseTokenOptimizerBudgets } from '@/agents/contextBudget';
+import { DIAGRAM_AGENTS, hasMermaidDiagram } from '@/agents/diagramUtils';
 import DocumentViewer from '../documents/DocumentViewer';
+import DiagramPreview from '../documents/DiagramPreview';
 import ExportMenu from '../documents/ExportMenu';
 import type { Project, ReviewGateId } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
@@ -117,6 +119,10 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   const [notes, setNotes] = useState('');
   const [panelMode, setPanelMode] = useState<PanelMode>('view');
   const [approvedById, setApprovedById] = useState<string>('');
+  // "Show Diagram" toggle for View mode — same DIAGRAM_AGENTS/hasMermaidDiagram
+  // gating and Spec/Diagram tab pattern already used in ProjectWorkspace.tsx,
+  // now also available in the review gate modal (2026-07-17).
+  const [showDiagram, setShowDiagram] = useState(false);
 
   const members = project.teamMembers ?? [];
   const gateAssignees = getGateAssignees(project, agents);
@@ -165,6 +171,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     setDryRunResult(null);
     setInjectionWarning(null);
     setPromptSaved(false);
+    setShowDiagram(false);
   }
 
   function startEdit() {
@@ -456,6 +463,22 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 className={panelMode === 'prompt' ? styles.tabActive : styles.tab}
                 onClick={startPromptEdit}
               >Prompt Sandbox</button>
+              {/* Spec/Show Diagram toggle — same pattern and DIAGRAM_AGENTS
+                  gating as ProjectWorkspace.tsx's own doc tabs, only shown
+                  when this agent's output actually contains a Mermaid
+                  diagram (see agents/diagramUtils.ts). */}
+              {panelMode === 'view' && selectedAgent && DIAGRAM_AGENTS.has(selectedAgent) && hasMermaidDiagram(run?.output) && (
+                <div className={styles.panelTabs} style={{ marginLeft: 12 }}>
+                  <button
+                    className={!showDiagram ? styles.tabActive : styles.tab}
+                    onClick={() => setShowDiagram(false)}
+                  >Spec</button>
+                  <button
+                    className={showDiagram ? styles.tabActive : styles.tab}
+                    onClick={() => setShowDiagram(true)}
+                  >Show Diagram</button>
+                </div>
+              )}
               {run?.status === 'complete' && run.output && (
                 <div style={{ marginLeft: 'auto' }}>
                   <ExportMenu
@@ -472,7 +495,15 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
             {/* View mode */}
             {panelMode === 'view' && (
               run?.status === 'complete' && run.output
-                ? <DocumentViewer markdown={run.output} />
+                ? (showDiagram && DIAGRAM_AGENTS.has(selectedAgent) && hasMermaidDiagram(run.output)
+                    ? (
+                      <DiagramPreview
+                        markdown={run.output}
+                        canDownload={exportPermission.canExport}
+                        downloadDisabledReason={exportPermission.reason}
+                      />
+                    )
+                    : <DocumentViewer markdown={run.output} />)
                 : <div className={styles.noOutput}>No output available for {def?.name}</div>
             )}
 
