@@ -423,6 +423,20 @@
   flex-shrink: 0;
 }
 
+/* ── Skipped-agents banner (Admin/Owner "Enable All") ── */
+.skippedAgentsBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
 /* ── Locked phase group ── */
 .phaseGroupLocked {
   opacity: 0.55;

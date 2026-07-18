@@ -362,6 +362,17 @@ export async function runL3Agent(
       }
 
       const candidateOutput = parsed.finalOutput ?? rawText;
+      // Soft-warn, don't hard-block: a failed governance assessment used to
+      // discard the agent's real output and replace it with a placeholder
+      // "[Artifact blocked...]" message — given the confidence-score parser
+      // is a brittle regex (assessGovernedOutput in outputGovernance.ts)
+      // against free-text LLM output, that meant a plausible near-miss (e.g.
+      // "Confidence: High" instead of "Confidence Score: 98%") threw away a
+      // perfectly usable artifact. Now the real output is always kept;
+      // l3Meta.outputGovernance still records pass/fail so the UI (see the
+      // gap-warning banner in AgentThinkingPanel.tsx, same treatment as
+      // incompleteRequiredTools below) can flag it for review instead.
+      let governanceFailed = false;
       if (requiresGovernedOutput) {
         const assessment = assessGovernedOutput(candidateOutput);
         if (!assessment.passed && governanceCorrectionAttempts < MAX_GOVERNANCE_CORRECTIONS && iteration < maxIterations - 1) {
@@ -381,21 +392,8 @@ export async function runL3Agent(
           });
           continue;
         }
-        l3Meta.outputGovernance = { ...assessment, blocked: !assessment.passed };
-        if (!assessment.passed) {
-          finalOutput =
-            '[Artifact blocked by the agent governance confidence gate]\n\n' +
-            'The agent did not satisfy the required 98% evidence-based completion threshold.\n\n' +
-            assessment.issues.map((issue) => '- ' + issue).join('\n') +
-            '\n\nRequired next action: provide the missing evidence or resolve the listed validation gaps, then re-run the agent.';
-          l3Meta.decisions.push({
-            type: 'output_accepted',
-            rationale: 'Artifact blocked after the bounded governance correction attempt failed.',
-            confidence: assessment.score ?? 0.1,
-            timestamp: Date.now(),
-          });
-          break;
-        }
+        l3Meta.outputGovernance = { ...assessment, blocked: false };
+        governanceFailed = !assessment.passed;
       }
       finalOutput = candidateOutput;
       if (missingRequired.length > 0) {
@@ -404,14 +402,19 @@ export async function runL3Agent(
         // reviewing the run can see the plan may be incompletely grounded.
         l3Meta.incompleteRequiredTools = missingRequired;
       }
-      l3Meta.decisions.push({
-        type: 'output_accepted',
-        rationale: missingRequired.length > 0
-          ? `Final output accepted after ${iteration + 1} iteration(s) despite missing required tool(s): ${missingRequired.join(', ')}.`
-          : `Final output produced after ${iteration + 1} iteration(s).`,
-        confidence: missingRequired.length > 0 ? 0.5 : 0.9,
-        timestamp: Date.now(),
-      });
+      {
+        const gaps: string[] = [];
+        if (missingRequired.length > 0) gaps.push(`missing required tool(s): ${missingRequired.join(', ')}`);
+        if (governanceFailed) gaps.push('failed governance validation');
+        l3Meta.decisions.push({
+          type: 'output_accepted',
+          rationale: gaps.length > 0
+            ? `Final output accepted after ${iteration + 1} iteration(s) despite ${gaps.join(' and ')}.`
+            : `Final output produced after ${iteration + 1} iteration(s).`,
+          confidence: gaps.length > 0 ? 0.5 : 0.9,
+          timestamp: Date.now(),
+        });
+      }
       break;
     }
 
@@ -565,18 +568,13 @@ export async function runL3Agent(
       'this agent — if this happens consistently, its maxIterations may need to be increased.]';
   }
 
-  // Forced finalization can bypass the normal FINAL_OUTPUT branch; apply the same
-  // gate before returning so governed agents cannot save an unvalidated artifact.
+  // Forced finalization can bypass the normal FINAL_OUTPUT branch; run the
+  // same assessment before returning so it's still flagged — but, as above,
+  // keep the real (forced) output rather than discarding it behind a
+  // placeholder message.
   if (requiresGovernedOutput && !l3Meta.outputGovernance) {
     const assessment = assessGovernedOutput(finalOutput);
-    l3Meta.outputGovernance = { ...assessment, blocked: !assessment.passed };
-    if (!assessment.passed) {
-      finalOutput =
-        '[Artifact blocked by the agent governance confidence gate]\n\n' +
-        'Forced output governance assessment failed.\n\n' +
-        assessment.issues.map((issue) => '- ' + issue).join('\n') +
-        '\n\nRequired next action: provide the missing evidence or resolve the listed validation gaps, then re-run the agent.';
-    }
+    l3Meta.outputGovernance = { ...assessment, blocked: false };
   }
 
   return {

@@ -180,6 +180,25 @@ function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
         </div>
       )}
 
+      {/* Governance confidence-gate warning — set when this agent's output
+          didn't include a parseable "Validation & Confidence" footer with a
+          score at or above 98% (see assessGovernedOutput() /
+          outputGovernance.ts). This used to replace the artifact outright;
+          now the real output is always kept, flagged here instead — the
+          check is a brittle regex against free-text LLM output, so a
+          near-miss (e.g. "Confidence: High" instead of "98%") shouldn't
+          throw away otherwise-usable work. */}
+      {l3.outputGovernance && !l3.outputGovernance.passed && (
+        <div className={styles.gapWarning}>
+          <span className={styles.gapWarningIcon}>⚠</span>
+          <div>
+            <strong>This run didn't pass the governance confidence check</strong>
+            {' '}{l3.outputGovernance.issues.join(' ')} The output below is the agent's real work — review it
+            before relying on it, or re-run the agent for a corrected version.
+          </div>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className={styles.statsBar}>
         <div className={styles.stat}>

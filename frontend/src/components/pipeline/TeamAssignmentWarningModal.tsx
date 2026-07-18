@@ -21,14 +21,19 @@ interface Props {
   unassignedAgentIds: AgentId[];
   isAdmin: boolean;
   onConfirm: () => void | Promise<void>;
+  /** Admin/owner-only: run every unassigned agent normally instead of
+   *  marking them skipped — see handleRunAnywayTeamWarning in
+   *  ProjectWorkspace.tsx. Undefined for non-admin viewers (button hidden). */
+  onRunAnyway?: () => void | Promise<void>;
   onCancel: () => void;
   onGoToTeamSetup: () => void;
 }
 
 export default function TeamAssignmentWarningModal({
-  unassignedAgentIds, isAdmin, onConfirm, onCancel, onGoToTeamSetup,
+  unassignedAgentIds, isAdmin, onConfirm, onRunAnyway, onCancel, onGoToTeamSetup,
 }: Props) {
   const [confirming, setConfirming] = useState(false);
+  const [runningAnyway, setRunningAnyway] = useState(false);
   const unassignedSet = new Set(unassignedAgentIds);
 
   const phaseGroups = PHASE_ORDER
@@ -48,6 +53,16 @@ export default function TeamAssignmentWarningModal({
     }
   }
 
+  async function handleRunAnyway() {
+    if (!onRunAnyway) return;
+    setRunningAnyway(true);
+    try {
+      await onRunAnyway();
+    } finally {
+      setRunningAnyway(false);
+    }
+  }
+
   return (
     <div className={styles.overlay}>
       <div className={styles.modal}>
@@ -56,8 +71,9 @@ export default function TeamAssignmentWarningModal({
           <p className={styles.subtitle}>
             {unassignedAgentIds.length} agent{unassignedAgentIds.length === 1 ? '' : 's'} listed below will be
             skipped when the pipeline runs — no one is assigned to produce their output. If an entire phase has
-            no one assigned, that phase is skipped entirely. You can assign team members now instead, or continue
-            and skip them (an admin can re-enable a skipped agent later).
+            no one assigned, that phase is skipped entirely. You can assign team members now instead, skip them and
+            continue (re-enable individually later from the sidebar), or — Admin/Owner only — run them all anyway
+            without assigning anyone.
           </p>
         </div>
 
@@ -84,16 +100,26 @@ export default function TeamAssignmentWarningModal({
               Only a project owner or admin can confirm this — ask them to continue, or set up the team yourself.
             </span>
           )}
-          <button className="btn-secondary" onClick={onGoToTeamSetup} disabled={confirming}>
+          <button className="btn-secondary" onClick={onGoToTeamSetup} disabled={confirming || runningAnyway}>
             Set Up Team
           </button>
-          <button className="btn-secondary" onClick={onCancel} disabled={confirming}>
+          <button className="btn-secondary" onClick={onCancel} disabled={confirming || runningAnyway}>
             Cancel
           </button>
+          {isAdmin && onRunAnyway && (
+            <button
+              className="btn-secondary"
+              onClick={handleRunAnyway}
+              disabled={confirming || runningAnyway}
+              title="Run every listed agent normally instead of skipping it — no assignment required."
+            >
+              {runningAnyway ? 'Starting…' : 'Run All Agents Anyway'}
+            </button>
+          )}
           <button
             className="btn-primary"
             onClick={handleConfirm}
-            disabled={!isAdmin || confirming}
+            disabled={!isAdmin || confirming || runningAnyway}
             title={!isAdmin ? 'Only a project owner or admin can confirm.' : undefined}
           >
             {confirming ? 'Continuing…' : 'Continue & Skip These Agents'}

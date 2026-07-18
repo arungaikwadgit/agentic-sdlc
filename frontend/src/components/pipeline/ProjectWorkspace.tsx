@@ -411,6 +411,45 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     startPipeline(pendingStartPhase);
   }
 
+  // Admin/Owner-only bulk bypass (TeamAssignmentWarningModal's "Run All
+  // Agents Anyway"): the opposite of handleConfirmTeamWarning above — instead
+  // of adding the currently-unassigned agents to skippedAgentIds, it removes
+  // them (undoing any earlier skip too, e.g. from a prior confirm), so the
+  // pipeline runs every one of them normally. pipelineEngine.ts's only
+  // execution-time gate is isAgentSkipped(project, agentId) — with nothing in
+  // skippedAgentIds, there's nothing left to block.
+  async function handleRunAnywayTeamWarning() {
+    if (!project) return;
+    await updateProject(projectId, (p) => {
+      const unassigned = new Set(getUnassignedAgents(p));
+      p.skippedAgentIds = (p.skippedAgentIds ?? []).filter((id) => !unassigned.has(id));
+      p.teamAssignmentWarningAcknowledged = true;
+    });
+    setShowTeamWarning(false);
+    startPipeline(pendingStartPhase);
+  }
+
+  // Bulk version of the per-row "Enable" button, for a project that's
+  // already past the pre-flight warning (teamAssignmentWarningAcknowledged
+  // is already true, so the warning modal — and its "Run All Agents Anyway"
+  // above — won't reappear on its own). Clears every agent whose *stored*
+  // run status is already 'skipped' from skippedAgentIds in one click,
+  // rather than requiring an admin to click each row's Enable individually.
+  // Same caveat as the single-agent Enable: this doesn't retroactively
+  // re-run them — Resume/Run Pipeline (or a per-agent "run from here") picks
+  // them up normally on its next pass now that nothing blocks them.
+  async function handleEnableAllSkipped() {
+    if (!project) return;
+    await updateProject(projectId, (p) => {
+      const skippedNow = new Set(
+        Object.entries(p.agentRuns)
+          .filter(([, run]) => run?.status === 'skipped')
+          .map(([id]) => id)
+      );
+      p.skippedAgentIds = (p.skippedAgentIds ?? []).filter((id) => !skippedNow.has(id));
+    });
+  }
+
   // ── Re-run: open panel, pre-fill respecting the same 3-level precedence as pipelineEngine ──
   // Level 1: project.promptOverrides[agentId]          (project-specific saved prompt)
   // Level 2: app:promptDefaults[agentId]               (app-wide default via App Settings)
@@ -883,6 +922,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const exportDisabledReason = exportPermission.reason;
   const allAgentIds = getUserVisibleAgentIds();
   const teamReady = members.length > 0;
+  // Drives the "Enable All" banner below — counts agents whose *stored* run
+  // status is already 'skipped' (i.e. the pipeline already passed through
+  // them once with nobody assigned), matching exactly what the sidebar's
+  // per-row Enable/Locked control reacts to.
+  const skippedAgentCount = Object.values(project.agentRuns).filter((run) => run?.status === 'skipped').length;
   const lockedPhases = getLockedPhases(project);
   const selectedRun = selectedAgent ? project.agentRuns[selectedAgent] : null;
   const selectedDef = selectedAgent ? AGENT_DEFINITIONS[selectedAgent] : null;
@@ -1064,6 +1108,18 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         <div className={styles.teamRequiredBanner}>
           <span>Add at least one team member before running the pipeline.</span>
           <button className="btn-primary" style={{ fontSize: 12 }} onClick={openTeamPanel}>Set Up Team</button>
+        </div>
+      )}
+
+      {(isAdmin || isAppAdmin) && skippedAgentCount > 0 && (
+        <div className={styles.skippedAgentsBanner}>
+          <span>
+            🔒 {skippedAgentCount} agent{skippedAgentCount === 1 ? ' is' : 's are'} currently skipped (unassigned)
+            and won't run until enabled.
+          </span>
+          <button className="btn-secondary" style={{ fontSize: 12 }} onClick={handleEnableAllSkipped}>
+            Enable All
+          </button>
         </div>
       )}
 
@@ -1691,6 +1747,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           unassignedAgentIds={getUnassignedAgents(project)}
           isAdmin={isAdmin}
           onConfirm={handleConfirmTeamWarning}
+          onRunAnyway={isAdmin ? handleRunAnywayTeamWarning : undefined}
           onCancel={() => { setShowTeamWarning(false); setPendingStartPhase(undefined); }}
           onGoToTeamSetup={() => {
             setShowTeamWarning(false);

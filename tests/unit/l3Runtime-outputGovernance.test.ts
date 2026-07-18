@@ -63,13 +63,35 @@ describe('L3 governed output gate', () => {
     expect(result.l3.outputGovernance).toEqual(expect.objectContaining({ passed: true, score: 0.99, blocked: false }));
   });
 
-  it('blocks the artifact when correction remains below 98%', async () => {
+  // Soft-warn, not hard-block (changed 2026-07-17): a failed governance
+  // assessment used to replace the real artifact with a placeholder
+  // "[Artifact blocked...]" message. assessGovernedOutput's confidence-score
+  // regex is brittle against free-text LLM output, so that discarded
+  // perfectly usable work on a near-miss. Now the real output is always
+  // returned; l3Meta.outputGovernance.passed/issues flag it for the UI
+  // (AgentThinkingPanel's gap-warning banner) instead.
+  it('keeps the real artifact and flags it (not blocked) when correction remains below 98%', async () => {
     vi.mocked(api.callAgent)
       .mockResolvedValueOnce(response('FINAL_OUTPUT:\n## Validation & Confidence\nConfidence: 90%'))
       .mockResolvedValueOnce(response('FINAL_OUTPUT:\n## Validation & Confidence\nConfidence: 97%'));
 
     const result = await runL3Agent(def, ctx, { systemPrompt: def.systemPrompt, userPrompt: 'u', agentId: 'architecture' });
-    expect(result.output).toContain('Artifact blocked by the agent governance confidence gate');
-    expect(result.l3.outputGovernance).toEqual(expect.objectContaining({ passed: false, score: 0.97, blocked: true }));
+    expect(result.output).toContain('## Validation & Confidence');
+    expect(result.output).toContain('Confidence: 97%');
+    expect(result.output).not.toContain('Artifact blocked');
+    expect(result.l3.outputGovernance).toEqual(expect.objectContaining({ passed: false, score: 0.97, blocked: false }));
+  });
+
+  it('keeps the real output (not a placeholder) when a marker-less passthrough response fails governance', async () => {
+    // A marker-less response is treated as 'passthrough' (see l3Runtime's
+    // parseResponse fallback) and hits the same governed-output gate as a
+    // normal FINAL_OUTPUT branch — this exercises that path specifically.
+    const forcedDef: AgentDefinition = { ...def, maxIterations: 1 };
+    vi.mocked(api.callAgent).mockResolvedValueOnce(response('A plain answer with no governance footer at all.'));
+
+    const result = await runL3Agent(forcedDef, ctx, { systemPrompt: forcedDef.systemPrompt, userPrompt: 'u', agentId: 'architecture' });
+    expect(result.output).toContain('A plain answer with no governance footer at all.');
+    expect(result.output).not.toContain('Artifact blocked');
+    expect(result.l3.outputGovernance).toEqual(expect.objectContaining({ passed: false, blocked: false }));
   });
 });
