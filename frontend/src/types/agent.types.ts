@@ -133,6 +133,16 @@ export interface L3RuntimeMeta {
     issues: string[];
     blocked: boolean;
   };
+  /**
+   * Set to true only when AgentDefinition.requiresDiagram is true and the
+   * final output still has no detectable fenced ```mermaid block after
+   * exhausting the runtime's diagram-correction budget (see
+   * MAX_DIAGRAM_CORRECTIONS in l3Runtime.ts). Undefined/absent means either
+   * the agent doesn't require a diagram, or it produced one. Surfaced as a
+   * warning in AgentThinkingPanel, same treatment as
+   * incompleteRequiredTools/outputGovernance above.
+   */
+  missingDiagram?: boolean;
 }
 
 export interface AgentDefinition {
@@ -179,6 +189,32 @@ export interface AgentDefinition {
    */
   requiredTools?: string[];
   /**
+   * Optional shorter system prompt used INSTEAD of the full `systemPrompt`
+   * on L3 iterations where the agent is still gathering its requiredTools
+   * (i.e. missingRequired.length > 0 before the call) — see l3Runtime.ts.
+   * Only applies while at least one required tool is still outstanding AND
+   * the iteration isn't the last-chance ("nearLimit") one; every other
+   * call (iteration 0's tool selection is covered by this too, but the
+   * near-limit iteration and the forced-finalization call always use the
+   * FULL systemPrompt) still gets the complete prompt.
+   *
+   * Added 2026-07-17 after measuring that sdlcOrchestrator's full
+   * systemPrompt (BASE_SYSTEM + a ~5,000-char, 9-section output-format
+   * spec) was being resent, unchanged, on every one of its up-to-10 L3
+   * iterations — the majority of which are pure tool-selection turns that
+   * can't legitimately produce FINAL_OUTPUT yet (requiredTools blocks it).
+   * That format spec is only relevant to the call that actually writes the
+   * document, so repeating it on every intermediate turn was pure
+   * overhead: roughly half of a typical sdlcOrchestrator run's total
+   * token cost. Safe by construction — while any required tool is still
+   * outstanding, the runtime's own requiredTools enforcement guarantees
+   * the model can't legitimately finalize on that call anyway (see the
+   * correction-retry block below), so it never needed the format spec for
+   * that turn in the first place. Undefined/absent (every other agent)
+   * means no change from prior behavior.
+   */
+  intermediateSystemPrompt?: string;
+  /**
    * When true, PipelineEngine pauses before running this agent's generation
    * call — the first time only, i.e. until project.clarifyingAnswers[id] has
    * at least one entry — and instead fires onClarifyingQuestionsNeeded with a
@@ -187,6 +223,17 @@ export interface AgentDefinition {
    * clarifyingAnswers below. Currently set on 'brd' and 'userStory' only.
    */
   needsClarifyingQuestions?: boolean;
+  /**
+   * When true, the L3 runtime treats "the final output contains at least
+   * one fenced ```mermaid diagram block" as a mandatory condition — mirrors
+   * the requiredTools mechanism (bounded corrective retry via
+   * MAX_DIAGRAM_CORRECTIONS in l3Runtime.ts, then flagged on
+   * L3RuntimeMeta.missingDiagram rather than blocked) rather than trusting
+   * prompt instructions alone. Set on dataModel, architecture, apiDesign,
+   * and interaction — see agents/diagramUtils.ts's DIAGRAM_AGENTS for the
+   * UI-side set this should stay in sync with.
+   */
+  requiresDiagram?: boolean;
 }
 
 /** One question/answer pair collected via the pre-generation clarifying-

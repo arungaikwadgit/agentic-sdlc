@@ -30,6 +30,7 @@
 
 import { api } from './api';
 import { assessGovernedOutput } from './outputGovernance';
+import { hasMermaidDiagram } from '@/agents/diagramUtils';
 import type {
   AgentDefinition,
   AgentPromptContext,
@@ -270,6 +271,16 @@ export async function runL3Agent(
 
   // Build the enriched system prompt
   const l3SystemPrompt = buildL3SystemPrompt(options.systemPrompt, goal, tools, initialPlanSteps);
+  // See AgentDefinition.intermediateSystemPrompt — a shorter variant used
+  // in place of l3SystemPrompt while required tools are still outstanding
+  // (selected per-iteration below, near the call site, since it depends on
+  // tool-trace state that only exists once the loop starts). Precomputed
+  // once here since goal/tools/initialPlanSteps are constant across
+  // iterations. Falls back to the full prompt when the agent doesn't
+  // define one — every agent except sdlcOrchestrator today.
+  const l3SystemPromptIntermediate = def.intermediateSystemPrompt
+    ? buildL3SystemPrompt(def.intermediateSystemPrompt, goal, tools, initialPlanSteps)
+    : l3SystemPrompt;
 
   // Conversation history (system + turns)
   const turns: Array<{ role: 'user' | 'assistant'; content: string }> = [
@@ -293,6 +304,15 @@ export async function runL3Agent(
     options.systemPrompt.includes('Agentic Governance Requirements');
   const MAX_GOVERNANCE_CORRECTIONS = 1;
   let governanceCorrectionAttempts = 0;
+  // Diagram enforcement (see AgentDefinition.requiresDiagram / diagramUtils.ts).
+  // Same bounded-retry-then-flag shape as governance above: agents like
+  // dataModel/architecture/apiDesign/interaction already instruct themselves
+  // to include Mermaid diagrams, but until now nothing checked the final
+  // output actually contained one — a model could drop the diagram under
+  // token pressure and nobody would notice until a human opened the
+  // (empty) Diagrams view.
+  const MAX_DIAGRAM_CORRECTIONS = 1;
+  let diagramCorrectionAttempts = 0;
 
   // L3 loop
   for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -332,8 +352,21 @@ export async function runL3Agent(
     // guaranteed savings are on any call that would otherwise have padded
     // toward 8192.
     const INTERMEDIATE_MAX_TOKENS = 2048;
+
+    // System-prompt condensation (2026-07-17, see AgentDefinition.
+    // intermediateSystemPrompt): while at least one required tool is still
+    // outstanding, the runtime's own requiredTools enforcement below
+    // guarantees this call can't legitimately produce FINAL_OUTPUT — so the
+    // full prompt's output-format instructions aren't needed for it yet.
+    // Once every required tool has been called (or the agent has none), or
+    // on the last-chance iteration, always use the full prompt.
+    const calledToolNamesSoFar = new Set(l3Meta.toolTrace.map((t) => t.tool));
+    const stillGatheringRequiredTools =
+      requiredTools.length > 0 && requiredTools.some((t) => !calledToolNamesSoFar.has(t));
+    const useIntermediatePrompt = stillGatheringRequiredTools && !nearLimit;
+
     const resp = await callWithRetry({
-      systemPrompt: l3SystemPrompt,
+      systemPrompt: useIntermediatePrompt ? l3SystemPromptIntermediate : l3SystemPrompt,
       userPrompt: buildConversationPrompt(turns, userContent, iteration),
       agentId: options.agentId,
       provider: options.provider,
@@ -411,6 +444,30 @@ export async function runL3Agent(
         l3Meta.outputGovernance = { ...assessment, blocked: false };
         governanceFailed = !assessment.passed;
       }
+
+      let diagramMissing = false;
+      if (def.requiresDiagram) {
+        const hasDiagram = hasMermaidDiagram(candidateOutput);
+        if (!hasDiagram && diagramCorrectionAttempts < MAX_DIAGRAM_CORRECTIONS && iteration < maxIterations - 1) {
+          diagramCorrectionAttempts++;
+          l3Meta.decisions.push({
+            type: 'retry',
+            rationale: `Attempted to finish without a required Mermaid diagram. Pushed back for correction (${diagramCorrectionAttempts}/${MAX_DIAGRAM_CORRECTIONS}).`,
+            confidence: 0.6,
+            timestamp: Date.now(),
+          });
+          turns.push({ role: 'assistant', content: rawText });
+          turns.push({
+            role: 'user',
+            content:
+              'Your document is missing a required diagram — it must include at least one fenced ```mermaid code block ' +
+              '(see the Diagram Requirement in your instructions). Add the diagram(s) now and produce the corrected, complete document.',
+          });
+          continue;
+        }
+        diagramMissing = !hasDiagram;
+      }
+
       finalOutput = candidateOutput;
       if (missingRequired.length > 0) {
         // Retries exhausted (or no iterations left) — accept what we have
@@ -418,10 +475,14 @@ export async function runL3Agent(
         // reviewing the run can see the plan may be incompletely grounded.
         l3Meta.incompleteRequiredTools = missingRequired;
       }
+      if (diagramMissing) {
+        l3Meta.missingDiagram = true;
+      }
       {
         const gaps: string[] = [];
         if (missingRequired.length > 0) gaps.push(`missing required tool(s): ${missingRequired.join(', ')}`);
         if (governanceFailed) gaps.push('failed governance validation');
+        if (diagramMissing) gaps.push('missing required diagram');
         l3Meta.decisions.push({
           type: 'output_accepted',
           rationale: gaps.length > 0
@@ -554,6 +615,12 @@ export async function runL3Agent(
       const missingRequired = requiredTools.filter((t) => !calledToolNames.has(t));
       if (missingRequired.length > 0) {
         l3Meta.incompleteRequiredTools = missingRequired;
+      }
+      // Diagram check applies here too — this call bypasses the normal
+      // FINAL_OUTPUT branch above, so it needs its own (no-retry-possible,
+      // since iterations are exhausted) flag.
+      if (def.requiresDiagram && candidate && !hasMermaidDiagram(candidate)) {
+        l3Meta.missingDiagram = true;
       }
       l3Meta.decisions.push({
         type: 'output_accepted',

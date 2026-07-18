@@ -184,6 +184,12 @@ const sdlcOrchestrator: AgentDefinition = {
   // corrective nudges (MAX_CORRECTION_ATTEMPTS in l3Runtime.ts) if the model
   // tries to finish before calling all of requiredTools above.
   maxIterations: 10,
+  // See AgentDefinition.intermediateSystemPrompt — drops the ~5,000-char
+  // 9-section output-format spec (kept in the full systemPrompt above) for
+  // every iteration where a required tool is still outstanding, since the
+  // model can't legitimately write FINAL_OUTPUT on those turns anyway.
+  // BASE_SYSTEM (governance requirements) is preserved throughout.
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the SDLC Orchestrator Agent — the intelligent project conductor for this AI-powered software delivery pipeline. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the plan yet.`,
 };
 
 // ─── Governed preflight ───────────────────────────────────────────────────────
@@ -696,6 +702,9 @@ const dataModel: AgentDefinition = {
   tools: RESEARCH_TOOLS,
   // 4 mandatory tool calls + write + self-check.
   maxIterations: 6,
+  // See AgentDefinition.requiresDiagram — the erDiagram instruction above
+  // (diagramLine) is now mechanically enforced, not just prompted for.
+  requiresDiagram: true,
 };
 
 // ─── Phase 3 ──────────────────────────────────────────────────────────────────
@@ -750,6 +759,10 @@ const architecture: AgentDefinition = {
   tools: ALL_TOOLS,
   // 5 mandatory tool calls + write + self-check.
   maxIterations: 7,
+  // See AgentDefinition.requiresDiagram — the four-diagram requirement
+  // above is now mechanically enforced (at least one must land), not just
+  // prompted for.
+  requiresDiagram: true,
 };
 
 const apiDesign: AgentDefinition = {
@@ -807,6 +820,9 @@ const apiDesign: AgentDefinition = {
   tools: RESEARCH_TOOLS,
   // 4 mandatory tool calls + write + self-check.
   maxIterations: 6,
+  // See AgentDefinition.requiresDiagram — the sequenceDiagram instruction
+  // above (diagramLine) is now mechanically enforced, not just prompted for.
+  requiresDiagram: true,
 };
 
 const uxResearch: AgentDefinition = {
@@ -871,6 +887,7 @@ const interaction: AgentDefinition = {
     `6. Micro-interactions & Animations guidelines`,
     `7. Form Design Patterns (validation, error messages, inline help)`,
     `8. Accessibility Implementation Notes`,
+    diagramLine('Draw a flowchart (flowchart TD) showing the primary end-to-end user interaction flow through the key screens identified above — include decision points (e.g. validation failures, empty states) and where they lead.'),
   ].join('\n'),
   // ── L3 upgrade ──────────────────────────────────────────────────────────
   goal: (ctx) =>
@@ -879,11 +896,14 @@ const interaction: AgentDefinition = {
     `STEP 1 — call get_agent_output("uxResearch"): Extract the 3 personas, 2 journey maps, design principles, and information architecture to drive component and wireframe priorities.\n` +
     `STEP 2 — call get_style_guide: Check for uploaded brand guidelines — if found, all design tokens must conform to it.\n` +
     `STEP 3 — call get_domain_context: Get domain-specific interaction patterns for the ${ctx.domain} domain.\n` +
-    `STEP 4 — Produce all 8 sections. Design tokens must be specific values. Component library must describe each component's states/variants. Wireframes must cover the 5 screens most critical to the primary user journey from STEP 1.\n` +
-    `STEP 5 — Self-check: verify design tokens are concrete values (not vague), every wireframe is linked to a persona use case, WCAG criteria are cited by number, and animation guidelines specify duration/easing values. Fix gaps before finishing.`,
+    `STEP 4 — Produce all 8 sections plus one fenced Mermaid flowchart (\`\`\`mermaid, flowchart TD) tracing the primary user interaction flow end-to-end through the wireframed screens, including decision points. Design tokens must be specific values. Component library must describe each component's states/variants. Wireframes must cover the 5 screens most critical to the primary user journey from STEP 1.\n` +
+    `STEP 5 — Self-check: verify design tokens are concrete values (not vague), every wireframe is linked to a persona use case, WCAG criteria are cited by number, animation guidelines specify duration/easing values, and the flow diagram is present and covers the primary journey end-to-end. Fix gaps before finishing.`,
   tools: RESEARCH_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  // See AgentDefinition.requiresDiagram — the flow-diagram instruction
+  // above is now mechanically enforced, not just prompted for.
+  requiresDiagram: true,
 };
 
 const LAYOUT_ARCHETYPES = [
