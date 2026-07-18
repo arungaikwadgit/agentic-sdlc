@@ -485,3 +485,129 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── gate0 (SDLC Orchestrator plan approval) ─────────────────────────────────
+// Regression coverage for the 2026-07-17 fix: gate0 used to have its own
+// narrower approver check (project owner or dev-mode adminMode only) wired
+// into ONLY the Approve button's `disabled` prop, separate from and stricter
+// than canActOnGate/getReviewGatePermission (which every other gate uses).
+// That check never recognized a real app admin (isAppAdmin), so a production
+// admin approving gate0 saw Approve permanently disabled. Reject was never
+// gated by it at all — only by the mandatory-comment rule, same as every
+// gate. gate0 now uses the exact same canActOnGate permission as every other
+// gate; these tests assert Approve AND Reject both work for the Project
+// Owner, an app admin, and a permitted-role member, and both stay hidden for
+// an unpermitted role — proving gate0 behaves identically to gate3 above.
+describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
+  const GATE0_ID = 'gate0' as const;
+  const ORCHESTRATOR_AGENT = 'sdlcOrchestrator' as const;
+
+  let onApprove: ReturnType<typeof vi.fn>;
+  let onReject: ReturnType<typeof vi.fn>;
+  let onClose: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    onApprove = vi.fn();
+    onReject = vi.fn();
+    onClose = vi.fn();
+    mockAuth.userId = 'owner-user-1';
+    mockAuth.userEmail = 'asha@example.com';
+    mockAuth.adminMode = false;
+    mockAuth.isAppAdmin = false;
+  });
+
+  // tokenOptimizer and aiGovernance (phase0a/phase0b) are visibility:'internal'
+  // and filtered out of ReviewGateModal's agent list — only sdlcOrchestrator
+  // (phase0) is visible/gates completeness for gate0.
+  function makeGate0Project(overrides: Partial<Project> = {}): Project {
+    return makeProject({
+      currentPhase: 'phase0',
+      agentRuns: {
+        [ORCHESTRATOR_AGENT]: {
+          agentId: ORCHESTRATOR_AGENT,
+          status: 'complete',
+          output: '# SDLC Orchestration Plan\n\nPlan content.',
+          completedAt: Date.now(),
+        },
+      } as Project['agentRuns'],
+      ...overrides,
+    });
+  }
+
+  function renderGate0(project: Project) {
+    currentProject = project;
+    return render(
+      <ReviewGateModal
+        gateId={GATE0_ID}
+        project={project}
+        onApprove={onApprove}
+        onReject={onReject}
+        onClose={onClose}
+      />
+    );
+  }
+
+  it('project owner (asha, default identity) gets both Approve and Reject enabled', async () => {
+    renderGate0(makeGate0Project());
+
+    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
+    const select = screen.getByTitle('Who is approving?');
+    fireEvent.change(select, { target: { value: 'm1' } });
+
+    await userEvent.click(screen.getByRole('button', { name: /Approve & Continue/ }));
+    expect(onApprove).toHaveBeenCalledWith('', 'm1');
+  });
+
+  it('a real app admin (isAppAdmin=true, not project_owner) can both Approve and Reject — the bug fix', async () => {
+    mockAuth.userEmail = 'raj@example.com'; // editor, "Engineering Lead" — not project_owner, not an approver title
+    mockAuth.isAppAdmin = true;
+    renderGate0(makeGate0Project());
+
+    const approveBtn = screen.getByRole('button', { name: /Approve & Continue/ });
+    const rejectBtn = screen.getByRole('button', { name: /Reject & Stop/ });
+    // Previously: gate0Blocked made Approve permanently disabled here even
+    // though canActOnGate (isAppAdmin) was true — the only remaining
+    // constraint should be the ordinary mandatory-approver rule.
+    expect(approveBtn).toBeDisabled();
+    const select = screen.getByTitle('Who is approving?');
+    fireEvent.change(select, { target: { value: 'm1' } });
+    expect(approveBtn).not.toBeDisabled();
+    await userEvent.click(approveBtn);
+    expect(onApprove).toHaveBeenCalledWith('', 'm1');
+
+    expect(rejectBtn).toBeDisabled();
+    await userEvent.type(screen.getByPlaceholderText(/Add notes or feedback for this review gate/), 'Needs rework.');
+    expect(rejectBtn).not.toBeDisabled();
+    await userEvent.click(rejectBtn);
+    expect(onReject).toHaveBeenCalledWith('Needs rework.', undefined);
+  });
+
+  it('a non-owner member with a permitted title (Engineering Manager) can both Approve and Reject at gate0', async () => {
+    mockAuth.userEmail = 'priya@example.com';
+    renderGate0(makeGate0Project({
+      teamMembers: [
+        ...makeProject().teamMembers!,
+        { id: 'm3', name: 'Priya Shah', email: 'priya@example.com', role: 'Engineering Manager', appRole: 'editor', avatarColor: '#d97706' },
+      ],
+    }));
+
+    expect(screen.getByRole('button', { name: /Approve & Continue/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
+  });
+
+  it('a non-owner member without a permitted title is still blocked at gate0 (role restriction still applies)', () => {
+    mockAuth.userEmail = 'raj@example.com'; // editor, "Engineering Lead" — not permitted, not admin
+    renderGate0(makeGate0Project());
+
+    expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Only the Project Owner, Product Manager, Project Manager, Engineering Manager, Delivery Manager, Architect, or an admin/)).toBeInTheDocument();
+  });
+
+  it('no stray "Owner/admin approval required" badge or gate0-specific tooltip remains', async () => {
+    renderGate0(makeGate0Project());
+    expect(screen.queryByText(/Owner\/admin approval required/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Only the project owner or an admin can approve the execution plan/)).not.toBeInTheDocument();
+  });
+});

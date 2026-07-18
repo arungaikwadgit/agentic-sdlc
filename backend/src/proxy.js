@@ -704,7 +704,23 @@ function fromAnthropicResponse(data) {
   };
 }
 
-async function callOpenAi(systemPrompt, userPrompt) {
+// Output-token enforcement (2026-07-17): every call used to hardcode
+// max_tokens: 8192 unconditionally, regardless of whether the response was
+// expected to be a full document or a two-line TOOL_CALL/PLAN_REVISION
+// marker (see l3Runtime.ts, which makes several such short-response calls
+// per agent run before ever writing the real deliverable). Callers may now
+// pass a smaller budget for those intermediate calls; omitting it (every
+// pre-existing caller) preserves today's exact 8192 behavior. Clamped so a
+// bad/missing value can't zero out a call or blow the ceiling back open.
+const DEFAULT_MAX_TOKENS = 8192;
+const MIN_MAX_TOKENS = 256;
+function clampMaxTokens(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_TOKENS;
+  return Math.min(DEFAULT_MAX_TOKENS, Math.max(MIN_MAX_TOKENS, Math.round(n)));
+}
+
+async function callOpenAi(systemPrompt, userPrompt, maxTokens) {
   const requestBody = JSON.stringify({
     model:    OPENAI_MODEL,
     messages: [
@@ -712,7 +728,7 @@ async function callOpenAi(systemPrompt, userPrompt) {
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.4,
-    max_tokens:  8192,
+    max_tokens:  clampMaxTokens(maxTokens),
   });
 
   const { status, body } = await httpsPost(
@@ -739,12 +755,12 @@ async function callOpenAi(systemPrompt, userPrompt) {
   return fromOpenAiResponse(data);
 }
 
-async function callClaude(systemPrompt, userPrompt) {
+async function callClaude(systemPrompt, userPrompt, maxTokens) {
   const requestBody = JSON.stringify({
     model:      ANTHROPIC_MODEL,
     system:     systemPrompt,
     messages:   [{ role: 'user', content: userPrompt }],
-    max_tokens: 8192,
+    max_tokens: clampMaxTokens(maxTokens),
     temperature: 0.4,
   });
 
@@ -781,7 +797,7 @@ async function callClaude(systemPrompt, userPrompt) {
 // "<org>/<model>:<provider>" convention — see comment on HUGGINGFACE_BASE_URL
 // above); entry.modelSlug can override this if the catalog id needs to differ
 // from the literal model string sent upstream for some other gateway.
-async function callOpenAiCompatible(entry, systemPrompt, userPrompt) {
+async function callOpenAiCompatible(entry, systemPrompt, userPrompt, maxTokens) {
   const apiKey = entry.apiKeyEnvVar === 'HUGGINGFACE_API_KEY'
     ? HUGGINGFACE_API_KEY
     : (entry.apiKeyEnvVar ? process.env[entry.apiKeyEnvVar] : '');
@@ -800,7 +816,7 @@ async function callOpenAiCompatible(entry, systemPrompt, userPrompt) {
       { role: 'user',   content: userPrompt },
     ],
     temperature: 0.4,
-    max_tokens:  8192,
+    max_tokens:  clampMaxTokens(maxTokens),
   });
 
   const url = entry.endpointUrl.replace(/\/+$/, '') + '/chat/completions';
@@ -837,23 +853,23 @@ async function callOpenAiCompatible(entry, systemPrompt, userPrompt) {
 // hit any of them the same way. If the default OpenAI call itself is what
 // failed, there's nothing left to fall back to — the error propagates as-is,
 // identical to today's behavior.
-async function dispatchAgentCall(target, systemPrompt, userPrompt) {
+async function dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens) {
   const attemptLabel = target.kind === 'catalog' ? (target.entry.label ?? target.entry.id) : target.provider;
 
   try {
     if (target.kind === 'catalog') {
-      const result = await withRetry(() => callOpenAiCompatible(target.entry, systemPrompt, userPrompt));
+      const result = await withRetry(() => callOpenAiCompatible(target.entry, systemPrompt, userPrompt, maxTokens));
       return { ...result, provider: target.entry.providerType, model: target.entry.id };
     }
     const result = await withRetry(() =>
-      target.provider === 'claude' ? callClaude(systemPrompt, userPrompt) : callOpenAi(systemPrompt, userPrompt)
+      target.provider === 'claude' ? callClaude(systemPrompt, userPrompt, maxTokens) : callOpenAi(systemPrompt, userPrompt, maxTokens)
     );
     return { ...result, provider: target.provider, model: target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL };
   } catch (err) {
     if (target.kind === 'legacy' && target.provider === 'openai') throw err; // already the default — nothing to fall back to
 
     console.error(`[dispatchAgentCall] ${attemptLabel} failed (${err.message}) — falling back to default OpenAI model`);
-    const fallbackResult = await withRetry(() => callOpenAi(systemPrompt, userPrompt));
+    const fallbackResult = await withRetry(() => callOpenAi(systemPrompt, userPrompt, maxTokens));
     return { ...fallbackResult, provider: 'openai', model: OPENAI_MODEL, fallbackFrom: attemptLabel };
   }
 }
@@ -881,7 +897,7 @@ async function withRetry(fn, maxAttempts = 4) {
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 app.post('/api/agent', checkToken, async (req, res) => {
-  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider } = req.body ?? {};
+  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider, maxTokens } = req.body ?? {};
 
   if (!systemPrompt || !userPrompt)
     return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
@@ -919,7 +935,7 @@ app.post('/api/agent', checkToken, async (req, res) => {
   }
 
   try {
-    const result = await dispatchAgentCall(target, systemPrompt, userPrompt);
+    const result = await dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens);
     return res.json(result);
 
   } catch (err) {
@@ -932,7 +948,7 @@ app.post('/api/agent', checkToken, async (req, res) => {
 // Alias — newer frontend builds call /api/agents/call; route to the same handler
 app.post('/api/agents/call', checkToken, async (req, res) => {
   // Delegate to /api/agent handler by reusing the same logic inline
-  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider } = req.body ?? {};
+  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider, maxTokens } = req.body ?? {};
 
   // Diagnostic logging (temporary) — see checkToken() above. Traces the full
   // Test Connection / agent-call lifecycle on the backend, from authenticated
@@ -981,7 +997,7 @@ app.post('/api/agents/call', checkToken, async (req, res) => {
   try {
     console.log(`${callTag} calling ${provider} API...`);
     const started = Date.now();
-    const result = await dispatchAgentCall(target, systemPrompt, userPrompt);
+    const result = await dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens);
     console.log(`${callTag} ${provider} call succeeded in ${Date.now() - started}ms` + (result.fallbackFrom ? ` (fell back from ${result.fallbackFrom})` : ''));
     return res.json(result);
   } catch (err) {

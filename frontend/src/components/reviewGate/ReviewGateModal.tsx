@@ -13,8 +13,9 @@ import { checkPromptInjection } from '@/utils/sanitize';
 import { activateProjectPromptOverride } from '@/services/promptGovernance';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProjectExportPermission, getReviewGatePermission, isProjectAdminUser } from '@/lib/projectAccess';
+import { getProjectExportPermission, getReviewGatePermission } from '@/lib/projectAccess';
 import { isInternalAgent } from '@/lib/agentEnablement';
+import { applyContextBudget, parseTokenOptimizerBudgets } from '@/agents/contextBudget';
 import DocumentViewer from '../documents/DocumentViewer';
 import ExportMenu from '../documents/ExportMenu';
 import type { Project, ReviewGateId } from '@/types/project.types';
@@ -87,18 +88,14 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     fallbackMemberId: project.activeAdminId ?? null,
   });
 
-  // gate0 (orchestration, token optimization, and AI governance preflight) may only be approved by
-  // the project owner or an app admin — no agent past phase0 may run until
-  // one of them signs off. Other gates keep their existing, looser behavior
-  // (anyone who can reach this modal can approve).
-  const isGate0 = gateId === 'gate0';
-  const isProjectAdmin = isProjectAdminUser(project, {
-    adminMode,
-    userEmail: user?.email ?? null,
-    userId: user?.id ?? null,
-    fallbackMemberId: project.activeAdminId ?? null,
-  });
-  const gate0Blocked = isGate0 && !isProjectAdmin;
+  // gate0 (SDLC Orchestrator plan approval — must be approved before phase1
+  // starts) used to have its own narrower approver check here (project owner
+  // or adminMode only), separate from every other gate. That check didn't
+  // recognize a real app admin (isAppAdmin) at all — only the dev-mode bypass
+  // — so a production admin could be wrongly blocked from approving. Fixed
+  // 2026-07-17: gate0 now uses the exact same canActOnGate permission (below)
+  // as every other gate — Project Owner, app admin, or one of
+  // REVIEW_GATE_APPROVER_TITLES. No gate-specific carve-out remains.
 
   // Approve/Reject are only available to the Project Owner, an admin (app
   // admin or the dev-mode adminMode bypass), or a member whose job title is
@@ -264,10 +261,17 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     setDryRunResult(null);
     try {
       const domain = getDomain(project.domain);
-      const priorOutputs: Partial<Record<AgentId, string>> = {};
+      const rawPriorOutputs: Partial<Record<AgentId, string>> = {};
       for (const [id, run] of Object.entries(project.agentRuns)) {
-        if (run?.status === 'complete' && run.output) priorOutputs[id as AgentId] = run.output;
+        if (run?.status === 'complete' && run.output) rawPriorOutputs[id as AgentId] = run.output;
       }
+      // Same context budget enforcement as the real pipeline run — see
+      // agents/contextBudget.ts and buildAgentPromptContext() in
+      // pipelineEngine.ts.
+      const priorOutputs = applyContextBudget(
+        rawPriorOutputs,
+        parseTokenOptimizerBudgets(rawPriorOutputs.tokenOptimizer)
+      );
       const domainContext = project.domainKnowledge
         ? `${project.domainKnowledge}\n\n---\n\n${domain.context}`
         : domain.context;
@@ -366,9 +370,8 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 when this viewer isn't allowed to act on the gate, or when an
                 agent in these phases hasn't finished running yet — both are
                 "not available" conditions, not "available but blocked" ones.
-                gate0Blocked stays a soft-disable-with-explanation below,
-                since that's an existing, different rule (only the plan's
-                own approver may sign off gate0 specifically). */}
+                This applies uniformly to every gate, including gate0 — see
+                canActOnGate above. */}
             {!canActOnGate ? (
               <span className={styles.gateRestrictedNote} title={gatePermission.reason ?? undefined}>
                 🔒 {gatePermission.reason}
@@ -405,22 +408,11 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 <button
                   className="btn-primary"
                   onClick={() => onApprove(notes, approvedById || undefined)}
-                  disabled={gate0Blocked || !approvedById}
-                  title={
-                    !approvedById
-                      ? 'Select who is approving before continuing.'
-                      : gate0Blocked
-                      ? 'Only the project owner or an admin can approve the execution plan. Ask them to review and approve before other agents can run.'
-                      : undefined
-                  }
+                  disabled={!approvedById}
+                  title={!approvedById ? 'Select who is approving before continuing.' : undefined}
                 >
                   Approve &amp; Continue ›
                 </button>
-                {gate0Blocked && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
-                    🔒 Owner/admin approval required
-                  </span>
-                )}
               </>
             )}
           </div>

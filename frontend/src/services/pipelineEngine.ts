@@ -24,6 +24,7 @@ import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
 import { isAgentSkipped, isInternalAgent } from '@/lib/agentEnablement';
+import { applyContextBudget, parseTokenOptimizerBudgets } from '@/agents/contextBudget';
 import { generateClarifyingQuestions, hasMeaningfulClarifyingAnswers } from './clarifyingQuestions';
 import { emitLifecycleEvent } from './lifecycleEvents';
 import type { Project, ReviewGateId } from '@/types/project.types';
@@ -90,10 +91,21 @@ function buildGovernanceSnapshot(project: Project) {
 
 export function buildAgentPromptContext(project: Project, agentId?: AgentId): AgentPromptContext {
   const domain = getDomain(project.domain);
-  const priorOutputs: Partial<Record<AgentId, string>> = {};
+  const rawPriorOutputs: Partial<Record<AgentId, string>> = {};
   for (const [completedAgentId, run] of Object.entries(project.agentRuns)) {
-    if (run?.status === 'complete' && run.output) priorOutputs[completedAgentId as AgentId] = run.output;
+    if (run?.status === 'complete' && run.output) rawPriorOutputs[completedAgentId as AgentId] = run.output;
   }
+  // Context budget enforcement (2026-07-17, see agents/contextBudget.ts):
+  // every prior-agent output is capped before any downstream agent sees it —
+  // via buildUserPrompt's direct ctx.priorOutputs.X reads AND the
+  // get_agent_output L3 tool, which previously bypassed every existing ad
+  // hoc .slice() limit entirely. tokenOptimizer's own "Progressive Context
+  // Plan" (when present and parseable) supplies per-agent overrides; every
+  // other entry falls back to DEFAULT_MAX_PRIOR_OUTPUT_CHARS.
+  const priorOutputs = applyContextBudget(
+    rawPriorOutputs,
+    parseTokenOptimizerBudgets(rawPriorOutputs.tokenOptimizer)
+  );
   return {
     projectName: project.name,
     projectDescription: project.description,

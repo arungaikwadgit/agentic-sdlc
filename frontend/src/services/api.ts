@@ -109,6 +109,17 @@ export interface AgentRequest {
   projectId?: string;
   /** Optional AbortSignal for request cancellation / timeout (H-06 fix). */
   signal?: AbortSignal;
+  /**
+   * Output-token cap for this specific call (2026-07-17 — see
+   * agents/contextBudget.ts for the matching input-side enforcement). The
+   * backend clamps this to [256, 8192] and defaults to 8192 (today's
+   * unconditional behavior) when omitted — every existing caller that
+   * doesn't set this is unaffected. l3Runtime.ts sets a lower value on
+   * intermediate tool-call/plan-revision iterations, where the response is
+   * structurally a short marker + small JSON/step list, never the full
+   * deliverable.
+   */
+  maxTokens?: number;
 }
 
 // OpenAI chat completion response shape

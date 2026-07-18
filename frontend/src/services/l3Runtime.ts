@@ -316,13 +316,29 @@ export async function runL3Agent(
       await new Promise((r) => setTimeout(r, isNaN(delayMs) ? 1500 : delayMs));
     }
 
-    // Call the LLM - retries automatically on 429 with backoff
+    // Output-token enforcement (2026-07-17): every non-final iteration is
+    // expected, by this loop's own design (see buildL3SystemPrompt's
+    // Execution Rules and the "call one tool per response" instruction), to
+    // produce a short TOOL_CALL/PLAN_REVISION marker, not the full
+    // deliverable — yet every call used to allow the same 8192-token output
+    // budget as the call that actually writes the document. Only the
+    // last-chance iteration (explicitly told "emit FINAL_OUTPUT: now") gets
+    // the full budget; every other iteration is capped lower — 2048 tokens
+    // (~1,500 words) is far more than a TOOL_CALL/PLAN_REVISION marker ever
+    // needs, but generous enough that a model finishing early with a
+    // moderate-length real document on a low-maxIterations agent still
+    // fits. This is primarily a runaway-output ceiling (well-behaved short
+    // responses stop naturally long before hitting either cap); its
+    // guaranteed savings are on any call that would otherwise have padded
+    // toward 8192.
+    const INTERMEDIATE_MAX_TOKENS = 2048;
     const resp = await callWithRetry({
       systemPrompt: l3SystemPrompt,
       userPrompt: buildConversationPrompt(turns, userContent, iteration),
       agentId: options.agentId,
       provider: options.provider,
       projectId: options.projectId,
+      maxTokens: nearLimit ? undefined : INTERMEDIATE_MAX_TOKENS,
     });
 
     const rawText = api.extractText(resp);
