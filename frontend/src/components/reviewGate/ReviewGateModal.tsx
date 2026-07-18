@@ -404,6 +404,16 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                     ))}
                   </select>
                 )}
+                {/* Data-entry requirement hints — deliberately distinct from
+                    .gateRestrictedNote (which means "you can't act on this
+                    gate at all"). These mean "you can act, but this button
+                    needs one more field filled in first" — the Review Notes
+                    textarea is at the bottom of the modal, easy to miss, so
+                    without this a disabled Reject button reads as a
+                    permission bug instead of a validation state. */}
+                {!notes.trim() && (
+                  <span className={styles.actionRequiredHint}>* Comment required to reject (see Review Notes below)</span>
+                )}
                 <button
                   className="btn-danger"
                   onClick={() => onReject(notes, approvedById || undefined)}
@@ -412,6 +422,9 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 >
                   Reject &amp; Stop
                 </button>
+                {!approvedById && (
+                  <span className={styles.actionRequiredHint}>* Select approver to continue</span>
+                )}
                 <button
                   className="btn-primary"
                   onClick={() => onApprove(notes, approvedById || undefined)}

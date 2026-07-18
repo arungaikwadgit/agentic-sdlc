@@ -123,6 +123,18 @@
   line-height: 1.4;
 }
 
+/* Shown next to Reject/Approve when the button is disabled for a data-entry
+   reason (missing comment / missing approver), not a permission reason — so
+   it doesn't read as the same "you're not allowed" state as
+   .gateRestrictedNote above. Placed right beside the buttons since the
+   Review Notes field itself is at the bottom of the modal, out of view. */
+.actionRequiredHint {
+  font-size: 11px;
+  color: var(--error, #f87171);
+  max-width: 150px;
+  line-height: 1.3;
+}
+
 .body {
   flex: 1;
   display: flex;
