@@ -155,6 +155,11 @@ export interface ReviewGate {
   approved: boolean;
   approvedAt?: number;
   approvedBy?: string;
+  /** Set when this gate was rejected rather than approved — see
+   *  ReviewGateModal's mandatory review-comments-on-reject requirement.
+   *  `approved` stays false; `notes` holds the required rejection reason. */
+  rejectedAt?: number;
+  rejectedBy?: string;
   notes?: string;
 }
 

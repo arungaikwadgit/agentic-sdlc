@@ -113,6 +113,16 @@
 }
 .approverSelect:focus { outline: none; border-color: var(--accent); }
 
+/* Shown instead of the approver select / Reject / Approve controls when
+   this viewer can't act on the gate yet (wrong role, or a phase agent
+   hasn't finished running) — see canActOnGate / allAgentsComplete. */
+.gateRestrictedNote {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 360px;
+  line-height: 1.4;
+}
+
 .body {
   flex: 1;
   display: flex;

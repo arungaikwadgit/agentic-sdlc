@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { Project } from '../../frontend/src/types/project.types';
+import { PHASE_AGENTS } from '../../frontend/src/agents/constants';
+import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
 
 // ── Mock dexie-react-hooks: unused by the current ProjectWorkspace.tsx
 // (it now fetches via the useProject() hook, not useLiveQuery directly),
@@ -106,7 +108,20 @@ vi.mock('../../frontend/src/components/documents/DocumentViewer', () => ({
   default: () => <div data-testid="document-viewer" />,
 }));
 vi.mock('../../frontend/src/components/reviewGate/ReviewGateModal', () => ({
-  default: (props: { gateId: string }) => <div data-testid="review-gate-modal" data-gate-id={props.gateId} />,
+  // Exposes the real onApprove/onReject callbacks ProjectWorkspace wires up
+  // (see the reject-persistence test below) rather than just rendering a
+  // stub div — the real approve/reject UI and mandatory-field validation are
+  // covered in ReviewGateModal-core.test.tsx; this suite only needs to
+  // verify ProjectWorkspace threads the callback results into updateProject
+  // correctly.
+  default: (props: { gateId: string; onApprove: (notes: string, approvedById?: string) => void; onReject: (notes: string, actingAsId?: string) => void }) => (
+    <div data-testid="review-gate-modal" data-gate-id={props.gateId}>
+      <button onClick={() => props.onReject('Missing the compliance section, please redo.', 'member-1')}>
+        mock-reject
+      </button>
+      <button onClick={() => props.onApprove('Looks good.', 'member-1')}>mock-approve</button>
+    </div>
+  ),
 }));
 vi.mock('../../frontend/src/components/settings/ProjectSettings', () => ({
   default: () => <div data-testid="project-settings" />,
@@ -298,6 +313,82 @@ describe('ProjectWorkspace — run/stop controls', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
     });
+  });
+
+  it('rejecting a gate persists rejectedAt/rejectedBy/notes, leaves approved false, and keeps the project paused (TS-192)', async () => {
+    currentProject = baseProject({ status: 'draft' });
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Run Pipeline' }));
+    await waitFor(() => expect(lastEngineCallbacks).toBeTruthy());
+    lastEngineCallbacks.onGateReached('gate1');
+    await screen.findByTestId('review-gate-modal');
+
+    updateProjectMock.mockClear();
+    await user.click(screen.getByRole('button', { name: 'mock-reject' }));
+
+    expect(updateProjectMock).toHaveBeenCalledWith('proj-1', expect.any(Function));
+    const mutator = updateProjectMock.mock.calls[updateProjectMock.mock.calls.length - 1][1];
+    const draft: any = { reviewGates: {}, status: 'running' };
+    mutator(draft);
+
+    expect(draft.reviewGates.gate1.approved).toBe(false);
+    expect(draft.reviewGates.gate1.rejectedBy).toBe('member-1');
+    expect(draft.reviewGates.gate1.notes).toBe('Missing the compliance section, please redo.');
+    expect(draft.reviewGates.gate1.rejectedAt).toEqual(expect.any(Number));
+    // Rejecting never advances the pipeline — stays paused, not running.
+    expect(draft.status).toBe('paused');
+
+    // Modal closes after rejection.
+    await waitFor(() => expect(screen.queryByTestId('review-gate-modal')).not.toBeInTheDocument());
+  });
+
+  it('shows a clickable "Enable" bypass for an admin/owner on a skipped agent, which clears skippedAgentIds (TS-193)', async () => {
+    const skippedAgentId = PHASE_AGENTS.phase1[0];
+    currentProject = baseProject({
+      status: 'paused',
+      agentRuns: { [skippedAgentId]: { agentId: skippedAgentId, status: 'skipped' } } as Project['agentRuns'],
+      skippedAgentIds: [skippedAgentId],
+    });
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    await screen.findByText(AGENT_DEFINITIONS[skippedAgentId]?.name ?? skippedAgentId);
+    expect(screen.queryByText(/Locked/)).not.toBeInTheDocument();
+    const enableBtn = screen.getByRole('button', { name: 'Enable' });
+
+    const user = userEvent.setup();
+    await user.click(enableBtn);
+
+    expect(updateProjectMock).toHaveBeenCalledWith('proj-1', expect.any(Function));
+    const mutator = updateProjectMock.mock.calls[updateProjectMock.mock.calls.length - 1][1];
+    const draft: any = { skippedAgentIds: [skippedAgentId] };
+    mutator(draft);
+    expect(draft.skippedAgentIds).not.toContain(skippedAgentId);
+  });
+
+  it('shows a locked indicator (no bypass button) for a non-admin member on a skipped agent (TS-194)', async () => {
+    const skippedAgentId = PHASE_AGENTS.phase1[0];
+    currentProject = baseProject({
+      status: 'paused',
+      // Break the ownerId fallback (see projectAccess.ts ownerFallbackMember)
+      // so the mocked "owner@example.com" user resolves to this Editor
+      // teamMember instead of a synthesized project owner.
+      ownerId: 'someone-else',
+      teamMembers: [
+        { id: 'member-2', name: 'Eve Editor', email: 'owner@example.com', role: 'Engineer', appRole: 'editor', avatarColor: '#0891b2' },
+      ],
+      activeAdminId: 'member-2',
+      agentRuns: { [skippedAgentId]: { agentId: skippedAgentId, status: 'skipped' } } as Project['agentRuns'],
+    });
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    await screen.findByText(AGENT_DEFINITIONS[skippedAgentId]?.name ?? skippedAgentId);
+    expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Locked/)).toHaveAttribute(
+      'title',
+      'This agent is unassigned and can only be bypassed by a Project Owner or Admin.'
+    );
   });
 
   it('auto-opens the settings panel on first render when teamMembers is empty (TS-183)', async () => {

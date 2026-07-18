@@ -13,7 +13,7 @@ import { checkPromptInjection } from '@/utils/sanitize';
 import { activateProjectPromptOverride } from '@/services/promptGovernance';
 import { buildTeamRoster } from '@/data/roleTemplates';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProjectExportPermission, isProjectAdminUser } from '@/lib/projectAccess';
+import { getProjectExportPermission, getReviewGatePermission, isProjectAdminUser } from '@/lib/projectAccess';
 import { isInternalAgent } from '@/lib/agentEnablement';
 import DocumentViewer from '../documents/DocumentViewer';
 import ExportMenu from '../documents/ExportMenu';
@@ -42,7 +42,11 @@ interface Props {
   gateId: ReviewGateId;
   project: Project;
   onApprove: (notes: string, approvedById?: string) => void;
-  onReject: () => void;
+  /** Rejection now always carries the (mandatory) review comment explaining
+   *  why; actingAsId is the optional "Approving as..." selection, reused
+   *  here for audit purposes even though selecting it isn't required to
+   *  reject (only to approve — see approvedById validation below). */
+  onReject: (notes: string, actingAsId?: string) => void;
   onClose: () => void;
 }
 
@@ -73,7 +77,7 @@ function getGateAssignees(project: Project, agents: AgentId[]) {
 }
 
 export default function ReviewGateModal({ gateId, project, onApprove, onReject, onClose }: Props) {
-  const { user, adminMode } = useAuth();
+  const { user, adminMode, isAppAdmin } = useAuth();
   const phases = REVIEW_GATES[gateId];
   const agents: AgentId[] = phases.flatMap((p) => PHASE_AGENTS[p as PhaseId] ?? []).filter((agentId) => !isInternalAgent(agentId));
   const exportPermission = getProjectExportPermission(project, {
@@ -95,6 +99,22 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     fallbackMemberId: project.activeAdminId ?? null,
   });
   const gate0Blocked = isGate0 && !isProjectAdmin;
+
+  // Approve/Reject are only available to the Project Owner, an admin (app
+  // admin or the dev-mode adminMode bypass), or a member whose job title is
+  // in REVIEW_GATE_APPROVER_TITLES (projectAccess.ts) — see
+  // getReviewGatePermission(). Anyone else can still open this modal and
+  // view outputs, but the action buttons are hidden below rather than
+  // just disabled, per the "only available to"
+  // requirement.
+  const gatePermission = getReviewGatePermission(project, {
+    adminMode,
+    isAppAdmin,
+    userEmail: user?.email ?? null,
+    userId: user?.id ?? null,
+    fallbackMemberId: project.activeAdminId ?? null,
+  });
+  const canActOnGate = gatePermission.canAct;
 
   const [selectedAgent, setSelectedAgent] = useState<AgentId>(agents[0]);
   const [notes, setNotes] = useState('');
@@ -342,40 +362,66 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 ))}
               </div>
             )}
-            {/* Approver selector */}
-            {members.length > 0 && (
-              <select
-                value={approvedById}
-                onChange={(e) => setApprovedById(e.target.value)}
-                className={styles.approverSelect}
-                title="Who is approving?"
-              >
-                <option value="">Approving as...</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name} ({m.role})</option>
-                ))}
-              </select>
-            )}
-            <button className="btn-danger" onClick={onReject}>Reject &amp; Stop</button>
-            <button
-              className="btn-primary"
-              onClick={() => onApprove(notes, approvedById || undefined)}
-              disabled={!allAgentsComplete || gate0Blocked}
-              title={
-                !allAgentsComplete
-                  ? `Waiting on ${incompleteAgents.length} agent${incompleteAgents.length === 1 ? '' : 's'} to finish: ` +
-                    incompleteAgents.map((a) => AGENT_DEFINITIONS[a]?.name ?? a).join(', ')
-                  : gate0Blocked
-                  ? 'Only the project owner or an admin can approve the execution plan. Ask them to review and approve before other agents can run.'
-                  : undefined
-              }
-            >
-              Approve &amp; Continue ›
-            </button>
-            {gate0Blocked && (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
-                🔒 Owner/admin approval required
+            {/* Approve/Reject controls: hidden entirely (not just disabled)
+                when this viewer isn't allowed to act on the gate, or when an
+                agent in these phases hasn't finished running yet — both are
+                "not available" conditions, not "available but blocked" ones.
+                gate0Blocked stays a soft-disable-with-explanation below,
+                since that's an existing, different rule (only the plan's
+                own approver may sign off gate0 specifically). */}
+            {!canActOnGate ? (
+              <span className={styles.gateRestrictedNote} title={gatePermission.reason ?? undefined}>
+                🔒 {gatePermission.reason}
               </span>
+            ) : !allAgentsComplete ? (
+              <span className={styles.gateRestrictedNote}>
+                ⏳ Waiting on {incompleteAgents.length} agent{incompleteAgents.length === 1 ? '' : 's'} to finish: {' '}
+                {incompleteAgents.map((a) => AGENT_DEFINITIONS[a]?.name ?? a).join(', ')}
+              </span>
+            ) : (
+              <>
+                {/* Approver selector — mandatory to approve (not to reject) */}
+                {members.length > 0 && (
+                  <select
+                    value={approvedById}
+                    onChange={(e) => setApprovedById(e.target.value)}
+                    className={styles.approverSelect}
+                    title="Who is approving?"
+                  >
+                    <option value="">Approving as... *</option>
+                    {members.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name} ({m.role})</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  className="btn-danger"
+                  onClick={() => onReject(notes, approvedById || undefined)}
+                  disabled={!notes.trim()}
+                  title={!notes.trim() ? 'Add a review comment explaining the rejection before rejecting.' : undefined}
+                >
+                  Reject &amp; Stop
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => onApprove(notes, approvedById || undefined)}
+                  disabled={gate0Blocked || !approvedById}
+                  title={
+                    !approvedById
+                      ? 'Select who is approving before continuing.'
+                      : gate0Blocked
+                      ? 'Only the project owner or an admin can approve the execution plan. Ask them to review and approve before other agents can run.'
+                      : undefined
+                  }
+                >
+                  Approve &amp; Continue ›
+                </button>
+                {gate0Blocked && (
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>
+                    🔒 Owner/admin approval required
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -543,11 +589,13 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
         {/* Notes bar */}
         {/* Notes bar */}
         <div className={styles.notesBar}>
-          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Review Notes (optional)</label>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            Review Notes (optional to approve — required to reject)
+          </label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Add notes or feedback for this review gate..."
+            placeholder="Add notes or feedback for this review gate... required if you're rejecting"
             rows={2}
             style={{ resize: 'vertical' }}
           />

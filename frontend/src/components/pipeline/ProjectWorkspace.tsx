@@ -196,7 +196,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function ProjectWorkspace({ projectId, onBack }: Props) {
-  const { user, adminMode, loading: authLoading } = useAuth();
+  const { user, adminMode, isAppAdmin, loading: authLoading } = useAuth();
   const { project, loading: projectLoading, refreshing: projectRefreshing } = useProject(projectId);
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
@@ -1183,25 +1183,37 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                           ↻
                         </button>
                       )}
-                      {/* Step D — admin/owner override: re-enable a skipped agent.
-                          Only visible to an admin/owner (mirrors the gate0 approval
-                          scoping) so a regular member can't silently bypass the
-                          team-assignment warning. Clears the agent from
-                          project.skippedAgentIds; the engine will run it normally
-                          on the next pipeline pass through its phase. */}
-                      {status === 'skipped' && isAdmin && (
-                        <button
-                          className={styles.agentEnableBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateProject(projectId, (p) => {
-                              p.skippedAgentIds = (p.skippedAgentIds ?? []).filter((id) => id !== agentId);
-                            });
-                          }}
-                          title={'No team member is assigned to ' + (def?.name ?? agentId) + ' — click to re-enable it anyway (admin override)'}
-                        >
-                          Enable
-                        </button>
+                      {/* Step D — re-enable a skipped (unassigned) agent.
+                          Only an Admin or Project Owner may bypass the
+                          missing-assignment gate — everyone else sees a
+                          locked indicator with an explanatory tooltip
+                          instead of a working control, so they can't
+                          silently route around the assignment requirement.
+                          Clears the agent from project.skippedAgentIds; the
+                          engine will run it normally on the next pipeline
+                          pass through its phase. */}
+                      {status === 'skipped' && (
+                        (isAdmin || isAppAdmin) ? (
+                          <button
+                            className={styles.agentEnableBtn}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateProject(projectId, (p) => {
+                                p.skippedAgentIds = (p.skippedAgentIds ?? []).filter((id) => id !== agentId);
+                              });
+                            }}
+                            title={'No team member is assigned to ' + (def?.name ?? agentId) + ' — click to enable it anyway.'}
+                          >
+                            Enable
+                          </button>
+                        ) : (
+                          <span
+                            className={styles.agentSkipLocked}
+                            title="This agent is unassigned and can only be bypassed by a Project Owner or Admin."
+                          >
+                            🔒 Locked
+                          </span>
+                        )
                       )}
                       {/* F4 — run-from-here button (visible on hover, hidden when locked/running).
                           Same scoping rationale as the retry button above. */}
@@ -1652,7 +1664,24 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             setPendingGate(null);
             if (nextPhase && !isAgentAccessScoped) attemptStartPipeline(nextPhase);
           }}
-          onReject={() => setPendingGate(null)}
+          onReject={async (notes, actingAsId) => {
+            await updateProject(projectId, (p) => {
+              p.reviewGates[pendingGate] = {
+                id: pendingGate,
+                afterPhases: [],
+                approved: false,
+                rejectedAt: Date.now(),
+                rejectedBy: actingAsId,
+                notes,
+              };
+              // Stays paused at the phase before this gate — rejecting
+              // never advances the pipeline (that's the whole point of
+              // "Reject & Stop"); an admin/owner has to intervene (edit
+              // outputs, fix assignments, etc.) and re-approve to continue.
+              p.status = 'paused';
+            });
+            setPendingGate(null);
+          }}
           onClose={() => setPendingGate(null)}
         />
       )}

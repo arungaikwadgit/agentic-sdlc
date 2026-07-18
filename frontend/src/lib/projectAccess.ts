@@ -99,6 +99,52 @@ export function getProjectExportPermission(project: Project, ctx: ProjectAccessC
   };
 }
 
+// Job titles (TeamMember.role, free text) that may act on a review gate in
+// addition to the Project Owner and app admins — picked explicitly by Arun
+// from the full ROLE_TEMPLATES catalog (see data/roleTemplates.ts) plus one
+// custom addition (Delivery Manager isn't a ROLE_TEMPLATES entry, so it only
+// matches a member whose job title was typed exactly that way via the
+// custom-role field — it won't appear as a quick-apply suggestion). Matched
+// case-insensitively; a misspelled title (e.g. "Sr. PM") will not match.
+const REVIEW_GATE_APPROVER_TITLES = new Set(
+  ['Product Manager', 'Project Manager', 'Engineering Manager', 'Delivery Manager', 'Architect'].map((t) => t.toLowerCase())
+);
+const REVIEW_GATE_APPROVER_TITLES_LABEL = 'Project Owner, Product Manager, Project Manager, Engineering Manager, Delivery Manager, Architect, or an admin';
+
+export interface ReviewGateAccessContext extends ProjectAccessContext {
+  /** Real, production-recognized app admin (AuthContext's isAppAdmin) — distinct
+   *  from `adminMode` (the local-dev bypass), which already implies this. */
+  isAppAdmin?: boolean;
+}
+
+export interface ReviewGatePermissionState {
+  canAct: boolean;
+  member: TeamMember | null;
+  reason: string | null;
+}
+
+/**
+ * Who may approve or reject a review gate: the Project Owner, a real app
+ * admin (or the dev-mode admin bypass), or a member whose job title is one
+ * of REVIEW_GATE_APPROVER_TITLES. Everyone else (Editor/Reviewer/Viewer with
+ * any other title — QA Engineer, Tech Lead, Scrum Master, etc.) can still
+ * view the gate's outputs but not approve or reject it.
+ */
+export function getReviewGatePermission(project: Project, ctx: ReviewGateAccessContext): ReviewGatePermissionState {
+  if (ctx.adminMode || ctx.isAppAdmin) return { canAct: true, member: null, reason: null };
+  const member = getProjectMember(project, ctx);
+  if (!member) {
+    return { canAct: false, member: null, reason: 'You are not a member of this project.' };
+  }
+  if (member.appRole === 'project_owner') return { canAct: true, member, reason: null };
+  if (REVIEW_GATE_APPROVER_TITLES.has(norm(member.role))) return { canAct: true, member, reason: null };
+  return {
+    canAct: false,
+    member,
+    reason: `Only the ${REVIEW_GATE_APPROVER_TITLES_LABEL} can approve or reject this gate.`,
+  };
+}
+
 export interface AgentRunPermissionState {
   canRun: boolean;
   /** True when this member is restricted to a specific agent set (agentAccessScoped) — as opposed to being denied for a role-level reason (e.g. Reviewer/Viewer). */

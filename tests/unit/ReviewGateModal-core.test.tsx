@@ -1,7 +1,11 @@
 // tests/unit/ReviewGateModal-core.test.tsx
 // Real-component RTL test for ReviewGateModal.tsx — covers the core review
 // gate workflow: agent list, view/edit output, approve/reject, assignee
-// badges, and the approver selector. Covers TS-60 through TS-74 from
+// badges, the approver selector, and the approve/reject authorization +
+// completeness gating added alongside the mandatory-approver/mandatory-
+// rejection-comment requirements. Covers TS-60 through TS-74, plus TS-86
+// through TS-91 (approve/reject role restriction, mandatory approver,
+// mandatory rejection comment, and hide-when-incomplete) from
 // docs/test-plans/review-gates-test-plan.md.
 //
 // Prompt sandbox mode is covered separately in
@@ -14,13 +18,28 @@ import { PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES } from '../../frontend/src/age
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
 
 // ── Mock contexts/AuthContext — ReviewGateModal.tsx calls useAuth()
-// unconditionally at the top of the component (to compute exportPermission
-// via getProjectExportPermission()); without this mock, useAuth() throws
-// "must be used inside <AuthProvider>" and every test in this file fails to
-// render. Pre-existing gap, same root cause already found and fixed in the
-// 4 ProjectWorkspace-*.test.tsx files this session. ──
+// unconditionally at the top of the component. Hoisted + mutable so
+// individual tests can swap the "current user" identity to exercise the
+// getReviewGatePermission() role gate (project owner / PM / EM / PdM / admin
+// vs everyone else) without a full remock per test. Defaults to
+// asha@example.com, which matches teamMembers[0] (project_owner) in
+// makeProject() below, so every pre-existing test that doesn't care about
+// identity keeps working unchanged.
+const mockAuth = vi.hoisted(() => ({
+  userId: 'owner-user-1',
+  userEmail: 'asha@example.com',
+  adminMode: false,
+  isAppAdmin: false,
+}));
 vi.mock('../../frontend/src/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'owner-user-1', email: 'owner@example.com' }, session: null, loading: false, adminMode: false, signOut: vi.fn() }),
+  useAuth: () => ({
+    user: { id: mockAuth.userId, email: mockAuth.userEmail },
+    session: null,
+    loading: false,
+    adminMode: mockAuth.adminMode,
+    isAppAdmin: mockAuth.isAppAdmin,
+    signOut: vi.fn(),
+  }),
 }));
 
 // ── Mock heavy/child components ─────────────────────────────────────────────
@@ -106,10 +125,11 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     promptOverrides: [],
     mode: 'expert',
     teamMembers: [
-      // appRole is the sole authority for admin gating now (isAdmin is
-      // deprecated) -- these fixtures used to carry only isAdmin, which
-      // does not match real DB data shape (every real teamMember has
-      // appRole set).
+      // m1 (Asha) is the project owner and the default mocked identity above
+      // — getReviewGatePermission() grants project owners regardless of job
+      // title. m2 (Raj) is an Engineer editor: not project_owner and not one
+      // of the PM/EM/PdM approver titles, so canActOnGate is false for them
+      // — used by the role-restriction tests below.
       { id: 'm1', name: 'Asha Patel', email: 'asha@example.com', role: 'Product Manager', appRole: 'project_owner', avatarColor: '#4f46e5' },
       { id: 'm2', name: 'Raj Kumar', email: 'raj@example.com', role: 'Engineering Lead', appRole: 'editor', avatarColor: '#16a34a' },
     ],
@@ -118,6 +138,15 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     ],
     ...overrides,
   } as Project;
+}
+
+const REAL_GATE3_AGENTS = REVIEW_GATES.gate3.flatMap((p) => PHASE_AGENTS[p] ?? []);
+
+function allGateAgentsCompleteProject(overrides: Partial<Project> = {}): Project {
+  const agentRuns = Object.fromEntries(
+    REAL_GATE3_AGENTS.map((agentId) => [agentId, { agentId, status: 'complete', output: `# ${agentId} output` }])
+  ) as Project['agentRuns'];
+  return makeProject({ agentRuns, ...overrides });
 }
 
 describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
@@ -131,6 +160,10 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     onApprove = vi.fn();
     onReject = vi.fn();
     onClose = vi.fn();
+    mockAuth.userId = 'owner-user-1';
+    mockAuth.userEmail = 'asha@example.com';
+    mockAuth.adminMode = false;
+    mockAuth.isAppAdmin = false;
   });
 
   function renderModal(project: Project = currentProject) {
@@ -303,9 +336,12 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(screen.queryByText('Assigned:')).not.toBeInTheDocument();
   });
 
-  // TS-72
+  // TS-72 — the approver select only renders once every gate agent has
+  // finished (see the incomplete-agents hide test below), so this needs the
+  // all-complete fixture now that Approve/Reject/select are hidden (not just
+  // disabled) while any agent is still running.
   it('"Approving as..." select lists all team members', () => {
-    renderModal();
+    renderModal(allGateAgentsCompleteProject());
     const select = screen.getByTitle('Who is approving?');
     expect(select).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Asha Patel (Product Manager)' })).toBeInTheDocument();
@@ -318,37 +354,11 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(screen.queryByText('Assigned:')).not.toBeInTheDocument();
   });
 
-  // "Approve & Continue" is disabled while any agent in this gate's phases is
-  // incomplete (ReviewGateModal.tsx: `disabled={!allAgentsComplete}`) -- the
-  // shared makeProject() fixture only completes 1 of the 6 ALL_GATE_AGENTS
-  // (by design, so TS-62/65/66's idle-agent assertions have something to
-  // point at), so these two "Approve & Continue" tests need every gate
-  // agent completed or the click below is a no-op and onApprove never fires
-  // (pre-existing fixture gap, unrelated to the isAdmin -> appRole RBAC
-  // consolidation, previously masked by the useAuth() crash).
-  //
-  // Note this must use the REAL agent set the component computes --
-  // REVIEW_GATES.gate3 actually covers 4 phases (phase3, phase3a, phase3c,
-  // phase3b), not just phase3+phase3b as ALL_GATE_AGENTS (and this file's
-  // header comment) assumed. Completing only ALL_GATE_AGENTS left the
-  // phase3a/phase3c agents incomplete, so allAgentsComplete stayed false
-  // and the button stayed disabled -- another pre-existing staleness
-  // unrelated to the RBAC consolidation, surfaced now that useAuth() no
-  // longer crashes before render.
-  const REAL_GATE3_AGENTS = REVIEW_GATES.gate3.flatMap((p) => PHASE_AGENTS[p] ?? []);
-
-  function allGateAgentsCompleteProject(overrides: Partial<Project> = {}): Project {
-    const agentRuns = Object.fromEntries(
-      REAL_GATE3_AGENTS.map((agentId) => [agentId, { agentId, status: 'complete', output: `# ${agentId} output` }])
-    ) as Project['agentRuns'];
-    return makeProject({ agentRuns, ...overrides });
-  }
-
   // TS-73
   it('"Approve & Continue" calls onApprove with notes and the selected approver id', async () => {
     renderModal(allGateAgentsCompleteProject());
 
-    const notesBox = screen.getByPlaceholderText('Add notes or feedback for this review gate...');
+    const notesBox = screen.getByPlaceholderText(/Add notes or feedback for this review gate/);
     await userEvent.type(notesBox, 'Looks good, ship it.');
 
     const select = screen.getByTitle('Who is approving?');
@@ -359,18 +369,114 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(onApprove).toHaveBeenCalledWith('Looks good, ship it.', 'm2');
   });
 
-  it('"Approve & Continue" passes undefined approver id when none selected', async () => {
+  // TS-86 — mandatory approver selection (new requirement).
+  it('"Approve & Continue" stays disabled until an approver is selected', async () => {
     renderModal(allGateAgentsCompleteProject());
-    await userEvent.click(screen.getByRole('button', { name: /Approve & Continue/ }));
-    expect(onApprove).toHaveBeenCalledWith('', undefined);
+
+    const approveBtn = screen.getByRole('button', { name: /Approve & Continue/ });
+    expect(approveBtn).toBeDisabled();
+
+    await userEvent.click(approveBtn);
+    expect(onApprove).not.toHaveBeenCalled();
+
+    const select = screen.getByTitle('Who is approving?');
+    fireEvent.change(select, { target: { value: 'm1' } });
+    expect(approveBtn).not.toBeDisabled();
+
+    await userEvent.click(approveBtn);
+    expect(onApprove).toHaveBeenCalledWith('', 'm1');
   });
 
-  // TS-74
-  it('"Reject & Stop" calls onReject without calling onApprove', async () => {
-    renderModal();
-    await userEvent.click(screen.getByRole('button', { name: /Reject & Stop/ }));
-    expect(onReject).toHaveBeenCalledTimes(1);
+  // TS-74 / TS-87 — mandatory rejection comment (new requirement): reject
+  // must carry a non-empty review note.
+  it('"Reject & Stop" stays disabled without a review comment, and calls onReject with the comment once one is entered', async () => {
+    renderModal(allGateAgentsCompleteProject());
+
+    const rejectBtn = screen.getByRole('button', { name: /Reject & Stop/ });
+    expect(rejectBtn).toBeDisabled();
+
+    await userEvent.click(rejectBtn);
+    expect(onReject).not.toHaveBeenCalled();
+
+    const notesBox = screen.getByPlaceholderText(/Add notes or feedback for this review gate/);
+    await userEvent.type(notesBox, 'Missing the auth section, please redo.');
+    expect(rejectBtn).not.toBeDisabled();
+
+    await userEvent.click(rejectBtn);
+    expect(onReject).toHaveBeenCalledWith('Missing the auth section, please redo.', undefined);
     expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  // TS-88 — incomplete-agents hides Approve/Reject entirely (not just
+  // disables Approve, as before). The default makeProject() fixture leaves
+  // most gate3 agents idle.
+  it('hides Approve/Reject and shows a waiting note while a gate agent has not finished', () => {
+    renderModal();
+
+    expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Who is approving?')).not.toBeInTheDocument();
+    expect(screen.getByText(/Waiting on \d+ agents? to finish/)).toBeInTheDocument();
+  });
+
+  // TS-89/90/91 — role restriction: only the Project Owner, an admin, or a
+  // member whose job title is in REVIEW_GATE_APPROVER_TITLES may act.
+  it('hides Approve/Reject and shows a restricted note for a member without an approver role', () => {
+    mockAuth.userEmail = 'raj@example.com'; // editor, "Engineering Lead" — not in the approver title list
+    renderModal(allGateAgentsCompleteProject());
+
+    expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Who is approving?')).not.toBeInTheDocument();
+    expect(screen.getByText(/Only the Project Owner, Product Manager, Project Manager, Engineering Manager, Delivery Manager, Architect, or an admin/)).toBeInTheDocument();
+  });
+
+  it('grants access to a non-owner member whose job title is Architect (the design/QA-bucket pick)', () => {
+    mockAuth.userEmail = 'sam@example.com';
+    renderModal(allGateAgentsCompleteProject({
+      teamMembers: [
+        ...makeProject().teamMembers!,
+        { id: 'm4', name: 'Sam Torres', email: 'sam@example.com', role: 'Architect', appRole: 'editor', avatarColor: '#0d9488' },
+      ],
+    }));
+
+    expect(screen.getByRole('button', { name: /Approve & Continue/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
+  });
+
+  it('denies access to a non-owner member whose job title is QA Engineer (not on the approved list)', () => {
+    mockAuth.userEmail = 'qa@example.com';
+    renderModal(allGateAgentsCompleteProject({
+      teamMembers: [
+        ...makeProject().teamMembers!,
+        { id: 'm5', name: 'Quinn Adler', email: 'qa@example.com', role: 'QA Engineer', appRole: 'editor', avatarColor: '#dc2626' },
+      ],
+    }));
+
+    expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
+  });
+
+  it('grants access to a non-owner member whose job title is Project Manager', () => {
+    mockAuth.userEmail = 'priya@example.com';
+    renderModal(allGateAgentsCompleteProject({
+      teamMembers: [
+        ...makeProject().teamMembers!,
+        { id: 'm3', name: 'Priya Shah', email: 'priya@example.com', role: 'Project Manager', appRole: 'editor', avatarColor: '#d97706' },
+      ],
+    }));
+
+    expect(screen.getByRole('button', { name: /Approve & Continue/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
+  });
+
+  it('grants access to an app admin regardless of project role', () => {
+    mockAuth.userEmail = 'raj@example.com'; // same non-approver member as above
+    mockAuth.isAppAdmin = true;
+    renderModal(allGateAgentsCompleteProject());
+
+    expect(screen.getByRole('button', { name: /Approve & Continue/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
   });
 
   it('the close ("✕") button calls onClose', async () => {
