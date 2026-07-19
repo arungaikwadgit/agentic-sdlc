@@ -693,8 +693,39 @@ export async function runL3Agent(
  * Each historical turn is capped at MAX_TURN_CHARS to prevent the prompt from
  * growing unboundedly across iterations (3 iterations × large tool results
  * can easily exceed 50k chars without this guard).
+ *
+ * 2026-07-19 — stale tool-result compaction (see requiredTools/
+ * intermediateSystemPrompt rollout in agents/definitions.ts for the related
+ * systemPrompt-side fix). A TOOL_RESULT turn was being re-embedded at the
+ * same up-to-MAX_TURN_CHARS size on EVERY iteration after it happened, not
+ * just the iteration right after — this is the dominant driver of the
+ * per-iteration token growth reported 2026-07-19 (a PRD run climbed
+ * 4,989 -> 6,253 tokens across 5 calls with no new information, just the
+ * same earlier tool results getting re-sent in full each time). Fix: once a
+ * TOOL_RESULT turn is no longer part of the most recent exchange, cap it at
+ * MAX_STALE_TURN_CHARS instead of MAX_TURN_CHARS.
+ *
+ * Deliberately NOT dropping stale turns entirely, and deliberately using a
+ * moderate cap (1,200 chars) rather than an aggressive one: this history is
+ * the model's ONLY memory of earlier tool results (callAgent is single-shot
+ * per call, not a stateful multi-turn API — see the module doc comment
+ * above), so over-truncating risks a real quality regression on agents
+ * whose self-check step needs to recall specific details (e.g. named
+ * FR-xxx IDs, specific roster names) from a tool result fetched several
+ * iterations earlier. 1,200 chars keeps the substantive content of most
+ * tool results (get_team_roster, get_domain_context, get_style_guide are
+ * well under that; get_agent_output excerpts are the main thing actually
+ * being compacted here, already pre-truncated to 4,000 chars at the point
+ * they're captured — see MAX_TOOL_RESULT_CHARS above). Only the most recent
+ * exchange (last 2 turns) is exempt and stays at full MAX_TURN_CHARS, since
+ * that's what the model is actively reasoning from on this call.
  */
 const MAX_TURN_CHARS = 3_000;
+const MAX_STALE_TURN_CHARS = 1_200;
+
+function isToolResultTurn(content: string): boolean {
+  return content.startsWith('TOOL_RESULT for ');
+}
 
 function buildConversationPrompt(
   history: Array<{ role: string; content: string }>,
@@ -708,11 +739,18 @@ function buildConversationPrompt(
 
   // For subsequent turns: embed the conversation history so the LLM has full context.
   // Truncate each historical turn independently so no single large tool result
-  // crowds out the rest of the context.
+  // crowds out the rest of the context. The most recent exchange (the last 2
+  // entries — typically one assistant turn + its immediate user-side
+  // result/ack) is exempt from stale compaction; see doc comment above.
+  const recentExchangeCount = 2;
+  const staleBoundary = Math.max(0, history.length - recentExchangeCount);
+
   const historyBlock = history
-    .map((t) => {
-      const body = t.content.length > MAX_TURN_CHARS
-        ? t.content.slice(0, MAX_TURN_CHARS) + '\n[...turn truncated for context length]'
+    .map((t, idx) => {
+      const isStale = idx < staleBoundary;
+      const cap = isStale && isToolResultTurn(t.content) ? MAX_STALE_TURN_CHARS : MAX_TURN_CHARS;
+      const body = t.content.length > cap
+        ? t.content.slice(0, cap) + '\n[...turn truncated for context length]'
         : t.content;
       return `[${t.role.toUpperCase()}]:\n${body}`;
     })

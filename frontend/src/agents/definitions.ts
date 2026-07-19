@@ -425,6 +425,11 @@ const projectCharter: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 2 mandatory tool calls + write + self-check.
   maxIterations: 4,
+  // See manager (PRD Agent) doc comment for the full mechanism and the
+  // known requiredTools limitation (only checks tool *names*, not call
+  // count/args). 2026-07-19 rollout — same pattern applied here.
+  requiredTools: ['get_agent_output', 'get_team_roster'],
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the Project Charter Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the charter yet.`,
 };
 
 const brd: AgentDefinition = {
@@ -534,6 +539,10 @@ const stakeholder: AgentDefinition = {
   // document) got saved as the agent's output. Bumped to give this agent's
   // own instructed workflow enough room to actually reach FINAL_OUTPUT.
   maxIterations: 6,
+  // See manager (PRD Agent) doc comment for the full mechanism. 2026-07-19
+  // rollout — same pattern applied here.
+  requiredTools: ['get_agent_output', 'get_team_roster', 'get_domain_context'],
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the Stakeholder Analysis Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the analysis yet.`,
 };
 
 const userStory: AgentDefinition = {
@@ -1783,6 +1792,17 @@ UX/UI PRINCIPLES (ui-ux-pro-max)
   // 4 mandatory tool calls (architecture, dataModel, apiDesign, uxMockups) — bump
   // for the same reason as the stakeholder/L3 hardening fix.
   maxIterations: 6,
+  // See manager (PRD Agent) doc comment for the full mechanism. 2026-07-19
+  // rollout — this agent is the highest-value target of the rollout: its
+  // full systemPrompt is the CRITICAL OUTPUT FORMAT / REQUIRED FILES /
+  // PREVIEW.HTML / THEME STUDIO / UX-PRINCIPLES spec (~135 lines) that is
+  // only needed once the model is actually about to generate the codebase
+  // (STEP 5) — none of it is needed for the 4 gathering calls in STEP 1-4.
+  // requiredTools only checks tool *names* (see manager's known
+  // limitation) so this verifies at least one get_agent_output call
+  // happened, not all 4 named in the goal.
+  requiredTools: ['get_agent_output'],
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the Working Prototype Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not generate any code files yet.`,
 };
 
 
@@ -1826,6 +1846,15 @@ const devopsEngineer: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  // See manager (PRD Agent) doc comment for the full mechanism. 2026-07-19
+  // rollout. No intermediateSystemPrompt here on purpose: this agent's full
+  // systemPrompt is already just `${BASE_SYSTEM} + one identity sentence` —
+  // there is no quality-standards/format section to drop, so a condensed
+  // variant would save ~0 tokens. requiredTools is still worth adding on
+  // its own: it stops a model that drops TOOL_CALL formatting mid-sequence
+  // from being silently treated as "finished" before grounding in the
+  // architecture/security docs it depends on.
+  requiredTools: ['get_agent_output', 'get_team_roster'],
 };
 
 const infraEngineer: AgentDefinition = {
@@ -1867,6 +1896,11 @@ const infraEngineer: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  // See devopsEngineer above for why no intermediateSystemPrompt: this
+  // agent's systemPrompt is also just an identity sentence, nothing to
+  // condense. requiredTools alone still guards against premature
+  // finalization before the architecture/feasibility grounding is fetched.
+  requiredTools: ['get_agent_output', 'get_team_roster'],
 };
 
 // ─── Phase 8 ──────────────────────────────────────────────────────────────────
@@ -1907,6 +1941,8 @@ const observabilityEngineer: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  // See devopsEngineer above for why no intermediateSystemPrompt.
+  requiredTools: ['get_agent_output', 'get_team_roster'],
 };
 
 const onCallEngineer: AgentDefinition = {
@@ -1944,6 +1980,8 @@ const onCallEngineer: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 3 mandatory tool calls + write + self-check.
   maxIterations: 5,
+  // See devopsEngineer above for why no intermediateSystemPrompt.
+  requiredTools: ['get_agent_output', 'get_team_roster'],
 };
 
 // ─── Registry ──────────────────────────────────────────────────────────────────────────────

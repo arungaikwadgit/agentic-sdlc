@@ -231,3 +231,70 @@ describe('manager (PRD Agent) — requiredTools and intermediateSystemPrompt', (
     expect(intermediate).toBeLessThan(full);
   });
 });
+
+// 2026-07-19 — token-optimization rollout to the rest of the tool-calling
+// agents (projectCharter, stakeholder, workingPrototype, devopsEngineer,
+// infraEngineer, observabilityEngineer, onCallEngineer), same pattern as
+// manager above. Generalized instead of copy-pasting manager's describe
+// block 7 more times — loops over every agent that actually has requiredTools
+// or intermediateSystemPrompt set and asserts the invariants that must hold
+// for ANY agent using this mechanism, regardless of which one it is.
+describe('Token-optimization rollout — requiredTools / intermediateSystemPrompt invariants (all agents)', () => {
+  const agentsWithRequiredTools = Object.entries(AGENT_DEFINITIONS).filter(
+    ([, def]) => (def.requiredTools?.length ?? 0) > 0
+  );
+
+  it('at least the expected set of agents has requiredTools set (documents the current rollout surface)', () => {
+    const ids = agentsWithRequiredTools.map(([id]) => id).sort();
+    expect(ids).toEqual(
+      [
+        'sdlcOrchestrator', 'tokenOptimizer', 'aiGovernance', 'manager',
+        'projectCharter', 'stakeholder', 'workingPrototype',
+        'devopsEngineer', 'infraEngineer', 'observabilityEngineer', 'onCallEngineer',
+      ].sort()
+    );
+  });
+
+  for (const [id, def] of agentsWithRequiredTools) {
+    it(`${id}: every requiredTools entry is in its own tools list`, () => {
+      const toolNames = new Set((def.tools ?? []).map((t) => t.name));
+      for (const required of def.requiredTools ?? []) {
+        expect(toolNames.has(required), `${id} requires "${required}" but does not list it in tools`).toBe(true);
+      }
+    });
+  }
+
+  const agentsWithIntermediatePrompt = Object.entries(AGENT_DEFINITIONS).filter(
+    ([, def]) => !!def.intermediateSystemPrompt
+  );
+
+  it('only agents with a real quality-standards/format section to drop have an intermediateSystemPrompt (devopsEngineer/infraEngineer/observabilityEngineer/onCallEngineer deliberately do not — their systemPrompt is already minimal)', () => {
+    const ids = agentsWithIntermediatePrompt.map(([id]) => id).sort();
+    expect(ids).toEqual(
+      ['sdlcOrchestrator', 'manager', 'projectCharter', 'stakeholder', 'workingPrototype'].sort()
+    );
+  });
+
+  for (const [id, def] of agentsWithIntermediatePrompt) {
+    it(`${id}: intermediateSystemPrompt is shorter than the full systemPrompt`, () => {
+      expect(def.intermediateSystemPrompt!.length).toBeLessThan(def.systemPrompt.length);
+    });
+
+    it(`${id}: intermediateSystemPrompt tells the model it has not earned FINAL_OUTPUT yet`, () => {
+      expect(def.intermediateSystemPrompt).toContain('have NOT yet earned the right to write FINAL_OUTPUT');
+    });
+  }
+
+  it('every agent with requiredTools but no intermediateSystemPrompt has a systemPrompt with nothing substantial to drop (sanity check on the "skip it" decision)', () => {
+    // Measured 2026-07-19: BASE_SYSTEM alone is ~2,103 chars, so even a
+    // "minimal" systemPrompt (BASE_SYSTEM + one identity sentence) runs
+    // ~2,140-2,200 chars once interpolated -- NOT under some small absolute
+    // number like 400. The agents that DO have a real quality-standards
+    // section on top of BASE_SYSTEM measured 3,200-3,711. 2,500 sits
+    // cleanly between the two observed clusters.
+    const skipped = agentsWithRequiredTools.filter(([, def]) => !def.intermediateSystemPrompt);
+    for (const [id, def] of skipped) {
+      expect(def.systemPrompt.length, `${id} systemPrompt grew past the "minimal" threshold`).toBeLessThan(2500);
+    }
+  });
+});
