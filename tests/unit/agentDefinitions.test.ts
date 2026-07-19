@@ -271,7 +271,10 @@ describe('Token-optimization rollout — requiredTools / intermediateSystemPromp
   it('only agents with a real quality-standards/format section to drop have an intermediateSystemPrompt (devopsEngineer/infraEngineer/observabilityEngineer/onCallEngineer deliberately do not — their systemPrompt is already minimal)', () => {
     const ids = agentsWithIntermediatePrompt.map(([id]) => id).sort();
     expect(ids).toEqual(
-      ['sdlcOrchestrator', 'manager', 'projectCharter', 'stakeholder', 'workingPrototype'].sort()
+      [
+        'sdlcOrchestrator', 'tokenOptimizer', 'aiGovernance', 'manager',
+        'projectCharter', 'stakeholder', 'workingPrototype',
+      ].sort()
     );
   });
 

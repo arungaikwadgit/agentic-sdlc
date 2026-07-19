@@ -242,6 +242,16 @@ const tokenOptimizer: AgentDefinition = {
   tools: OPTIMIZATION_TOOLS,
   requiredTools: ['get_agent_output', 'get_agent_catalog', 'get_available_models', 'get_token_usage_summary', 'validate_output_completeness'],
   maxIterations: 8,
+  // 2026-07-19 — found via the agentDefinitions.test.ts generalized rollout
+  // check: this agent already had requiredTools (5 tools, maxIterations 8 —
+  // one of the longest-running agents) but was overlooked for
+  // intermediateSystemPrompt during the 2026-07-19 rollout because it
+  // predates that rollout (it's one of the original 3 preflight agents).
+  // Its systemPrompt is 3,341 chars (optimization-principles paragraph +
+  // bulleted list beyond BASE_SYSTEM) — same shape as manager/PRD, not the
+  // "nothing to drop" shape devopsEngineer etc. have. See manager (PRD
+  // Agent) doc comment for the full mechanism.
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the background Token Optimizer Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the assessment yet.`,
 };
 
 const aiGovernance: AgentDefinition = {
@@ -291,6 +301,13 @@ const aiGovernance: AgentDefinition = {
   tools: GOVERNANCE_TOOLS,
   requiredTools: ['get_agent_output', 'get_governance_snapshot', 'get_agent_catalog', 'get_phase_rules', 'get_domain_context', 'get_team_roster', 'validate_output_completeness'],
   maxIterations: 10,
+  // See tokenOptimizer above for why this was overlooked and is being added
+  // now rather than during the 2026-07-19 rollout. This is the
+  // longest-running agent (7 required tools, maxIterations 10) and its
+  // systemPrompt has a substantial framework/scope paragraph beyond
+  // BASE_SYSTEM, so it stands to gain the most from this fix of any agent
+  // in the app.
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the AI Governance Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the assessment yet.`,
 };
 
 // ─── Phase 1 ─────────────────────────────────────────────────────────────────
