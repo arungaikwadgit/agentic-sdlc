@@ -185,3 +185,49 @@ describe('Key agent prompt content', () => {
     expect(sp).toMatch(/data|schema|model|entity/);
   });
 });
+
+// 2026-07-19 — manager (PRD Agent) was the reported "token optimizer doesn't
+// help tool-calling agents" gap: it has a 5-tool MANDATORY STEP SEQUENCE in
+// its goal but no requiredTools enforcement and no intermediateSystemPrompt,
+// so every one of its tool-gathering iterations resent the full PRD format
+// spec. Fixed by giving it the same requiredTools + intermediateSystemPrompt
+// pair sdlcOrchestrator already had — these assertions guard both halves of
+// that fix, plus the systemPrompt identity copy-paste bug found alongside it.
+describe('manager (PRD Agent) — requiredTools and intermediateSystemPrompt', () => {
+  it('systemPrompt identifies itself as the PRD Agent, not the SDLC Orchestrator', () => {
+    expect(AGENT_DEFINITIONS.manager.systemPrompt).toContain('You are the PRD Agent');
+    expect(AGENT_DEFINITIONS.manager.systemPrompt).not.toContain('You are the SDLC Orchestrator Agent');
+  });
+
+  it('requiredTools matches the tool calls named in its own MANDATORY STEP SEQUENCE', () => {
+    expect(AGENT_DEFINITIONS.manager.requiredTools).toEqual(
+      expect.arrayContaining(['get_agent_output', 'get_domain_context', 'get_team_roster', 'get_style_guide'])
+    );
+  });
+
+  it('every requiredTools entry is actually in its own tools list (nothing required that it cannot call)', () => {
+    const toolNames = new Set(AGENT_DEFINITIONS.manager.tools.map((t) => t.name));
+    for (const required of AGENT_DEFINITIONS.manager.requiredTools ?? []) {
+      expect(toolNames.has(required)).toBe(true);
+    }
+  });
+
+  it('intermediateSystemPrompt is set and identifies itself correctly', () => {
+    expect(AGENT_DEFINITIONS.manager.intermediateSystemPrompt).toBeTruthy();
+    expect(AGENT_DEFINITIONS.manager.intermediateSystemPrompt).toContain('You are the PRD Agent');
+    expect(AGENT_DEFINITIONS.manager.intermediateSystemPrompt).toContain('have NOT yet earned the right to write FINAL_OUTPUT');
+  });
+
+  // Intentionally not a fixed-percentage threshold (e.g. "< 50% of full")
+  // — that was tried and turned out fragile: a first measurement attempt
+  // was thrown off by this file's CRLF line endings and produced a false
+  // ratio. Strict-less-than is the actual invariant that matters (the
+  // condensed prompt drops the PRD Quality Standards bullets, so it must be
+  // shorter, full stop) without pinning an exact number that future edits
+  // to either prompt could break for no real reason.
+  it('intermediateSystemPrompt is shorter than the full systemPrompt (it should drop the PRD Quality Standards section)', () => {
+    const full = AGENT_DEFINITIONS.manager.systemPrompt.length;
+    const intermediate = AGENT_DEFINITIONS.manager.intermediateSystemPrompt?.length ?? full;
+    expect(intermediate).toBeLessThan(full);
+  });
+});

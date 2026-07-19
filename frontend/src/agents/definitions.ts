@@ -301,7 +301,7 @@ const manager: AgentDefinition = {
   phase: 'phase1',
   description: 'Generates the Product Requirements Document (PRD) — the single source of truth for all downstream SDLC agents',
   outputLabel: 'Product Requirements Document',
-  systemPrompt: `${BASE_SYSTEM}\n\nYou are the SDLC Orchestrator Agent. Your task is to produce a complete Product Requirements Document (PRD) that serves as the single source of truth for every downstream agent in this pipeline — business analysts, architects, UX designers, sprint planners, and engineers will all read this document, so precision and traceability matter more than length.
+  systemPrompt: `${BASE_SYSTEM}\n\nYou are the PRD Agent. Your task is to produce a complete Product Requirements Document (PRD) that serves as the single source of truth for every downstream agent in this pipeline — business analysts, architects, UX designers, sprint planners, and engineers will all read this document, so precision and traceability matter more than length.
 
 ## PRD Quality Standards
 - Every requirement must be independently verifiable: avoid vague verbs like "support," "handle," or "manage" without defining what success looks like.
@@ -346,6 +346,36 @@ const manager: AgentDefinition = {
   tools: CONTEXT_TOOLS,
   // 5 mandatory tool calls + write + self-check.
   maxIterations: 7,
+  // These must actually be called, not just requested in the prompt above —
+  // same reasoning as sdlcOrchestrator's requiredTools (see agent.types.ts
+  // doc comment). Without this, a model that drops TOOL_CALL formatting
+  // mid-sequence gets silently treated as "finished" by the graceful-
+  // degradation fallback, producing a PRD missing governance/domain/roster/
+  // style grounding. Note: 'get_agent_output' is required twice in the goal
+  // above (tokenOptimizer, then aiGovernance) but requiredTools only checks
+  // tool *names*, so this only verifies at least one get_agent_output call
+  // happened — same known limitation as every other agent's requiredTools.
+  requiredTools: ['get_agent_output', 'get_domain_context', 'get_team_roster', 'get_style_guide'],
+  // See AgentDefinition.intermediateSystemPrompt (sdlcOrchestrator doc
+  // comment for the full mechanism). PRD is the first non-orchestrator
+  // agent to get this — it was the reported gap (2026-07-19): PRD calls up
+  // to 5 tools before finalizing, and every one of those calls was resending
+  // the full systemPrompt (identity + PRD Quality Standards bullets, ~3.7k
+  // chars once L3-wrapped) even though the model couldn't legitimately
+  // finalize yet. requiredTools above is what makes this safe: the condensed
+  // prompt can only be selected while stillGatheringRequiredTools is true,
+  // which is never true on an iteration where finalization is actually
+  // legitimate.
+  // NOTE: the 12-section PRD format spec lives in buildUserPrompt, not
+  // systemPrompt — that field is NOT affected by this optimization and is
+  // still sent in full via buildConversationPrompt's turn history every
+  // iteration. The bigger driver of this agent's per-iteration token growth
+  // (see the reported 4,989 -> 6,253 tokens across 5 iterations) is that
+  // buildConversationPrompt (l3Runtime.ts) re-embeds the full accumulated
+  // conversation history — including prior tool results, each capped at
+  // MAX_TURN_CHARS=3,000 but never pruned — on every call. This fix reduces
+  // the systemPrompt contribution only; it does not address history growth.
+  intermediateSystemPrompt: `${BASE_SYSTEM}\n\nYou are the PRD Agent. You are still gathering information via mandatory tool calls (see your goal's MANDATORY STEP SEQUENCE below) — you have NOT yet earned the right to write FINAL_OUTPUT. Call the next required tool now; do not draft the PRD yet.`,
 };
 
 // ─── Phase 1B ────────────────────────────────────────────────────────────────
