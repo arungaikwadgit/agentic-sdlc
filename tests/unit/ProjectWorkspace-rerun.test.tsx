@@ -43,10 +43,12 @@ vi.mock('../../frontend/src/contexts/AuthContext', () => ({
 // that consolidation here).
 const updateProjectMock = vi.fn().mockResolvedValue(undefined);
 const updateAgentRunMock = vi.fn().mockResolvedValue(undefined);
+const clearGeneratedProjectAgentMemoryMock = vi.fn().mockResolvedValue(undefined);
 vi.mock('@/db/projectRepository', () => ({
   getProject: (...args: unknown[]) => Promise.resolve(currentProject),
   updateProject: (...args: unknown[]) => updateProjectMock(...args),
   updateAgentRun: (...args: unknown[]) => updateAgentRunMock(...args),
+  clearGeneratedProjectAgentMemory: (...args: unknown[]) => clearGeneratedProjectAgentMemoryMock(...args),
   subscribeProjectRepositoryChange: () => () => {},
 }));
 
@@ -187,7 +189,10 @@ async function selectAgent(agentName: string) {
   // findByRole (not getByRole) -- the project now loads asynchronously via
   // useProject()'s getProject() call, so the agent sidebar isn't populated
   // on the very first synchronous render tick.
-  const row = await screen.findByRole('button', { name: new RegExp(agentName, 'i') });
+  const candidates = await screen.findAllByRole('button', { name: new RegExp(agentName, 'i') });
+  const row = candidates.find((element) =>
+    typeof element.className === 'string' && element.className.includes('agentRow')
+  ) ?? candidates[0];
   await user.click(row);
   return user;
 }
@@ -253,6 +258,39 @@ describe('ProjectWorkspace — re-run flow', () => {
     const textarea = await screen.findByRole('textbox');
     expect((textarea as HTMLTextAreaElement).value).toBe(SPRINT_PLANNER_DEF.systemPrompt);
     expect(screen.queryByText(/Using saved custom prompt/i)).not.toBeInTheDocument();
+  });
+
+  it('warns before an SDLC Orchestrator rerun resets every agent and gate', async () => {
+    currentProject = baseProject({
+      currentPhase: 'phase4',
+      agentRuns: {
+        ...withCompleteRun('sdlcOrchestrator', '# Existing orchestration plan'),
+        manager: { agentId: 'manager', status: 'complete', output: '# Existing PRD' },
+      } as Project['agentRuns'],
+    });
+    render(<ProjectWorkspace projectId="proj-1" onBack={noop} />);
+
+    const user = await selectAgent(AGENT_DEFINITIONS.sdlcOrchestrator!.name);
+    await user.click(await screen.findByRole('button', { name: /Re-run/ }));
+    await user.click(screen.getByRole('button', { name: /Confirm Re-run/i }));
+
+    expect(await screen.findByText(/reset all agents/i)).toBeInTheDocument();
+    expect(updateProjectMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /Yes, Reset All & Re-run/i }));
+    expect(clearGeneratedProjectAgentMemoryMock).toHaveBeenCalledWith('proj-1');
+
+    const mutator = updateProjectMock.mock.calls[0][1];
+    const draft = baseProject({
+      agentRuns: currentProject.agentRuns,
+      reviewGates: currentProject.reviewGates,
+      promptOverrides: [],
+    });
+    mutator(draft);
+    expect(draft.agentRuns).toEqual({});
+    expect(draft.reviewGates).toEqual({});
+    expect(draft.currentPhase).toBe('phase0');
+    expect(draft.status).toBe('draft');
   });
 
   it('asks fresh context-aware questions before rerunning the BRD agent', async () => {

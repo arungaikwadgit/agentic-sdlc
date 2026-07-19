@@ -33,6 +33,15 @@ vi.mock('../../frontend/src/db/projectRepository', () => ({
       ...run,
     } as AgentRun;
   }),
+  getProjectAgentMemoryContext: vi.fn(async () => ({
+    summary: '',
+    recordIds: [],
+    coveredAgentKeys: [],
+    estimatedTokens: 0,
+    sourceCharacters: 0,
+    selectedCharacters: 0,
+  })),
+  captureProjectAgentMemory: vi.fn(async () => undefined),
 }));
 
 vi.mock('../../frontend/src/agents/promptDefaults', () => ({

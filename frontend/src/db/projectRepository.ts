@@ -472,3 +472,43 @@ export async function deleteProjectDocuments(projectId: string): Promise<void> {
     project.contextDocuments = [];
   });
 }
+
+
+export interface ProjectAgentMemoryContext {
+  summary: string;
+  recordIds: string[];
+  coveredAgentKeys: AgentId[];
+  estimatedTokens: number;
+  sourceCharacters: number;
+  selectedCharacters: number;
+}
+
+export async function getProjectAgentMemoryContext(
+  projectId: string,
+  agentId: AgentId,
+  dependencyKeys: readonly AgentId[] = [],
+): Promise<ProjectAgentMemoryContext> {
+  const query = new URLSearchParams({
+    dependencies: dependencyKeys.join(','),
+    maxChars: '6000',
+    limit: '6',
+  });
+  return apiFetch<ProjectAgentMemoryContext>(
+    `/api/projects/${encodeURIComponent(projectId)}/agent-context/${encodeURIComponent(agentId)}?${query.toString()}`,
+  );
+}
+
+export async function captureProjectAgentMemory(
+  projectId: string,
+  agentId: AgentId,
+  runtimeRunId?: string | null,
+): Promise<void> {
+  await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agent-context/${encodeURIComponent(agentId)}/capture`, {
+    method: 'POST',
+    body: JSON.stringify({ runtimeRunId: runtimeRunId ?? null }),
+  });
+}
+
+export async function clearGeneratedProjectAgentMemory(projectId: string): Promise<void> {
+  await apiFetch(`/api/projects/${encodeURIComponent(projectId)}/agent-context`, { method: 'DELETE' });
+}

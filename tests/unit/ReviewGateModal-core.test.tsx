@@ -428,7 +428,7 @@ describe('ReviewGateModal — core (view/edit/approve/reject)', () => {
     expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
     expect(screen.queryByTitle('Who is approving?')).not.toBeInTheDocument();
-    expect(screen.getByText(/Only the Project Owner, Product Manager, Project Manager, Engineering Manager, Delivery Manager, Architect, or an admin/)).toBeInTheDocument();
+    expect(screen.getByText(/Only the Project Owner, Product Manager, Project Manager/i)).toBeInTheDocument();
   });
 
   it('grants access to a non-owner member whose job title is Architect (the design/QA-bucket pick)', () => {
@@ -552,8 +552,7 @@ describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
     renderGate0(makeGate0Project());
 
     expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
-    const select = screen.getByTitle('Who is approving?');
-    fireEvent.change(select, { target: { value: 'm1' } });
+    expect(screen.queryByTitle('Who is approving?')).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: /Approve & Continue/ }));
     expect(onApprove).toHaveBeenCalledWith('', 'm1');
@@ -566,28 +565,21 @@ describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
 
     const approveBtn = screen.getByRole('button', { name: /Approve & Continue/ });
     const rejectBtn = screen.getByRole('button', { name: /Reject & Stop/ });
-    // Previously: gate0Blocked made Approve permanently disabled here even
-    // though canActOnGate (isAppAdmin) was true — the only remaining
-    // constraint should be the ordinary mandatory-approver rule.
-    expect(approveBtn).toBeDisabled();
-    const select = screen.getByTitle('Who is approving?');
-    fireEvent.change(select, { target: { value: 'm1' } });
+    // Gate 0 records the authenticated admin directly; it does not permit
+    // selecting another team member as the nominal approver.
     expect(approveBtn).not.toBeDisabled();
+    expect(screen.queryByTitle('Who is approving?')).not.toBeInTheDocument();
     await userEvent.click(approveBtn);
-    expect(onApprove).toHaveBeenCalledWith('', 'm1');
+    expect(onApprove).toHaveBeenCalledWith('', 'm2');
 
     expect(rejectBtn).toBeDisabled();
     await userEvent.type(screen.getByPlaceholderText(/Add notes or feedback for this review gate/), 'Needs rework.');
     expect(rejectBtn).not.toBeDisabled();
     await userEvent.click(rejectBtn);
-    // The "Approving as..." selection made above (m1) persists and is reused
-    // for the reject call too (audit purposes) — see the onReject prop doc
-    // comment in ReviewGateModal.tsx. Not a bug: selecting an approver isn't
-    // required to reject, but if one was already selected it's carried over.
-    expect(onReject).toHaveBeenCalledWith('Needs rework.', 'm1');
+    expect(onReject).toHaveBeenCalledWith('Needs rework.', 'm2');
   });
 
-  it('a non-owner member with a permitted title (Engineering Manager) can both Approve and Reject at gate0', async () => {
+  it('blocks a non-owner Engineering Manager from approving or rejecting gate0', () => {
     mockAuth.userEmail = 'priya@example.com';
     renderGate0(makeGate0Project({
       teamMembers: [
@@ -596,8 +588,9 @@ describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
       ],
     }));
 
-    expect(screen.getByRole('button', { name: /Approve & Continue/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Reject & Stop/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Only the Project Owner or an admin/i)).toBeInTheDocument();
   });
 
   it('a non-owner member without a permitted title is still blocked at gate0 (role restriction still applies)', () => {
@@ -606,7 +599,7 @@ describe('ReviewGateModal — gate0 (SDLC Orchestrator plan approval)', () => {
 
     expect(screen.queryByRole('button', { name: /Approve & Continue/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reject & Stop/ })).not.toBeInTheDocument();
-    expect(screen.getByText(/Only the Project Owner, Product Manager, Project Manager, Engineering Manager, Delivery Manager, Architect, or an admin/)).toBeInTheDocument();
+    expect(screen.getByText(/Only the Project Owner or an admin/i)).toBeInTheDocument();
   });
 
   it('no stray "Owner/admin approval required" badge or gate0-specific tooltip remains', async () => {

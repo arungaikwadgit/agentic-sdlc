@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { supabaseAdmin } from '../lib/supabase';
 import { requireAuth, requireProjectRole, requireAppAdmin, isAppAdmin } from '../middleware/auth';
+import { buildArtifactMemoryDigest, selectProjectMemoryContext, type ProjectMemoryRecord } from '../services/projectMemory';
 
 const router = Router();
 
@@ -149,6 +150,21 @@ const DeleteProjectSchema = z.object({
   remarks: z.string().trim().min(1, 'Remarks are required to delete a project').max(500),
 });
 
+const AgentMemoryParamsSchema = z.object({
+  id: z.string().uuid(),
+  agentKey: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,79}$/),
+});
+
+const AgentMemoryQuerySchema = z.object({
+  dependencies: z.string().max(1_000).optional(),
+  maxChars: z.coerce.number().int().min(1_000).max(12_000).default(6_000),
+  limit: z.coerce.number().int().min(1).max(12).default(6),
+});
+
+const CaptureAgentMemorySchema = z.object({
+  runtimeRunId: z.string().uuid().nullable().optional(),
+});
+
 /** Fields inside the `data` JSONB blob that only the dedicated delete/restore
  * routes below are allowed to set. The generic PATCH route below always
  * overwrites these with the current DB values, regardless of what a client
@@ -248,6 +264,155 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 /** GET /api/projects/:id — get a single project with full data */
+/**
+ * Backend-owned, relevance-ranked, and bounded memory assembly for an agent.
+ */
+router.get(
+  '/:id/agent-context/:agentKey',
+  requireAuth,
+  requireProjectRole('project_owner', 'editor', 'reviewer', 'viewer'),
+  async (req, res) => {
+    try {
+      const params = AgentMemoryParamsSchema.parse(req.params);
+      const query = AgentMemoryQuerySchema.parse(req.query);
+      const dependencies = (query.dependencies ?? '')
+        .split(',')
+        .map((key) => key.trim())
+        .filter((key) => /^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(key));
+
+      const { data: project, error: projectError } = await supabaseAdmin
+        .from('projects')
+        .select('id, domain')
+        .eq('id', params.id)
+        .single();
+      if (projectError || !project) return res.status(404).json({ error: 'Project not found' });
+
+      const { data: projectRecords, error: projectMemoryError } = await supabaseAdmin
+        .from('memory_records')
+        .select('id, project_id, scope, domain_id, approved, title, content, tags, updated_at')
+        .eq('project_id', params.id)
+        .order('updated_at', { ascending: false })
+        .limit(50);
+      if (projectMemoryError) throw projectMemoryError;
+
+      let domainRecords: ProjectMemoryRecord[] = [];
+      if (project.domain) {
+        const { data, error } = await supabaseAdmin
+          .from('memory_records')
+          .select('id, project_id, scope, domain_id, approved, title, content, tags, updated_at')
+          .eq('scope', 'domain_shared')
+          .eq('domain_id', project.domain)
+          .eq('approved', true)
+          .order('updated_at', { ascending: false })
+          .limit(25);
+        if (error) throw error;
+        domainRecords = (data ?? []) as ProjectMemoryRecord[];
+      }
+
+      res.json(selectProjectMemoryContext({
+        records: [...((projectRecords ?? []) as ProjectMemoryRecord[]), ...domainRecords],
+        projectId: params.id,
+        agentKey: params.agentKey,
+        dependencyKeys: dependencies,
+        maxChars: query.maxChars,
+        limit: query.limit,
+      }));
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+      console.error('[GET /projects/:id/agent-context/:agentKey]', err);
+      res.status(500).json({ error: 'Failed to assemble project memory context' });
+    }
+  },
+);
+
+/**
+ * Capture a deterministic, zero-LLM-cost digest from the persisted output.
+ * One generated record per agent is updated on rerun instead of accumulating.
+ */
+router.post(
+  '/:id/agent-context/:agentKey/capture',
+  requireAuth,
+  requireProjectRole('project_owner', 'editor'),
+  async (req, res) => {
+    try {
+      const params = AgentMemoryParamsSchema.parse(req.params);
+      const body = CaptureAgentMemorySchema.parse(req.body ?? {});
+      const { data: project, error: projectError } = await supabaseAdmin
+        .from('projects')
+        .select('id, data')
+        .eq('id', params.id)
+        .single();
+      if (projectError || !project) return res.status(404).json({ error: 'Project not found' });
+
+      const projectData = (project.data ?? {}) as Record<string, unknown>;
+      const agentRuns = (projectData.agentRuns ?? {}) as Record<string, { output?: unknown }>;
+      const run = agentRuns[params.agentKey];
+      if (!run || typeof run.output !== 'string' || !run.output.trim()) {
+        return res.status(409).json({ error: 'No completed persisted output is available for this agent' });
+      }
+
+      const sourceTag = `source-agent:${params.agentKey}`;
+      const stableTags = ['kind:agent-output-summary', sourceTag];
+      const tags = body.runtimeRunId ? [...stableTags, `run:${body.runtimeRunId}`] : stableTags;
+      const content = buildArtifactMemoryDigest(run.output);
+      const title = `${params.agentKey} latest artifact memory`;
+
+      const { data: existingRows, error: existingError } = await supabaseAdmin
+        .from('memory_records')
+        .select('id')
+        .eq('project_id', params.id)
+        .eq('scope', 'project')
+        .contains('tags', stableTags)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (existingError) throw existingError;
+
+      const existingId = existingRows?.[0]?.id as string | undefined;
+      const mutation = existingId
+        ? supabaseAdmin.from('memory_records').update({ title, content, tags, approved: false }).eq('id', existingId)
+        : supabaseAdmin.from('memory_records').insert({
+            project_id: params.id,
+            scope: 'project',
+            title,
+            content,
+            tags,
+            approved: false,
+          });
+      const { data, error } = await mutation.select().single();
+      if (error || !data) throw error ?? new Error('Memory capture failed');
+      res.status(existingId ? 200 : 201).json(data);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+      console.error('[POST /projects/:id/agent-context/:agentKey/capture]', err);
+      res.status(500).json({ error: 'Failed to capture project memory' });
+    }
+  },
+);
+
+/** Clear only generated summaries. Curated project/domain memory survives. */
+router.delete(
+  '/:id/agent-context',
+  requireAuth,
+  requireProjectRole('project_owner'),
+  async (req, res) => {
+    try {
+      const id = z.string().uuid().parse(req.params.id);
+      const { error } = await supabaseAdmin
+        .from('memory_records')
+        .delete()
+        .eq('project_id', id)
+        .eq('scope', 'project')
+        .contains('tags', ['kind:agent-output-summary']);
+      if (error) throw error;
+      res.status(204).send();
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
+      console.error('[DELETE /projects/:id/agent-context]', err);
+      res.status(500).json({ error: 'Failed to clear generated project memory' });
+    }
+  },
+);
+
 router.get('/:id', requireAuth, requireProjectRole('project_owner', 'editor', 'reviewer', 'viewer'), async (req, res) => {
   try {
     const { data, error } = await supabaseAdmin

@@ -3,7 +3,7 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { updateProject, updateAgentRun } from '@/db/projectRepository';
+import { updateProject, updateAgentRun, clearGeneratedProjectAgentMemory } from '@/db/projectRepository';
 import { PipelineEngine, buildAgentPromptContext, runSingleAgent } from '@/services/pipelineEngine';
 import { generateClarifyingQuestions, mergeClarifyingAnswers } from '@/services/clarifyingQuestions';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE } from '@/agents/constants';
@@ -576,9 +576,17 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         setRerunError('Your access is scoped to specific agents — restarting the full pipeline from Phase 0 is not available.');
         return;
       }
+      if (!pendingCascadeRerun) {
+        setPendingCascadeRerun(getUserVisibleAgentIds());
+        return;
+      }
       setRerunning(true);
       setRerunError(null);
       try {
+        // Generated summaries represent the outputs being discarded. Clear
+        // them before restarting so stale memory cannot influence Phase 0.
+        // Curated project memory and approved domain memory are retained.
+        await clearGeneratedProjectAgentMemory(projectId);
         await updateProject(projectId, (p) => {
           // Save the current rerun prompt as the persistent override for this agent
           const existing = p.promptOverrides.findIndex((o) => o.agentId === 'sdlcOrchestrator');
@@ -1435,10 +1443,14 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               {pendingCascadeRerun && (
                 <div className={styles.cascadeWarning}>
                   <p className={styles.cascadeWarningTitle}>
-                    ⚠ Re-running this agent will reset {pendingCascadeRerun.length} downstream artifact{pendingCascadeRerun.length !== 1 ? 's' : ''}
+                    {rerunAgent === 'sdlcOrchestrator'
+                      ? 'Warning: Re-running the SDLC Orchestrator will reset all agents, generated memories, and review approvals'
+                      : 'Warning: Re-running this agent will reset ' + pendingCascadeRerun.length + ' downstream artifact' + (pendingCascadeRerun.length !== 1 ? 's' : '')}
                   </p>
                   <p className={styles.cascadeWarningBody}>
-                    The following agents will be cleared and re-run from scratch once this agent completes:
+                    {rerunAgent === 'sdlcOrchestrator'
+                      ? 'All existing agent outputs and gate approvals will be cleared before the pipeline restarts from Phase 0:'
+                      : 'The following agents will be cleared and re-run from scratch once this agent completes:'}
                   </p>
                   <ul className={styles.cascadeAgentList}>
                     {pendingCascadeRerun.map((id) => (
@@ -1454,7 +1466,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       onClick={confirmRerun}
                       disabled={rerunning}
                     >
-                      {rerunning ? 'Running...' : 'Yes, Reset & Re-run'}
+                      {rerunning ? 'Running...' : rerunAgent === 'sdlcOrchestrator' ? 'Yes, Reset All & Re-run' : 'Yes, Reset & Re-run'}
                     </button>
                     <button
                       className="btn-secondary"

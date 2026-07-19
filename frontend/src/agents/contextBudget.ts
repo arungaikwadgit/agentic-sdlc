@@ -121,3 +121,27 @@ export function applyContextBudget(
   }
   return result;
 }
+
+
+/** When a durable memory digest already represents an output, keep only a
+ * compact excerpt of that raw artifact. Direct dependencies retain more
+ * detail; indirect context is reduced aggressively. This avoids paying for
+ * both the full prior artifact and its memory summary on every rerun. */
+export function applyMemoryAwareContextBudget(
+  priorOutputs: Partial<Record<AgentId, string>>,
+  overrides: Partial<Record<AgentId, number>>,
+  coveredAgentKeys: readonly AgentId[],
+  directDependencyKeys: readonly AgentId[],
+): Partial<Record<AgentId, string>> {
+  const covered = new Set(coveredAgentKeys);
+  const direct = new Set(directDependencyKeys);
+  const memoryOverrides: Partial<Record<AgentId, number>> = { ...overrides };
+
+  for (const id of Object.keys(priorOutputs) as AgentId[]) {
+    if (!covered.has(id)) continue;
+    const memoryBudget = direct.has(id) ? 2_000 : 800;
+    memoryOverrides[id] = Math.min(memoryOverrides[id] ?? DEFAULT_MAX_PRIOR_OUTPUT_CHARS, memoryBudget);
+  }
+
+  return applyContextBudget(priorOutputs, memoryOverrides);
+}

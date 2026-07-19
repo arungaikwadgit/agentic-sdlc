@@ -90,35 +90,26 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     fallbackMemberId: project.activeAdminId ?? null,
   });
 
-  // gate0 (SDLC Orchestrator plan approval — must be approved before phase1
-  // starts) used to have its own narrower approver check here (project owner
-  // or adminMode only), separate from every other gate. That check didn't
-  // recognize a real app admin (isAppAdmin) at all — only the dev-mode bypass
-  // — so a production admin could be wrongly blocked from approving. Fixed
-  // 2026-07-17: gate0 now uses the exact same canActOnGate permission (below)
-  // as every other gate — Project Owner, app admin, or one of
-  // REVIEW_GATE_APPROVER_TITLES. No gate-specific carve-out remains.
-
-  // Approve/Reject are only available to the Project Owner, an admin (app
-  // admin or the dev-mode adminMode bypass), or a member whose job title is
-  // in REVIEW_GATE_APPROVER_TITLES (projectAccess.ts) — see
-  // getReviewGatePermission(). Anyone else can still open this modal and
-  // view outputs, but the action buttons are hidden below rather than
-  // just disabled, per the "only available to"
-  // requirement.
+  // Gate 0 is the mandatory governed-plan checkpoint. Unlike later gates,
+  // it may be approved/rejected only by the authenticated Project Owner or
+  // app admin; job-title exceptions are intentionally not accepted here.
+  // PipelineEngine independently blocks Phase 1 until gate0 is approved.
+  // Later gates retain the configured management/architecture-title policy.
   const gatePermission = getReviewGatePermission(project, {
     adminMode,
     isAppAdmin,
     userEmail: user?.email ?? null,
     userId: user?.id ?? null,
     fallbackMemberId: project.activeAdminId ?? null,
-  });
+  }, gateId);
   const canActOnGate = gatePermission.canAct;
 
   const [selectedAgent, setSelectedAgent] = useState<AgentId>(agents[0]);
   const [notes, setNotes] = useState('');
   const [panelMode, setPanelMode] = useState<PanelMode>('view');
   const [approvedById, setApprovedById] = useState<string>('');
+  const gate0ActorId = gatePermission.member?.id ?? user?.id ?? user?.email ?? '';
+  const effectiveApprovedById = gateId === 'gate0' ? gate0ActorId : approvedById;
   // "Show Diagram" toggle for View mode — same DIAGRAM_AGENTS/hasMermaidDiagram
   // gating and Spec/Diagram tab pattern already used in ProjectWorkspace.tsx,
   // now also available in the review gate modal (2026-07-17).
@@ -391,7 +382,11 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
             ) : (
               <>
                 {/* Approver selector — mandatory to approve (not to reject) */}
-                {members.length > 0 && (
+                {gateId === 'gate0' ? (
+                  <span className={styles.actionRequiredHint}>
+                    Approving as {gatePermission.member?.name ?? user?.email ?? 'authorized administrator'}
+                  </span>
+                ) : members.length > 0 && (
                   <select
                     value={approvedById}
                     onChange={(e) => setApprovedById(e.target.value)}
@@ -416,20 +411,20 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 )}
                 <button
                   className="btn-danger"
-                  onClick={() => onReject(notes, approvedById || undefined)}
+                  onClick={() => onReject(notes, effectiveApprovedById || undefined)}
                   disabled={!notes.trim()}
                   title={!notes.trim() ? 'Add a review comment explaining the rejection before rejecting.' : undefined}
                 >
                   Reject &amp; Stop
                 </button>
-                {!approvedById && (
+                {!effectiveApprovedById && (
                   <span className={styles.actionRequiredHint}>* Select approver to continue</span>
                 )}
                 <button
                   className="btn-primary"
-                  onClick={() => onApprove(notes, approvedById || undefined)}
-                  disabled={!approvedById}
-                  title={!approvedById ? 'Select who is approving before continuing.' : undefined}
+                  onClick={() => onApprove(notes, effectiveApprovedById || undefined)}
+                  disabled={!effectiveApprovedById}
+                  title={!effectiveApprovedById ? 'Select who is approving before continuing.' : undefined}
                 >
                   Approve &amp; Continue ›
                 </button>

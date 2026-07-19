@@ -12,6 +12,7 @@ import {
   DEFAULT_MAX_PRIOR_OUTPUT_CHARS,
   trimPriorOutputText,
   applyContextBudget,
+  applyMemoryAwareContextBudget,
   parseTokenOptimizerBudgets,
 } from '../../frontend/src/agents/contextBudget';
 import { AGENT_DEFINITIONS } from '../../frontend/src/agents/definitions';
@@ -114,5 +115,43 @@ describe('parseTokenOptimizerBudgets', () => {
     expect(() => parseTokenOptimizerBudgets('')).not.toThrow();
     expect(() => parseTokenOptimizerBudgets('   ')).not.toThrow();
     expect(parseTokenOptimizerBudgets('')).toEqual({});
+  });
+});
+
+
+describe('applyMemoryAwareContextBudget', () => {
+  it('uses a compact excerpt for memory-covered indirect outputs', () => {
+    const output = 'x'.repeat(10_000);
+    const result = applyMemoryAwareContextBudget(
+      { architecture: output } as never,
+      {},
+      ['architecture'] as never,
+      [],
+    );
+    expect(result.architecture).toContain('[...truncated');
+    expect(result.architecture!.length).toBeLessThan(1_050);
+  });
+
+  it('retains a larger excerpt for a direct dependency', () => {
+    const output = 'x'.repeat(10_000);
+    const result = applyMemoryAwareContextBudget(
+      { architecture: output } as never,
+      {},
+      ['architecture'] as never,
+      ['architecture'] as never,
+    );
+    expect(result.architecture!.length).toBeGreaterThan(1_900);
+    expect(result.architecture!.length).toBeLessThan(2_200);
+  });
+
+  it('does not tighten outputs that have no durable memory coverage', () => {
+    const output = 'x'.repeat(10_000);
+    const result = applyMemoryAwareContextBudget(
+      { architecture: output } as never,
+      {},
+      [],
+      ['architecture'] as never,
+    );
+    expect(result.architecture!.startsWith('x'.repeat(DEFAULT_MAX_PRIOR_OUTPUT_CHARS))).toBe(true);
   });
 });

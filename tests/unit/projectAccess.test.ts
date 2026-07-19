@@ -11,6 +11,7 @@ import {
   isProjectAdminUser,
   getProjectExportPermission,
   getAgentRunPermission,
+  getReviewGatePermission,
 } from '../../frontend/src/lib/projectAccess';
 import type { Project, TeamMember, AgentAssignment } from '../../frontend/src/types/project.types';
 import type { AgentId } from '../../frontend/src/types/agent.types';
@@ -160,6 +161,27 @@ describe('getProjectExportPermission', () => {
     const perm = getProjectExportPermission(proj, { userEmail: 'alice@example.com', userId: 'irrelevant' });
     expect(perm.canExport).toBe(false);
     expect(perm.reason).toMatch(/does not currently have/i);
+  });
+});
+
+describe('getReviewGatePermission', () => {
+  it('restricts gate0 approval to an app admin or project owner', () => {
+    const proj = baseProject({
+      teamMembers: [member({ role: 'Engineering Manager', appRole: 'editor' })],
+    });
+
+    expect(getReviewGatePermission(proj, { userEmail: 'alice@example.com' }, 'gate0')).toMatchObject({
+      canAct: false,
+      reason: expect.stringMatching(/project owner or.*admin/i),
+    });
+    expect(getReviewGatePermission(proj, { userEmail: 'alice@example.com', isAppAdmin: true }, 'gate0').canAct).toBe(true);
+  });
+
+  it('continues to allow configured approver titles on later gates', () => {
+    const proj = baseProject({
+      teamMembers: [member({ role: 'Engineering Manager', appRole: 'editor' })],
+    });
+    expect(getReviewGatePermission(proj, { userEmail: 'alice@example.com' }, 'gate3').canAct).toBe(true);
   });
 });
 

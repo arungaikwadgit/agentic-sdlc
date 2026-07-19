@@ -1,4 +1,4 @@
-import type { AppRole, Project, TeamMember } from '@/types/project.types';
+import type { AppRole, Project, ReviewGateId, TeamMember } from '@/types/project.types';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId } from '@/types/agent.types';
 
@@ -124,19 +124,29 @@ export interface ReviewGatePermissionState {
 }
 
 /**
- * Who may approve or reject a review gate: the Project Owner, a real app
- * admin (or the dev-mode admin bypass), or a member whose job title is one
- * of REVIEW_GATE_APPROVER_TITLES. Everyone else (Editor/Reviewer/Viewer with
- * any other title — QA Engineer, Tech Lead, Scrum Master, etc.) can still
- * view the gate's outputs but not approve or reject it.
+ * Gate 0 may be approved/rejected only by the Project Owner or an app admin
+ * (including the local development admin bypass). Later gates additionally
+ * allow members whose job title is in REVIEW_GATE_APPROVER_TITLES. Everyone
+ * else can view gate outputs but cannot approve or reject.
  */
-export function getReviewGatePermission(project: Project, ctx: ReviewGateAccessContext): ReviewGatePermissionState {
-  if (ctx.adminMode || ctx.isAppAdmin) return { canAct: true, member: null, reason: null };
+export function getReviewGatePermission(
+  project: Project,
+  ctx: ReviewGateAccessContext,
+  gateId?: ReviewGateId,
+): ReviewGatePermissionState {
   const member = getProjectMember(project, ctx);
+  if (ctx.adminMode || ctx.isAppAdmin) return { canAct: true, member, reason: null };
   if (!member) {
     return { canAct: false, member: null, reason: 'You are not a member of this project.' };
   }
   if (member.appRole === 'project_owner') return { canAct: true, member, reason: null };
+  if (gateId === 'gate0') {
+    return {
+      canAct: false,
+      member,
+      reason: 'Only the Project Owner or an admin can approve or reject the governed execution plan.',
+    };
+  }
   if (REVIEW_GATE_APPROVER_TITLES.has(norm(member.role))) return { canAct: true, member, reason: null };
   return {
     canAct: false,

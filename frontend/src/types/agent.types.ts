@@ -314,6 +314,19 @@ export interface GovernanceSnapshot {
   creationApproval: { approverRole?: string; approvedAt?: number } | null;
 }
 
+export interface AgentMemoryContext {
+  /** Bounded historical evidence assembled by the authenticated backend API. */
+  summary: string;
+  recordIds: string[];
+  /** Agent outputs represented by durable summaries in this memory payload. */
+  coveredAgentKeys: AgentId[];
+  estimatedTokens: number;
+  sourceCharacters: number;
+  selectedCharacters: number;
+  /** Approximate input tokens avoided by compact memory-backed excerpts. */
+  estimatedTokenSavings?: number;
+}
+
 export interface AgentPromptContext {
   projectName: string;
   projectDescription: string;
@@ -356,6 +369,9 @@ export interface AgentPromptContext {
   agentRunMetrics?: AgentRunMetric[];
   /** Read-only governance evidence metadata; never includes hidden prompts or document content. */
   governanceSnapshot?: GovernanceSnapshot;
+  /** Project-scoped and approved domain-shared long-term memory. Historical
+   * evidence only: current project fields and direct outputs take priority. */
+  memoryContext?: AgentMemoryContext;
   /** This agent's own saved Q&A pairs from the pre-generation clarifying-
    *  questions flow, if any (see AgentDefinition.needsClarifyingQuestions).
    *  Populated per-agent by PipelineEngine.buildContext(), not shared across
