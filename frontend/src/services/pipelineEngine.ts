@@ -254,11 +254,12 @@ export class PipelineEngine {
 
         const phase = PHASE_ORDER[i];
 
-        // Check if a review gate precedes this phase index
-        // (i.e., gate must have been approved before we run this phase)
-        const requiredGate = this.getGateRequiredBefore(i);
+        // Check every earlier persisted gate, not only the gate attached to
+        // this exact phase. This prevents a direct "run from here" or stale
+        // resume phase from jumping over a rejected/pending mandatory gate.
+        const freshProject = await getProject(this.projectId);
+        const requiredGate = this.getGateRequiredBefore(i, freshProject?.reviewGates ?? {});
         if (requiredGate) {
-          const freshProject = await getProject(this.projectId);
           const gate = freshProject?.reviewGates[requiredGate];
           if (!gate?.approved) {
             // Pause — emit gate event and stop
@@ -301,9 +302,24 @@ export class PipelineEngine {
     }
   }
 
-  private getGateRequiredBefore(phaseIndex: number): ReviewGateId | null {
-    for (const [gateId, phaseIdx] of Object.entries(GATE_AFTER_PHASE_INDEX)) {
-      if (phaseIdx === phaseIndex) return gateId as ReviewGateId;
+  private getGateRequiredBefore(
+    phaseIndex: number,
+    reviewGates: Project['reviewGates'],
+  ): ReviewGateId | null {
+    const explicitPendingGate = Object.entries(GATE_AFTER_PHASE_INDEX)
+      .filter(([gateId, gatePhaseIndex]) => {
+        if (gatePhaseIndex < 0 || gatePhaseIndex > phaseIndex) return false;
+        const gate = reviewGates[gateId as ReviewGateId];
+        return gate !== undefined && !gate.approved;
+      })
+      .sort(([, leftIndex], [, rightIndex]) => leftIndex - rightIndex)[0];
+
+    if (explicitPendingGate) return explicitPendingGate[0] as ReviewGateId;
+
+    // Preserve the normal phase-boundary behavior for a gate that has not
+    // been persisted yet (for example the first run reaching Gate 3).
+    for (const [gateId, gatePhaseIndex] of Object.entries(GATE_AFTER_PHASE_INDEX)) {
+      if (gatePhaseIndex === phaseIndex) return gateId as ReviewGateId;
     }
     return null;
   }

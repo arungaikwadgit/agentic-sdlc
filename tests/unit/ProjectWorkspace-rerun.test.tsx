@@ -288,9 +288,29 @@ describe('ProjectWorkspace — re-run flow', () => {
     });
     mutator(draft);
     expect(draft.agentRuns).toEqual({});
-    expect(draft.reviewGates).toEqual({});
+    expect(draft.reviewGates.gate0).toEqual(expect.objectContaining({
+      id: 'gate0',
+      afterPhases: ['phase0'],
+      approved: false,
+    }));
     expect(draft.currentPhase).toBe('phase0');
-    expect(draft.status).toBe('draft');
+    expect(draft.status).toBe('running');
+
+    expect(runSingleAgentMock).toHaveBeenCalledWith(
+      'proj-1',
+      'sdlcOrchestrator',
+      expect.any(String),
+      expect.any(Object),
+      '',
+      { providerOverride: 'auto' },
+    );
+
+    const pauseMutator = updateProjectMock.mock.calls[1][1];
+    pauseMutator(draft);
+    expect(draft.status).toBe('paused');
+    expect(draft.currentPhase).toBe('phase0a');
+    expect(draft.reviewGates.gate0?.approved).toBe(false);
+    expect(await screen.findByTestId('review-gate-modal')).toHaveAttribute('data-gate-id', 'gate0');
   });
 
   it('asks fresh context-aware questions before rerunning the BRD agent', async () => {

@@ -349,6 +349,29 @@ describe('PipelineEngine', () => {
     expect(callbacks.onPipelineError).not.toHaveBeenCalled();
   });
 
+  it('does not let a direct Phase 1 resume bypass an explicitly pending Gate 0', async () => {
+    mockProject = freshProject({
+      status: 'paused',
+      currentPhase: 'phase1',
+      reviewGates: {
+        gate0: {
+          id: 'gate0',
+          afterPhases: ['phase0'],
+          approved: false,
+          notes: 'Pending orchestrator approval',
+        },
+      },
+    });
+    const callbacks = makeCallbacks();
+    const engine = new PipelineEngine('proj-1', callbacks);
+
+    await engine.run('phase1');
+
+    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate0');
+    expect(callbacks.onAgentStart).not.toHaveBeenCalledWith('manager');
+    expect(mockProject.status).toBe('paused');
+    expect(mockProject.currentPhase).toBe('phase1');
+  });
   it('run(startFromPhase) pauses immediately if the resumed phase requires an unapproved gate (TS-27b)', async () => {
     // gate3 is required *before* phase4 (GATE_AFTER_PHASE_INDEX.gate3 = idx(phase4)).
     // Resuming directly at phase4 with gate3 unapproved should hit the

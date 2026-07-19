@@ -586,20 +586,54 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           if (existing >= 0) p.promptOverrides[existing] = entry;
           else p.promptOverrides.push(entry);
 
-          // Wipe all previous runs and approvals
+          // Wipe all previous runs and approvals. Persist Gate 0 explicitly as
+          // pending so the approval requirement survives refreshes and cannot
+          // be confused with a legacy project that has no Gate 0 record.
           p.agentRuns = {} as typeof p.agentRuns;
-          p.reviewGates = {} as typeof p.reviewGates;
-          p.status = 'draft';
+          p.reviewGates = {
+            gate0: {
+              id: 'gate0',
+              afterPhases: ['phase0'],
+              approved: false,
+              notes: 'Orchestrator plan requires Owner/Admin approval before downstream execution.',
+            },
+          } as typeof p.reviewGates;
+          p.status = 'running';
           p.currentPhase = 'phase0';
         });
+        const extraParts: string[] = [];
+        if (rerunUserExtra.trim()) extraParts.push(`Additional instructions: ${rerunUserExtra.trim()}`);
+        if (uploadedContext.trim()) extraParts.push(`## Attached document context:\n${uploadedContext.trim()}`);
+
+        let orchestratorSucceeded = false;
+        await runSingleAgent(
+          projectId,
+          'sdlcOrchestrator',
+          rerunPrompt,
+          {
+            onComplete: () => { orchestratorSucceeded = true; },
+            onError: (error) => { setRerunError(error); },
+          },
+          extraParts.join('\n\n'),
+          { providerOverride: rerunPendingProvider },
+        );
+
+        if (!orchestratorSucceeded) return;
+
+        await updateProject(projectId, (p) => {
+          p.status = 'paused';
+          p.currentPhase = 'phase0a';
+          p.reviewGates.gate0 = {
+            id: 'gate0',
+            afterPhases: ['phase0'],
+            approved: false,
+            notes: 'Orchestrator plan requires Owner/Admin approval before downstream execution.',
+          };
+        });
         setRerunAgent(null);
-        setSelectedAgent(null);
-        setPendingGate(null);
+        setSelectedAgent('sdlcOrchestrator');
         setPendingCascadeRerun(null);
-        // Start the full pipeline from Phase 0 — routed through
-        // attemptStartPipeline so this restart re-triggers the team-
-        // assignment warning check, same as every other pipeline-start path.
-        attemptStartPipeline(undefined);
+        setPendingGate('gate0');
       } catch (e) {
         setRerunError(String(e));
       } finally {
