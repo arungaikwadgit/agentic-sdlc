@@ -200,7 +200,7 @@ export interface PipelineCallbacks {
 const GATE_BEFORE_PHASE: Partial<Record<PhaseId, ReviewGateId>> = {};
 for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
   // Gate fires after the last phase listed; block the *next* phase sequence.
-  // Gates with no phases (e.g. gate6, now unused since phase6 is empty) never fire.
+  // Gates with no phases (for example gate6, intentionally inactive) never fire.
   if (phases.length === 0) continue;
   const lastPhase = phases[phases.length - 1] as PhaseId;
   GATE_BEFORE_PHASE[lastPhase] = gateId as ReviewGateId;
@@ -208,19 +208,16 @@ for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
 
 // Map gate → which phase follows it
 const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
-  // gate0 blocks phase1 (and everything after) until orchestration, token optimization,
-  // plan (phase0) is approved by a project owner or admin.
-  gate0: PHASE_ORDER.indexOf('phase1'),
+  // gate0 blocks the first preflight phase (and everything after) until the
+  // orchestrator plan is approved by a project owner or admin.
+  gate0: PHASE_ORDER.indexOf('phase0a'),
   gate1: PHASE_ORDER.indexOf('phase2'),
   gate2: PHASE_ORDER.indexOf('phase3'),
   gate3: PHASE_ORDER.indexOf('phase4'),
-  // phase6 is now empty (securityCompliance moved to phase3b, gated by gate3), so gate5
-  // unlocks phase7 directly, skipping the empty phase6.
-  gate5: PHASE_ORDER.indexOf('phase7'),
-  // gate6 is unused (phase6 has no agents to gate) — value is never consulted because
-  // GATE_BEFORE_PHASE never maps to 'gate6' (REVIEW_GATES.gate6 is empty), but the
-  // Record<ReviewGateId, number> type requires an entry.
-  gate6: PHASE_ORDER.indexOf('phase7'),
+  // Testing approval gates entry into the Working Prototype phase.
+  gate5: PHASE_ORDER.indexOf('phase6'),
+  // Gate 6 is intentionally inactive. Use -1 so it can never match a real phase index.
+  gate6: -1,
 };
 
 export class PipelineEngine {

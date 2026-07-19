@@ -46,21 +46,13 @@ import styles from './ProjectWorkspace.module.css';
 // ── Gate locking ──────────────────────────────────────────────────────────────
 // Maps gate → last phase covered by the gate. Phases AFTER this phase are
 // locked until the gate is approved. Must stay in sync with REVIEW_GATES.
-// gate0 (governed preflight approval) is intentionally NOT listed here. Unlike gate1-gate5,
-// gate0 didn't exist for projects created before it shipped, so any such
-// project's reviewGates has no gate0 entry — if gate0 were included in this
-// map, getLockedPhases() below would treat that as "unapproved" and lock
-// EVERY phase after phase0 for every pre-existing project, including ones
-// already complete. The real safety guarantee (no agent past phase0 runs
-// without gate0 approval) is already enforced at the engine level after phase0b by
-// pipelineEngine.ts's GATE_AFTER_PHASE_INDEX.gate0 — clicking "Run" on a
-// locked-by-engine phase still correctly pops the approval modal via
-// onGateReached('gate0'). This map only controls the pre-emptive padlock
-// icon, which isn't worth the regression for existing projects.
+// Gate 0 is enforced by PipelineEngine before phase0a. It is omitted from this
+// visual lock map so legacy projects without a persisted gate0 record remain
+// inspectable; attempting to run still opens the mandatory approval gate.
 const GATE_UNLOCKS_AFTER: Record<string, string> = {
   gate1: 'phase1b',
   gate2: 'phase2a',  // gate2 covers [phase2, phase2a]; lock phases after phase2a
-  gate3: 'phase3b',  // gate3 covers [phase3, phase3a, phase3c, phase3b]; lock after phase3b
+  gate3: 'phase3c',  // gate3 covers [phase3, phase3a, phase3b, phase3c]
   gate5: 'phase5',
 };
 
@@ -1176,6 +1168,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             const gateBeforeThisPhase = (Object.entries(REVIEW_GATES) as [ReviewGateId, PhaseId[]][])
               .find(([gateId]) => {
                 const cutoffPhase = GATE_UNLOCKS_AFTER[gateId];
+                if (!cutoffPhase) return false;
                 const cutoffIdx = PHASE_ORDER.indexOf(cutoffPhase as PhaseId);
                 const phaseIdx = PHASE_ORDER.indexOf(phase as PhaseId);
                 return phaseIdx === cutoffIdx + 1;
@@ -1726,7 +1719,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           project={project}
           onApprove={async (notes, approvedById) => {
             const gateToNext: Record<string, PhaseId> = {
-              gate0: 'phase1',
+              gate0: 'phase0a',
               gate1: 'phase2',
               gate2: 'phase3',
               gate3: 'phase4',

@@ -25,6 +25,14 @@ describe('PHASE_ORDER and PHASE_AGENTS', () => {
     expect(PHASE_ORDER.length).toBe(17);
   });
 
+  it('uses the canonical numeric and dependency-tier sequence', () => {
+    expect(PHASE_ORDER).toEqual([
+      'phase0', 'phase0a', 'phase0b', 'phase1', 'phase1b', 'phase2', 'phase2a',
+      'phase3', 'phase3a', 'phase3b', 'phase3c', 'phase4', 'phase4a',
+      'phase5', 'phase6', 'phase7', 'phase8',
+    ]);
+  });
+
   it('starts with phase0 (SDLC Orchestrator)', () => {
     expect(PHASE_ORDER[0]).toBe('phase0');
   });

@@ -4,13 +4,13 @@ import { PHASE_ORDER } from '../../frontend/src/agents/constants';
 import type { Project } from '../../frontend/src/types/project.types';
 
 // ── Extracted pure function from ProjectWorkspace ─────────────────────────
-// gate6 is intentionally absent: phase6 is now empty (securityCompliance moved to
-// phase3b, gated by gate3) so gate6 never fires and is never included here.
-// gate3 now covers phase3 + phase3b, so its cutoff is phase3b.
+// gate6 is intentionally absent because the Working Prototype phase has no
+// separate approval gate.
+// Gate cutoffs mirror ProjectWorkspace and the canonical REVIEW_GATES order.
 const GATE_UNLOCKS_AFTER: Record<string, string> = {
-  gate1: 'phase1',
-  gate2: 'phase2',
-  gate3: 'phase3b',
+  gate1: 'phase1b',
+  gate2: 'phase2a',
+  gate3: 'phase3c',
   gate5: 'phase5',
 };
 
@@ -36,13 +36,13 @@ function makeProject(gateApprovals: Record<string, boolean>): Pick<Project, 'rev
 }
 
 describe('getLockedPhases', () => {
-  it('locks all phases after phase1 when gate1 is not approved', () => {
+  it('locks all phases after phase1b when gate1 is not approved', () => {
     const proj = makeProject({ gate1: false, gate2: true, gate3: true, gate5: true });
     const locked = getLockedPhases(proj);
-    // cutoff = index of 'phase1' (not a hardcoded 0 — phase0/SDLC Orchestrator now
+    // cutoff = index of 'phase1b' (not a hardcoded 0 — phase0/SDLC Orchestrator now
     // precedes phase1 in PHASE_ORDER, so this must be derived rather than assumed).
-    const phase1Idx = PHASE_ORDER.indexOf('phase1');
-    const expectedLocked = PHASE_ORDER.slice(phase1Idx + 1);
+    const phase1bIdx = PHASE_ORDER.indexOf('phase1b');
+    const expectedLocked = PHASE_ORDER.slice(phase1bIdx + 1);
     for (const ph of expectedLocked) {
       expect(locked.has(ph), `${ph} should be locked`).toBe(true);
     }
@@ -62,16 +62,16 @@ describe('getLockedPhases', () => {
     expect(getLockedPhases(proj).size).toBe(0);
   });
 
-  it('locks phases after phase3b when gate3 is not approved', () => {
+  it('locks phases after phase3c when gate3 is not approved', () => {
     const proj = makeProject({ gate1: true, gate2: true, gate3: false, gate5: true });
     const locked = getLockedPhases(proj);
-    const phase3bIdx = PHASE_ORDER.indexOf('phase3b');
-    for (let i = phase3bIdx + 1; i < PHASE_ORDER.length; i++) {
+    const phase3cIdx = PHASE_ORDER.indexOf('phase3c');
+    for (let i = phase3cIdx + 1; i < PHASE_ORDER.length; i++) {
       expect(locked.has(PHASE_ORDER[i]), `${PHASE_ORDER[i]} should be locked`).toBe(true);
     }
-    // phases up to and including phase3b should not be locked by gate3
-    for (let i = 0; i <= phase3bIdx; i++) {
-      // gate1/gate2 are approved, so phase1/phase2 are not locked; phase3/phase3b not locked by gate3
+    // phases up to and including phase3c should not be locked by gate3
+    for (let i = 0; i <= phase3cIdx; i++) {
+      // gate1/gate2 are approved, so phase1/phase2 are not locked; phase3 through phase3c are not locked by gate3
       expect(locked.has(PHASE_ORDER[i])).toBe(false);
     }
   });
@@ -79,7 +79,7 @@ describe('getLockedPhases', () => {
   it('handles missing reviewGates gracefully (treats all as unapproved)', () => {
     const proj = { reviewGates: {} as any };
     const locked = getLockedPhases(proj);
-    // All gates missing = unapproved → everything after phase1 locked
+    // All gates missing = unapproved → everything after phase1b locked
     expect(locked.size).toBeGreaterThan(0);
   });
 
@@ -91,11 +91,11 @@ describe('getLockedPhases', () => {
   it('accumulates locks from multiple unapproved gates', () => {
     const proj = makeProject({ gate1: false, gate2: false, gate3: false, gate5: true });
     const locked = getLockedPhases(proj);
-    // gate1 unapproved locks everything after phase1
-    // gate2/gate3 unapproved lock everything after phase2/phase3b
-    // Union = everything after phase1
-    const phase1Idx = PHASE_ORDER.indexOf('phase1');
-    for (let i = phase1Idx + 1; i < PHASE_ORDER.length; i++) {
+    // gate1 unapproved locks everything after phase1b
+    // gate2/gate3 unapproved lock everything after phase2a/phase3c
+    // Union = everything after phase1b
+    const phase1bIdx = PHASE_ORDER.indexOf('phase1b');
+    for (let i = phase1bIdx + 1; i < PHASE_ORDER.length; i++) {
       expect(locked.has(PHASE_ORDER[i])).toBe(true);
     }
   });

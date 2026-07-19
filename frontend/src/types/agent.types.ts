@@ -16,8 +16,8 @@ export type PhaseId =
   | 'phase2a'   // dataModel (depends on businessRules from phase2)
   | 'phase3'
   | 'phase3a'   // apiDesign + interaction (depend on phase3 outputs)
-  | 'phase3c'   // uxMockups (depends on phase3a outputs)
   | 'phase3b'
+  | 'phase3c'   // uxMockups (depends on phase3a outputs)
   | 'phase4'
   | 'phase4a'   // codeReviewStandards + uiComponentLibrary + roadmapPlanner (depend on phase4)
   | 'phase5'

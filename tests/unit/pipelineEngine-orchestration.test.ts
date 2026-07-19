@@ -121,14 +121,14 @@ function approveAllGates(project: Project): Project {
   return {
     ...project,
     reviewGates: {
-      // gate0 covers orchestration, token optimization, and AI governance.
-      gate0: { id: 'gate0', afterPhases: ['phase0', 'phase0a', 'phase0b'], approved: true, approvedAt: now },
+      // gate0 covers the orchestrator plan only; preflight starts after approval.
+      gate0: { id: 'gate0', afterPhases: ['phase0'], approved: true, approvedAt: now },
       gate1: { id: 'gate1', afterPhases: ['phase1', 'phase1b'], approved: true, approvedAt: now },
       gate2: { id: 'gate2', afterPhases: ['phase2'], approved: true, approvedAt: now },
-      // gate3 now covers phase3 + phase3b (securityCompliance moved here)
-      gate3: { id: 'gate3', afterPhases: ['phase3', 'phase3b'], approved: true, approvedAt: now },
+      // gate3 covers all design tiers through phase3c
+      gate3: { id: 'gate3', afterPhases: ['phase3', 'phase3a', 'phase3b', 'phase3c'], approved: true, approvedAt: now },
       gate5: { id: 'gate5', afterPhases: ['phase5'], approved: true, approvedAt: now },
-      // gate6 intentionally omitted: phase6 is empty, gate6 never fires
+      // gate6 intentionally omitted: the Working Prototype phase has no separate gate6
     },
   };
 }
@@ -163,36 +163,30 @@ describe('PipelineEngine', () => {
     expect(updateProject).not.toHaveBeenCalled();
   });
 
-  it('stops at gate0 after all governed preflight phases when no gates are approved (TS-22)', async () => {
+  it('stops at gate0 immediately after the orchestrator when no gates are approved (TS-22)', async () => {
     mockProject = freshProject(); // status: draft, no gates approved
     const callbacks = makeCallbacks();
     const engine = new PipelineEngine('proj-1', callbacks);
 
     await engine.run();
 
-    // The complete governed preflight must run before Gate 0 is presented.
     expect(callbacks.onAgentComplete).toHaveBeenCalledWith('sdlcOrchestrator', expect.any(String));
-    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('tokenOptimizer', expect.any(String));
-    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('aiGovernance', expect.any(String));
     expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase0');
-    expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase0a');
-    expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase0b');
+    expect(callbacks.onAgentStart).not.toHaveBeenCalledWith('tokenOptimizer');
+    expect(callbacks.onAgentStart).not.toHaveBeenCalledWith('aiGovernance');
 
-    // gate0 fires after phase0b, blocking phase1 until a project owner/admin approves
+    // Gate 0 blocks the first background preflight phase until owner/admin approval.
     expect(callbacks.onGateReached).toHaveBeenCalledWith('gate0');
     expect(callbacks.onPipelineComplete).not.toHaveBeenCalled();
-
     expect(mockProject.status).toBe('paused');
-    expect(mockProject.currentPhase).toBe('phase1');
-
-    // phase1+ agents should NOT have started
+    expect(mockProject.currentPhase).toBe('phase0a');
     expect(callbacks.onAgentStart).not.toHaveBeenCalledWith('manager');
   });
 
   it('stops at gate1 (after phase1b) when gate0 is approved but no other gates are (TS-23)', async () => {
     mockProject = freshProject({
       reviewGates: {
-        gate0: { id: 'gate0', afterPhases: ['phase0', 'phase0a', 'phase0b'], approved: true, approvedAt: Date.now() },
+        gate0: { id: 'gate0', afterPhases: ['phase0'], approved: true, approvedAt: Date.now() },
       },
     });
     const callbacks = makeCallbacks();
@@ -289,7 +283,7 @@ describe('PipelineEngine', () => {
     // the pipeline proceeding past phase2/phase3 before stopping at gate3.
     mockProject = freshProject({
       reviewGates: {
-        gate0: { id: 'gate0', afterPhases: ['phase0', 'phase0a', 'phase0b'], approved: true, approvedAt: Date.now() },
+        gate0: { id: 'gate0', afterPhases: ['phase0'], approved: true, approvedAt: Date.now() },
         gate1: { id: 'gate1', afterPhases: ['phase1', 'phase1b'], approved: true, approvedAt: Date.now() },
         gate2: { id: 'gate2', afterPhases: ['phase2'], approved: true, approvedAt: Date.now() },
       },
@@ -308,7 +302,10 @@ describe('PipelineEngine', () => {
     expect(callbacks.onAgentComplete).toHaveBeenCalledWith('securityCompliance', expect.any(String));
     expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase3b');
 
-    // gate3 fires after phase3b and is unapproved -> pipeline pauses
+    expect(callbacks.onAgentComplete).toHaveBeenCalledWith('uxMockups', expect.any(String));
+    expect(callbacks.onPhaseComplete).toHaveBeenCalledWith('phase3c');
+
+    // gate3 fires after phase3c and is unapproved -> pipeline pauses
     expect(callbacks.onGateReached).toHaveBeenCalledWith('gate3');
     expect(mockProject.status).toBe('paused');
     expect(mockProject.currentPhase).toBe('phase4');

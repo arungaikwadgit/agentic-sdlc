@@ -15,6 +15,11 @@ function gateForPhase(phase: PhaseId): ReviewGateId | undefined {
 }
 
 describe('gateForPhase', () => {
+  it('returns gate0 only for the orchestrator phase', () => {
+    expect(gateForPhase('phase0')).toBe('gate0');
+    expect(gateForPhase('phase0a')).toBeUndefined();
+  });
+
   it('returns gate1 for phase1b (TS-170)', () => {
     expect(gateForPhase('phase1b')).toBe('gate1');
   });
@@ -27,8 +32,9 @@ describe('gateForPhase', () => {
     expect(gateForPhase('phase3')).toBe('gate3');
   });
 
-  it('returns gate3 for phase3b (gate3 now covers phase3 + phase3b)', () => {
+  it('returns gate3 for phase3b and phase3c in canonical order', () => {
     expect(gateForPhase('phase3b')).toBe('gate3');
+    expect(gateForPhase('phase3c')).toBe('gate3');
   });
 
   it('returns gate2 for phase2', () => {
@@ -47,7 +53,7 @@ describe('gateForPhase', () => {
     expect(gateForPhase('phase5')).toBe('gate5');
   });
 
-  it('returns undefined for phase6 — gate6 is unused (phase6 is empty)', () => {
+  it('returns undefined for phase6 — the prototype has no separate gate6', () => {
     expect(gateForPhase('phase6')).toBeUndefined();
   });
 

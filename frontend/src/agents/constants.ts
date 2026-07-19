@@ -16,8 +16,8 @@ export const PHASE_ORDER: PhaseId[] = [
   'phase2a',  // dataModel (depends on businessRules from phase2)
   'phase3',
   'phase3a',  // apiDesign + interaction (depend on phase3 outputs)
-  'phase3c',  // uxMockups (depends on phase3a outputs)
   'phase3b',
+  'phase3c',  // uxMockups (depends on phase3a outputs)
   'phase4',
   'phase4a',  // codeReviewStandards + uiComponentLibrary + roadmapPlanner (depend on phase4)
   'phase5',
@@ -54,11 +54,10 @@ export const PHASE_AGENTS: Record<PhaseId, AgentId[]> = {
   phase3:  ['architecture', 'uxResearch'],
   // Phase 3 tier 2: apiDesign needs architecture; interaction needs uxResearch
   phase3a: ['apiDesign', 'interaction'],
-  // Phase 3 tier 3: uxMockups needs uxResearch + interaction + architecture (all from prior tiers)
-  phase3c: ['uxMockups'],
-
-  // Phase 3b: securityCompliance depends on architecture + dataModel (phase3/phase2a) — runs after design gate
+  // Phase 3B: securityCompliance depends on architecture + dataModel (phase3/phase2a)
   phase3b: ['securityCompliance'],
+  // Phase 3C: uxMockups needs uxResearch + interaction + architecture (all from prior tiers)
+  phase3c: ['uxMockups'],
 
   // Phase 4 tier 1: all independent (depend only on phase3 outputs)
   phase4:  ['codeStructure', 'sprintPlanner', 'taskBreakdown', 'techDebt', 'codeSnippets'],
@@ -77,16 +76,15 @@ export const TOTAL_AGENTS = Object.values(PHASE_AGENTS).flat().length;
 
 /** Review gates — which phases must complete before the gate triggers */
 export const REVIEW_GATES = {
-  // gate0 fires after the SDLC Orchestrator (phase0) produces its execution
-  // plan. The plan must be approved by a project owner or admin before any
-  // other agent runs — see ReviewGateModal.tsx's gate0-specific permission
-  // check and pipelineEngine.ts's GATE_AFTER_PHASE_INDEX.gate0.
-  gate0: ['phase0', 'phase0a', 'phase0b'] as PhaseId[],
+  // gate0 fires immediately after the SDLC Orchestrator produces its plan.
+  // Owner/admin approval is required before any background preflight or
+  // delivery agent may run.
+  gate0: ['phase0'] as PhaseId[],
   gate1: ['phase1', 'phase1b'] as PhaseId[],
   // gate2 fires after ALL requirements phases (including phase2a: dataModel)
   gate2: ['phase2', 'phase2a'] as PhaseId[],
-  // gate3 fires after ALL design phases (including phase3a, phase3c, phase3b)
-  gate3: ['phase3', 'phase3a', 'phase3c', 'phase3b'] as PhaseId[],
+  // gate3 fires after ALL design phases in canonical order.
+  gate3: ['phase3', 'phase3a', 'phase3b', 'phase3c'] as PhaseId[],
   gate5: ['phase5'] as PhaseId[],
   // gate6 has no phases — the Working Prototype (phase6) is exploratory and does not
   // require a stakeholder approval gate. gate6 is retained in ReviewGateId for index stability.
@@ -103,8 +101,8 @@ export const PHASE_LABELS: Record<PhaseId, string> = {
   phase2a: 'Phase 2A — Data Model',
   phase3:  'Phase 3 — Architecture & UX Research',
   phase3a: 'Phase 3A — API & Interaction Design',
-  phase3c: 'Phase 3C — UX Mockups',
   phase3b: 'Phase 3B — Security Review',
+  phase3c: 'Phase 3C — UX Mockups',
   phase4:  'Phase 4 — Dev Planning',
   phase4a: 'Phase 4A — Standards & Roadmap',
   phase5:  'Phase 5 — Testing',
@@ -127,8 +125,8 @@ export const PHASE_SDLC_STAGE: Record<PhaseId, string> = {
   phase2a: 'Requirements',
   phase3:  'Design',
   phase3a: 'Design',
-  phase3c: 'Design',
   phase3b: 'Design (Security Gate)',
+  phase3c: 'Design',
   phase4:  'Development Planning',
   phase4a: 'Development Planning',
   phase5:  'Testing',

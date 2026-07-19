@@ -8,7 +8,7 @@ describe('Token Optimizer and AI Governance agent contracts', () => {
     expect(PHASE_ORDER.slice(0, 4)).toEqual(['phase0', 'phase0a', 'phase0b', 'phase1']);
     expect(PHASE_AGENTS.phase0a).toEqual(['tokenOptimizer']);
     expect(PHASE_AGENTS.phase0b).toEqual(['aiGovernance']);
-    expect(REVIEW_GATES.gate0).toEqual(['phase0', 'phase0a', 'phase0b']);
+    expect(REVIEW_GATES.gate0).toEqual(['phase0']);
 
     expect(AGENT_DEFINITIONS.tokenOptimizer.dependsOn).toEqual(['sdlcOrchestrator']);
     expect(AGENT_DEFINITIONS.aiGovernance.dependsOn).toEqual(['sdlcOrchestrator', 'tokenOptimizer']);
