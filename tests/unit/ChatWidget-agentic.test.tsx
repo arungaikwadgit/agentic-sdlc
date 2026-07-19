@@ -9,6 +9,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import ChatWidget from '@/chatbot/ChatWidget';
 
 const chatMocks = vi.hoisted(() => ({ askAgenticChat: vi.fn() }));
+const MODEL_USAGE = {
+  promptTokens: 100,
+  completionTokens: 25,
+  totalTokens: 125,
+  modelCalls: 2,
+  avoidedModelCalls: 0,
+  providers: ['openai'],
+  models: ['gpt-4o'],
+};
 
 vi.mock('@/chatbot/chatApi', () => ({
   askAgenticChat: chatMocks.askAgenticChat,
@@ -35,6 +44,8 @@ describe('project-aware agentic ChatWidget', () => {
       evidence: [],
       trace: [],
       followUp: null,
+      responseMode: 'model',
+      tokenUsage: MODEL_USAGE,
     });
     render(<ChatWidget projectId="11111111-1111-4111-8111-111111111111" currentView="project" isAdmin />);
     await ask('Why is the prototype blocked?');
@@ -60,6 +71,8 @@ describe('project-aware agentic ChatWidget', () => {
       }],
       trace: [{ stage: 'tool', name: 'get_latest_agent_outputs', status: 'complete', sourceCount: 1 }],
       followUp: null,
+      responseMode: 'model',
+      tokenUsage: MODEL_USAGE,
     });
     render(<ChatWidget projectId="11111111-1111-4111-8111-111111111111" currentView="project" />);
     await ask('Architecture status?');
@@ -70,6 +83,29 @@ describe('project-aware agentic ChatWidget', () => {
     expect(screen.queryByText(/chain-of-thought/i)).not.toBeInTheDocument();
   });
 
+  it('shows zero LLM tokens when approved memory answers directly', async () => {
+    chatMocks.askAgenticChat.mockResolvedValue({
+      answer: 'Settlement uses an outbox pattern.',
+      confidence: 99,
+      supported: true,
+      evidence: [{ sourceType: 'memory', sourceId: 'm1', title: 'Settlement decision', authority: 98 }],
+      trace: [{ stage: 'memory', name: 'memory_match', status: 'answered', sourceCount: 1 }],
+      followUp: null,
+      responseMode: 'memory',
+      tokenUsage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        modelCalls: 0,
+        avoidedModelCalls: 2,
+        providers: [],
+        models: [],
+      },
+    });
+    render(<ChatWidget projectId="11111111-1111-4111-8111-111111111111" currentView="project" />);
+    await ask('How does settlement work?');
+    expect(await screen.findByText(/Memory answer - 0 LLM tokens - 2 model calls avoided/i)).toBeInTheDocument();
+  });
   it('shows an unsupported evidence state and follow-up', async () => {
     chatMocks.askAgenticChat.mockResolvedValue({
       answer: 'I cannot verify the failure yet.',
@@ -78,6 +114,8 @@ describe('project-aware agentic ChatWidget', () => {
       evidence: [],
       trace: [],
       followUp: 'Missing authoritative evidence: runtime.',
+      responseMode: 'model',
+      tokenUsage: MODEL_USAGE,
     });
     render(<ChatWidget currentView="dashboard" />);
     await ask('What failed?');

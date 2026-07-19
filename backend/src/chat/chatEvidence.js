@@ -235,21 +235,28 @@ function createChatEvidenceTools({ db, isAppAdmin = () => false, externalResearc
 
     if (name === 'get_project_memory') {
       const result = await db.query(
-        `SELECT id, title, content, updated_at
+        `SELECT id, title, content, tags, updated_at
            FROM memory_records
-          WHERE project_id = $1 AND approved = TRUE
+          WHERE project_id = $1
+            AND (scope = 'project' OR (scope = 'domain_shared' AND approved = TRUE))
           ORDER BY updated_at DESC
           LIMIT 12`,
         [project.id],
       );
-      return result.rows.map((row) => evidenceItem({
-        sourceType: 'memory',
-        sourceId: row.id,
-        title: row.title,
-        updatedAt: row.updated_at,
-        excerpt: row.content,
-        authority: 98,
-      }));
+      return result.rows
+        .filter((row) => {
+          const tags = Array.isArray(row.tags) ? row.tags.map(String) : [];
+          const sourceAgent = tags.find((tag) => tag.startsWith('source-agent:'))?.slice('source-agent:'.length);
+          return !sourceAgent || canReadAgent(sourceAgent);
+        })
+        .map((row) => evidenceItem({
+          sourceType: 'memory',
+          sourceId: row.id,
+          title: row.title,
+          updatedAt: row.updated_at,
+          excerpt: row.content,
+          authority: 98,
+        }));
     }
 
     throw new Error(`Unknown chat evidence tool: ${name}`);

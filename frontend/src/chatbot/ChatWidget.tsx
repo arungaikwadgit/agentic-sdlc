@@ -73,6 +73,16 @@ function AgenticResult({ result }: { result: AgenticChatResponse }) {
           ? result.confidence + '% evidence confidence'
           : 'Evidence incomplete (' + result.confidence + '%)'}
       </div>
+      <div
+        className={result.responseMode === 'memory' ? styles.memoryUsage : styles.tokenUsage}
+        title={result.responseMode === 'memory'
+          ? 'Answered from approved project memory without calling an LLM.'
+          : result.tokenUsage.promptTokens + ' input + ' + result.tokenUsage.completionTokens + ' output tokens'}
+      >
+        {result.responseMode === 'memory'
+          ? 'Memory answer - 0 LLM tokens - ' + result.tokenUsage.avoidedModelCalls + ' model calls avoided'
+          : result.tokenUsage.totalTokens.toLocaleString() + ' tokens - ' + result.tokenUsage.modelCalls + ' model ' + (result.tokenUsage.modelCalls === 1 ? 'call' : 'calls')}
+      </div>
       {result.followUp && <div className={styles.followUp}>{result.followUp}</div>}
       {result.evidence.length > 0 && (
         <details className={styles.evidenceDetails}>

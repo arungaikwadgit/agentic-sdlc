@@ -10,6 +10,7 @@ const {
   buildPlannerPrompt,
   buildSynthesisPrompt,
 } = require('./chatPlanner');
+const { findMemoryAnswer } = require('./chatMemory');
 
 const MAX_PLAN_ROUNDS = 2;
 const TOOL_TIMEOUT_MS = 15_000;
@@ -44,6 +45,47 @@ function dedupeEvidence(items) {
   });
 }
 
+function normalizeUsage(value) {
+  const usage = value && typeof value === 'object' ? value : {};
+  const promptTokens = Number(usage.prompt_tokens ?? usage.promptTokens ?? 0) || 0;
+  const completionTokens = Number(usage.completion_tokens ?? usage.completionTokens ?? 0) || 0;
+  const totalTokens = Number(usage.total_tokens ?? usage.totalTokens ?? (promptTokens + completionTokens)) || 0;
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+function normalizeModelResult(value) {
+  if (typeof value === 'string') {
+    return { text: value, usage: normalizeUsage(null), provider: null, model: null };
+  }
+  return {
+    text: String(value?.text ?? ''),
+    usage: normalizeUsage(value?.usage),
+    provider: value?.provider ? String(value.provider) : null,
+    model: value?.model ? String(value.model) : null,
+  };
+}
+
+function addUsage(total, call) {
+  total.promptTokens += call.usage.promptTokens;
+  total.completionTokens += call.usage.completionTokens;
+  total.totalTokens += call.usage.totalTokens;
+  total.modelCalls += 1;
+  if (call.provider) total.providers.add(call.provider);
+  if (call.model) total.models.add(call.model);
+}
+
+function publicTokenUsage(total, avoidedModelCalls = 0) {
+  return {
+    promptTokens: total.promptTokens,
+    completionTokens: total.completionTokens,
+    totalTokens: total.totalTokens,
+    modelCalls: total.modelCalls,
+    avoidedModelCalls,
+    providers: [...total.providers],
+    models: [...total.models],
+  };
+}
+
 async function runChatOrchestrator({
   request,
   caller,
@@ -57,21 +99,83 @@ async function runChatOrchestrator({
   const evidence = [];
   const trace = [];
   const executedCalls = new Set();
+  const tokenUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    modelCalls: 0,
+    providers: new Set(),
+    models: new Set(),
+  };
   let requirements = normalized.projectId ? [] : ['catalog'];
   let assessment = assessEvidence([], requirements);
+
+  // Check approved project memory before either model call. Strong,
+  // non-volatile matches avoid planner and synthesis tokens entirely.
+  if (normalized.projectId) {
+    const memoryStartedAt = now();
+    try {
+      const memoryItems = await withTimeout(
+        Promise.resolve(executeTool('get_project_memory', {}, {
+          caller,
+          projectId: normalized.projectId,
+          currentView: normalized.currentView,
+          signal,
+        })),
+        TOOL_TIMEOUT_MS,
+        'get_project_memory',
+      );
+      executedCalls.add('get_project_memory:{}');
+      evidence.push(...memoryItems);
+      trace.push({
+        stage: 'memory',
+        name: 'get_project_memory',
+        status: 'checked',
+        sourceCount: memoryItems.length,
+        elapsedMs: now() - memoryStartedAt,
+      });
+
+      const memoryAnswer = findMemoryAnswer(normalized.question, memoryItems);
+      if (memoryAnswer) {
+        trace.push({ stage: 'memory', name: 'memory_match', status: 'answered', sourceCount: 1 });
+        return {
+          answer: memoryAnswer.answer,
+          confidence: memoryAnswer.confidence,
+          supported: true,
+          evidence: publicEvidence([memoryAnswer.evidence]),
+          trace,
+          followUp: null,
+          responseMode: 'memory',
+          tokenUsage: publicTokenUsage(tokenUsage, 2),
+        };
+      }
+      trace.push({ stage: 'memory', name: 'memory_match', status: 'miss', sourceCount: 0 });
+    } catch (error) {
+      const status = Number(error?.status);
+      if ([400, 403, 404].includes(status)) throw error;
+      trace.push({
+        stage: 'memory',
+        name: 'get_project_memory',
+        status: 'error',
+        sourceCount: 0,
+        elapsedMs: now() - memoryStartedAt,
+      });
+    }
+  }
 
   for (let round = 1; round <= MAX_PLAN_ROUNDS; round++) {
     if (signal?.aborted) throw new Error('Chat request was cancelled.');
     const startedAt = now();
-    const plannerText = await planWithModel(buildPlannerPrompt({
+    const plannerResult = normalizeModelResult(await planWithModel(buildPlannerPrompt({
       ...normalized,
       observation: round === 1 ? null : {
         missing: assessment.missing,
         contradictions: assessment.contradictions,
         completedTools: [...executedCalls],
       },
-    }), { signal });
-    let plan = parsePlannerResponse(plannerText);
+    }), { signal }));
+    addUsage(tokenUsage, plannerResult);
+    let plan = parsePlannerResponse(plannerResult.text);
 
     if (!normalized.projectId) {
       const dashboardCalls = plan.toolCalls.filter((call) => DASHBOARD_TOOL_NAMES.has(call.name));
@@ -131,13 +235,15 @@ async function runChatOrchestrator({
     if (assessment.sufficient) break;
   }
 
-  const answer = String(await synthesizeWithModel(buildSynthesisPrompt({
+  const synthesisResult = normalizeModelResult(await synthesizeWithModel(buildSynthesisPrompt({
     question: normalized.question,
     history: normalized.history,
     evidence,
     assessment,
     trace,
-  }), { signal })).trim();
+  }), { signal }));
+  addUsage(tokenUsage, synthesisResult);
+  const answer = synthesisResult.text.trim();
 
   return {
     answer: answer || 'I could not produce a supported answer from the available project evidence.',
@@ -148,6 +254,8 @@ async function runChatOrchestrator({
     followUp: assessment.sufficient
       ? null
       : `Missing authoritative evidence: ${assessment.missing.join(', ') || 'additional project context'}.`,
+    responseMode: 'model',
+    tokenUsage: publicTokenUsage(tokenUsage),
   };
 }
 

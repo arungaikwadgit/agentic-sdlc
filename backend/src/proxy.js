@@ -1051,11 +1051,16 @@ app.post('/api/lifecycle-events', checkToken, async (req, res) => {
 app.post('/api/chat/respond', checkToken, createChatRouteHandler({
   orchestrate: async ({ request, caller }) => {
     const target = resolveDispatchTarget(undefined, 'helpAssistant');
-    const callModel = async (systemPrompt, userPrompt) => {
-      const result = await dispatchAgentCall(target, systemPrompt, userPrompt);
+    const callModel = async (systemPrompt, userPrompt, maxTokens) => {
+      const result = await dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens);
       const modelText = extractChatModelText(result).trim();
       if (!modelText) throw new Error('The configured model returned an empty chat response.');
-      return modelText;
+      return {
+        text: modelText,
+        usage: result.usage ?? null,
+        provider: result.provider ?? null,
+        model: result.model ?? null,
+      };
     };
     const evidenceTools = createChatEvidenceTools({
       db: dbPool,
@@ -1065,8 +1070,8 @@ app.post('/api/chat/respond', checkToken, createChatRouteHandler({
     return runChatOrchestrator({
       request,
       caller,
-      planWithModel: (prompt) => callModel(CHAT_PLANNER_SYSTEM_PROMPT, prompt),
-      synthesizeWithModel: (prompt) => callModel(CHAT_SYNTHESIS_SYSTEM_PROMPT, prompt),
+      planWithModel: (prompt) => callModel(CHAT_PLANNER_SYSTEM_PROMPT, prompt, 1024),
+      synthesizeWithModel: (prompt) => callModel(CHAT_SYNTHESIS_SYSTEM_PROMPT, prompt, 2048),
       executeTool: evidenceTools.execute,
     });
   },

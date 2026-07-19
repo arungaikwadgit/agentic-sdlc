@@ -21,7 +21,8 @@ describe('agentic chat API client', () => {
       ok: true,
       json: async () => ({
         answer: 'Supported answer', confidence: 100, supported: true,
-        evidence: [], trace: [], followUp: null,
+        evidence: [], trace: [], followUp: null, responseMode: 'model',
+        tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, modelCalls: 2, avoidedModelCalls: 0, providers: ['openai'], models: ['gpt-4o'] },
       }),
     });
     vi.stubGlobal('fetch', fetchMock);

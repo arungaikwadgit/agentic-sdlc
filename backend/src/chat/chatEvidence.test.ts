@@ -120,7 +120,7 @@ describe('chat evidence tools', () => {
     expect(evidence[0].excerpt).not.toContain('teamMembers');
   });
 
-  it('returns catalog, runtime, gate, and approved memory evidence', async () => {
+  it('returns catalog, runtime, gate, and authorized project memory evidence', async () => {
     const db = fakeDb();
     const tools = createChatEvidenceTools({ db });
     const context = { caller: { email: 'owner@example.com', userId: 'owner-user-id' }, projectId: PROJECT_ID };
@@ -130,6 +130,37 @@ describe('chat evidence tools', () => {
       expect(evidence.length).toBeGreaterThan(0);
       expect(evidence.every((item: { authorized: boolean }) => item.authorized)).toBe(true);
     }
+  });
+
+  it('does not expose memory from an unassigned agent to a scoped member', async () => {
+    const db = fakeDb();
+    const baseQuery = db.query.getMockImplementation()!;
+    db.query.mockImplementation(async (sql: string) => {
+      if (/FROM memory_records/i.test(sql)) return { rows: [
+        { id: 'm-architecture', title: 'Architecture memory', content: 'Allowed', tags: ['source-agent:architecture'], updated_at: '2026-07-15T11:00:00.000Z' },
+        { id: 'm-security', title: 'Security memory', content: 'Restricted', tags: ['source-agent:securityCompliance'], updated_at: '2026-07-15T11:00:00.000Z' },
+      ] };
+      return baseQuery(sql);
+    });
+    const tools = createChatEvidenceTools({ db });
+    const evidence = await tools.execute('get_project_memory', {}, {
+      caller: { email: 'editor@example.com', userId: 'editor-user-id' }, projectId: PROJECT_ID,
+    });
+
+    expect(evidence.map((item: { sourceId: string }) => item.sourceId)).toEqual(['m-architecture']);
+    expect(JSON.stringify(evidence)).not.toContain('Restricted');
+  });
+
+  it('includes private project memory but still requires approval for domain-shared memory', async () => {
+    const db = fakeDb();
+    const tools = createChatEvidenceTools({ db });
+    await tools.execute('get_project_memory', {}, {
+      caller: { email: 'owner@example.com', userId: 'owner-user-id' }, projectId: PROJECT_ID,
+    });
+
+    const sql = db.query.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
+    expect(sql).toContain("scope = 'project'");
+    expect(sql).toContain("scope = 'domain_shared' AND approved = TRUE");
   });
 
   it('queries the catalog and runtime using the committed Postgres schema', async () => {

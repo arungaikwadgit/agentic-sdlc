@@ -29,6 +29,16 @@ export interface AgenticChatRequest {
   history: Array<{ role: 'user' | 'assistant'; text: string }>;
 }
 
+export interface ChatTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  modelCalls: number;
+  avoidedModelCalls: number;
+  providers: string[];
+  models: string[];
+}
+
 export interface AgenticChatResponse {
   answer: string;
   confidence: number;
@@ -36,6 +46,8 @@ export interface AgenticChatResponse {
   evidence: ChatEvidenceSummary[];
   trace: ChatTraceEntry[];
   followUp: string | null;
+  responseMode: 'memory' | 'model';
+  tokenUsage: ChatTokenUsage;
 }
 
 function chatEndpoint(): string {
@@ -53,7 +65,11 @@ function isAgenticChatResponse(value: unknown): value is AgenticChatResponse {
     && typeof response.supported === 'boolean'
     && Array.isArray(response.evidence)
     && Array.isArray(response.trace)
-    && (response.followUp === null || typeof response.followUp === 'string');
+    && (response.followUp === null || typeof response.followUp === 'string')
+    && (response.responseMode === 'memory' || response.responseMode === 'model')
+    && !!response.tokenUsage
+    && typeof response.tokenUsage.totalTokens === 'number'
+    && typeof response.tokenUsage.modelCalls === 'number';
 }
 
 export async function askAgenticChat(
