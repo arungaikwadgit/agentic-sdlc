@@ -203,3 +203,21 @@
   color: var(--text); cursor: pointer; min-width: 160px;
 }
 .assignSelect:focus { outline: none; border-color: var(--accent); }
+
+/* RESPONSIVE TEAM PANEL 2026 */
+@media (max-width: 767px) {
+  .panel { width: 100%; max-width: none; height: 100dvh; padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .header { position: sticky; top: 0; z-index: 3; background: var(--surface); padding-bottom: 12px; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { min-height: var(--touch-target); white-space: nowrap; }
+  .formRow, .assignRow { flex-direction: column; align-items: stretch; }
+  .formRow input, .formRow select, .assignSelect { width: 100%; min-width: 0; min-height: var(--touch-target); }
+  .linkRow { flex-direction: column; align-items: stretch; }
+  .linkRow button { min-height: var(--touch-target); }
+  .permTable { overflow-x: auto; }
+  .permHeader, .permRow { min-width: 520px; }
+  .memberRow { flex-wrap: wrap; gap: 10px; }
+  .memberActions { width: 100%; justify-content: flex-end; }
+  .memberActions button { min-height: 38px; }
+}

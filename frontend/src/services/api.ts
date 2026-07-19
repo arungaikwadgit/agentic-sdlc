@@ -137,6 +137,20 @@ export interface AgentResponse {
   provider?: 'openai' | 'claude' | 'openai-compatible';
   /** Echoed back by the proxy: which model actually served this request. */
   model?: string;
+  /** Token Optimizer preflight metrics for this provider call. */
+  promptOptimization?: {
+    applied: boolean;
+    skillId: string;
+    skillVersion: number;
+    strategy?: string;
+    reason?: string;
+    charactersBefore: number;
+    charactersAfter: number;
+    estimatedTokensBefore: number;
+    estimatedTokensAfter: number;
+    estimatedTokensSaved: number;
+    estimatedReductionPercent?: number;
+  };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

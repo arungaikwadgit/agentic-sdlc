@@ -192,3 +192,34 @@
   .header { align-items: flex-start; gap: 12px; }
   .actions { flex-wrap: wrap; justify-content: flex-end; }
 }
+
+/* RESPONSIVE DASHBOARD 2026 */
+.tableWrap { -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; }
+
+@media (max-width: 767px) {
+  .header { align-items: stretch; padding: 12px 16px; gap: 12px; }
+  .brand { min-width: 0; }
+  .brandText { font-size: 20px; }
+  .actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scrollbar-width: none;
+  }
+  .actions::-webkit-scrollbar { display: none; }
+  .actions > button, .viewToggleBtn, .gearBtn, .userBadge { min-height: var(--touch-target); white-space: nowrap; }
+  .userBadge { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .main { padding: 20px 16px; }
+  .grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+  .projectTable { min-width: 720px; }
+  .projectTable th, .projectTable td { padding: 10px 9px; }
+  .tableActions button { min-height: 38px; }
+}
+
+@media (max-width: 479px) {
+  .header { padding: 10px 12px; }
+  .main { padding: 16px 12px; }
+  .grid { grid-template-columns: 1fr; gap: 12px; }
+  .projectTable { min-width: 660px; font-size: 12px; }
+}

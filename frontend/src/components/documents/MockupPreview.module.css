@@ -545,3 +545,19 @@
 .sidePane .htmlFrameHeader {
   border-radius: 0;
 }
+
+/* RESPONSIVE MOCKUP PREVIEW 2026 */
+@media (max-width: 767px) {
+  .toolbar { padding: 8px 10px; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .toolbar::-webkit-scrollbar { display: none; }
+  .toolbarGroup { flex: 0 0 auto; }
+  .vpBtn, .paletteBtn, .fontBtn, .resetBtn, .updateBtn, .densityBtn, .darkModeBtn { min-height: var(--touch-target); }
+  .docBody { padding: 12px; }
+  .article { max-width: 100%; }
+  .versionTabBar { padding-inline: 10px; }
+  .versionTab { min-height: var(--touch-target); }
+  .htmlFrameHeader { flex-wrap: wrap; gap: 8px; }
+  .htmlFrameActions { width: 100%; overflow-x: auto; }
+  .sideBySide { display: block; }
+  .sidePane { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
+}

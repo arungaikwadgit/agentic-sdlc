@@ -1281,3 +1281,33 @@ details[open] .roleReferenceSummary::before { content: '▼ '; }
   font-weight: 700;
   margin: 0;
 }
+
+/* RESPONSIVE PROJECT SETTINGS 2026 */
+@media (max-width: 767px) {
+  .overlay { align-items: stretch; padding: 0; }
+  .modal { width: 100%; max-width: none; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
+  .header { padding: 14px 16px; }
+  .tabs { overflow-x: auto; scrollbar-width: none; padding-inline: 12px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { min-height: var(--touch-target); white-space: nowrap; }
+  .body { padding: 16px; }
+  .formGrid, .generalGrid { grid-template-columns: 1fr; }
+  .permissionMatrix, .assignmentMatrix { overflow-x: auto; }
+  .permissionHeader, .permissionRow, .assignmentHeader, .assignmentRow { min-width: 560px; }
+  .actions { flex-wrap: wrap; }
+  .actions button { min-height: var(--touch-target); flex: 1 1 150px; }
+}
+
+/* RESPONSIVE PROJECT SETTINGS CORRECTIONS 2026 */
+@media (max-width: 767px) {
+  .addRow, .memberCardTop, .memberCardFooter, .techInputRow, .filterRow { flex-wrap: wrap; }
+  .addRow > *, .techInputRow > *, .filterRow > * { flex: 1 1 220px; min-width: 0; }
+  .roleCards, .memberGrid, .quickApplyGrid { grid-template-columns: 1fr; }
+  .matrix { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .matrixHeader, .matrixPhaseRow, .matrixRow { min-width: 680px; }
+  .inviteLinkRow { flex-direction: column; align-items: stretch; }
+  .inviteLinkInput { width: 100%; }
+  .copyBtn, .actionBtn, .clearBtn, .assignAllBtn, .techAddBtn { min-height: var(--touch-target); }
+  .inviteOverlay { padding: 0; align-items: stretch; }
+  .inviteModal { width: 100%; max-width: none; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
+}

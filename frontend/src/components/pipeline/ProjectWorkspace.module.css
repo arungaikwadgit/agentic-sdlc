@@ -959,3 +959,93 @@
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ADAPTIVE WORKSPACE 2026 */
+.topbarActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspaceNav { display: none; }
+
+@media (max-width: 1024px) {
+  .topbar { flex-wrap: wrap; gap: 10px; }
+  .projectInfo { flex: 1 1 260px; min-width: 0; }
+  .projectInfo h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbarActions { flex: 1 1 100%; justify-content: flex-end; flex-wrap: wrap; }
+  .sidebar { width: 220px; }
+  .content, .docArea { min-width: 0; }
+  .docHeader { flex-wrap: wrap; gap: 8px; }
+}
+
+@media (max-width: 767px) {
+  .layout { height: 100dvh; min-height: 100dvh; }
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .topbar > button { min-height: var(--touch-target); }
+  .projectInfo { order: -1; flex-basis: calc(100% - 110px); }
+  .projectInfo h2 { font-size: 16px; }
+  .topbarActions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .topbarActions::-webkit-scrollbar { display: none; }
+  .topbarActions > button,
+  .topbarActions > div > button { min-height: var(--touch-target); white-space: nowrap; }
+  .teamBanner, .noKeyBanner, .skippedAgentsBanner { flex-wrap: wrap; padding: 10px 12px; }
+  .workspaceNav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 6px 12px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 4;
+  }
+  .workspaceNavBtn {
+    min-height: var(--touch-target);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+  .workspaceNavBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .workspaceNavActive {
+    color: var(--text);
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+  .body { display: block; min-height: 0; }
+  .sidebar, .content { width: 100%; height: 100%; border: 0; }
+  .mobilePaneHidden { display: none !important; }
+  .sidebar { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .phaseHeader { min-height: var(--touch-target); padding: 9px 12px; }
+  .phaseLabel { font-size: 12px; }
+  .phaseStage { font-size: 11px; }
+  .agentRow { min-height: 48px; padding: 8px 12px; }
+  .agentName { font-size: 13px; }
+  .agentRetryBtn, .agentRunFromBtn, .agentEnableBtn { min-width: 38px; min-height: 38px; }
+  .agentRunFromBtn:not(:disabled) { display: flex; }
+  .content { overflow: auto; overscroll-behavior: contain; }
+  .docHeader { padding: 10px 12px; align-items: flex-start; }
+  .docTabs { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .docTab { min-height: var(--touch-target); white-space: nowrap; }
+  .rerunPanel { padding: 14px 12px; }
+  .rerunTextarea { min-height: 140px; }
+  .rerunActions { flex-wrap: wrap; }
+  .rerunActions button { min-height: var(--touch-target); flex: 1 1 150px; }
+  .emptyState { padding: 40px 18px; }
+}
+
+@media (max-width: 479px) {
+  .topbarActions { gap: 6px; }
+  .progressCounter { min-height: 36px; display: inline-flex; align-items: center; }
+  .rerunActions { flex-direction: column; }
+  .rerunActions button { width: 100%; flex-basis: auto; }
+}

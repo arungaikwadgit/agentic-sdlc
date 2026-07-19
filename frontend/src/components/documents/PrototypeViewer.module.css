@@ -499,3 +499,19 @@
   cursor: pointer;
   margin: 4px 0 0;
 }
+
+/* RESPONSIVE PROTOTYPE VIEWER 2026 */
+@media (max-width: 767px) {
+  .toolbar { flex-wrap: wrap; padding: 8px 10px; gap: 8px; }
+  .tabs { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab, .actionBtn { min-height: var(--touch-target); white-space: nowrap; }
+  .toolbarActions { margin-left: 0; width: 100%; overflow-x: auto; }
+  .previewArea, .filesArea, .specArea { min-width: 0; }
+  .filesArea { grid-template-columns: 1fr; }
+  .fileTree { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .fileContent { min-height: 360px; }
+  .fileViewerHeader { flex-wrap: wrap; gap: 8px; }
+  .themeFab { right: 14px; bottom: 14px; width: 48px; height: 48px; }
+  .themePanel { inset: auto 10px 72px 10px; width: auto; max-height: 70dvh; overflow-y: auto; }
+}

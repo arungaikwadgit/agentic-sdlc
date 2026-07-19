@@ -377,3 +377,31 @@
   color: #cbd5e1;
   font-family: 'SF Mono', monospace;
 }
+
+/* RESPONSIVE ADMIN PANEL 2026 */
+@media (max-width: 767px) {
+  .overlay { align-items: stretch; padding: 0; }
+  .panel { width: 100%; max-width: none; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  .header { padding: 14px 16px; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { min-height: var(--touch-target); white-space: nowrap; }
+  .content { padding: 16px; }
+  .splitPane { grid-template-columns: 1fr; }
+  .listPane { max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .detailPane { min-width: 0; }
+  .tableWrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .actions { flex-wrap: wrap; }
+  .actions button { min-height: var(--touch-target); }
+}
+
+/* RESPONSIVE ADMIN PANEL CORRECTIONS 2026 */
+@media (max-width: 767px) {
+  .body { padding: 16px; }
+  .list { max-height: 220px; border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  .detail { min-width: 0; }
+  .actionGroup, .agentRow, .formRow { flex-wrap: wrap; }
+  .field { align-items: flex-start; }
+  .field span { width: 90px; }
+  .smallBtn, .dangerBtn, .tinyBtn, .saveBtn { min-height: var(--touch-target); }
+}

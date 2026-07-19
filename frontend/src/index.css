@@ -117,3 +117,36 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 [data-theme="light"] ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
 }
+
+/* RESPONSIVE FOUNDATION 2026 */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --touch-target: 44px;
+  --page-max-width: 1280px;
+  --modal-inline-gutter: 16px;
+}
+
+html { color-scheme: dark; }
+html[data-theme='light'] { color-scheme: light; }
+body { overflow-x: hidden; text-rendering: optimizeLegibility; }
+img, video, canvas { max-width: 100%; }
+button, input, select, textarea { font: inherit; }
+
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px; }
+  button, [role='button'] { touch-action: manipulation; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

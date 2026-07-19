@@ -151,3 +151,14 @@
   color: var(--text-muted);
   margin-bottom: 8px;
 }
+
+/* RESPONSIVE DOCUMENT VIEWER 2026 */
+@media (max-width: 767px) {
+  .viewer { padding: 18px 14px; font-size: 14px; }
+  .viewer h1 { font-size: 24px; }
+  .viewer h2 { font-size: 20px; }
+  .viewer h3 { font-size: 17px; }
+  .viewer table { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .viewer th, .viewer td { min-width: 130px; padding: 9px 10px; }
+  .viewer pre { overflow-x: auto; font-size: 12px; }
+}

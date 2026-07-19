@@ -19,6 +19,10 @@ const { createChatEvidenceTools } = require('./chat/chatEvidence');
 const { runChatOrchestrator } = require('./chat/chatOrchestrator');
 const { createExternalResearch } = require('./chat/chatExternalResearch');
 const { createUserPreferenceHandlers } = require('./userPreferences');
+const {
+  DEFAULT_PROMPT_OPTIMIZATION_SKILL,
+  optimizePromptPair,
+} = require('./promptOptimizationSkill');
 
 const app   = express();
 // Railway sits the app behind a reverse proxy that sets X-Forwarded-For.
@@ -714,6 +718,29 @@ function fromAnthropicResponse(data) {
 // bad/missing value can't zero out a call or blow the ceiling back open.
 const DEFAULT_MAX_TOKENS = 8192;
 const MIN_MAX_TOKENS = 256;
+const TOKEN_OPTIMIZATION_SKILL_KEY = 'app:tokenOptimizationSkill';
+const PROMPT_OPTIMIZATION_SKILL_CACHE_MS = 60_000;
+let promptOptimizationSkillCache = { value: DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
+
+async function loadPromptOptimizationSkill() {
+  if (Date.now() < promptOptimizationSkillCache.expiresAt) {
+    return promptOptimizationSkillCache.value;
+  }
+  let value = DEFAULT_PROMPT_OPTIMIZATION_SKILL;
+  try {
+    await ensureAppStateTables();
+    const values = await dbGetAppConfigMap([TOKEN_OPTIMIZATION_SKILL_KEY]);
+    if (values[TOKEN_OPTIMIZATION_SKILL_KEY]) value = values[TOKEN_OPTIMIZATION_SKILL_KEY];
+  } catch (error) {
+    console.warn('[token-optimizer] application skill load failed; using built-in skill:', error.message);
+  }
+  promptOptimizationSkillCache = {
+    value,
+    expiresAt: Date.now() + PROMPT_OPTIMIZATION_SKILL_CACHE_MS,
+  };
+  return value;
+}
+
 function clampMaxTokens(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_TOKENS;
@@ -855,22 +882,46 @@ async function callOpenAiCompatible(entry, systemPrompt, userPrompt, maxTokens) 
 // identical to today's behavior.
 async function dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens) {
   const attemptLabel = target.kind === 'catalog' ? (target.entry.label ?? target.entry.id) : target.provider;
+  const skill = await loadPromptOptimizationSkill();
+  const optimized = optimizePromptPair({ systemPrompt, userPrompt, skill });
+  const optimizedSystemPrompt = optimized.systemPrompt;
+  const optimizedUserPrompt = optimized.userPrompt;
+
+  if (optimized.metadata.estimatedTokensSaved > 0) {
+    console.log(
+      `[token-optimizer] skill=${optimized.metadata.skillId}@${optimized.metadata.skillVersion} ` +
+      `saved~${optimized.metadata.estimatedTokensSaved} prompt tokens (${optimized.metadata.estimatedReductionPercent}%)`
+    );
+  }
 
   try {
     if (target.kind === 'catalog') {
-      const result = await withRetry(() => callOpenAiCompatible(target.entry, systemPrompt, userPrompt, maxTokens));
-      return { ...result, provider: target.entry.providerType, model: target.entry.id };
+      const result = await withRetry(() => callOpenAiCompatible(target.entry, optimizedSystemPrompt, optimizedUserPrompt, maxTokens));
+      return { ...result, provider: target.entry.providerType, model: target.entry.id, promptOptimization: optimized.metadata };
     }
     const result = await withRetry(() =>
-      target.provider === 'claude' ? callClaude(systemPrompt, userPrompt, maxTokens) : callOpenAi(systemPrompt, userPrompt, maxTokens)
+      target.provider === 'claude'
+        ? callClaude(optimizedSystemPrompt, optimizedUserPrompt, maxTokens)
+        : callOpenAi(optimizedSystemPrompt, optimizedUserPrompt, maxTokens)
     );
-    return { ...result, provider: target.provider, model: target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL };
+    return {
+      ...result,
+      provider: target.provider,
+      model: target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL,
+      promptOptimization: optimized.metadata,
+    };
   } catch (err) {
-    if (target.kind === 'legacy' && target.provider === 'openai') throw err; // already the default — nothing to fall back to
+    if (target.kind === 'legacy' && target.provider === 'openai') throw err;
 
     console.error(`[dispatchAgentCall] ${attemptLabel} failed (${err.message}) — falling back to default OpenAI model`);
-    const fallbackResult = await withRetry(() => callOpenAi(systemPrompt, userPrompt, maxTokens));
-    return { ...fallbackResult, provider: 'openai', model: OPENAI_MODEL, fallbackFrom: attemptLabel };
+    const fallbackResult = await withRetry(() => callOpenAi(optimizedSystemPrompt, optimizedUserPrompt, maxTokens));
+    return {
+      ...fallbackResult,
+      provider: 'openai',
+      model: OPENAI_MODEL,
+      fallbackFrom: attemptLabel,
+      promptOptimization: optimized.metadata,
+    };
   }
 }
 
@@ -2480,6 +2531,11 @@ async function ensureAppStateTables() {
         )
       `);
       await dbPool.query(`
+        INSERT INTO app_config (key, value, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (key) DO NOTHING
+      `, [TOKEN_OPTIMIZATION_SKILL_KEY, JSON.stringify(DEFAULT_PROMPT_OPTIMIZATION_SKILL)]);
+      await dbPool.query(`
         CREATE TABLE IF NOT EXISTS user_preferences (
           user_key TEXT PRIMARY KEY,
           preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -2707,6 +2763,9 @@ async function dbGetAppConfigMap(keys = null) {
 async function dbSetAppConfigValue(key, value) {
   if (!dbPool) {
     await appStateStore.setAppConfigValue(key, value);
+    if (key === TOKEN_OPTIMIZATION_SKILL_KEY) {
+      promptOptimizationSkillCache = { value: value ?? DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
+    }
     return;
   }
   await dbPool.query(`
@@ -2716,14 +2775,18 @@ async function dbSetAppConfigValue(key, value) {
       SET value = EXCLUDED.value,
           updated_at = NOW()
   `, [key, JSON.stringify(value)]);
+  if (key === TOKEN_OPTIMIZATION_SKILL_KEY) {
+    promptOptimizationSkillCache = { value: value ?? DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
+  }
 }
 
 async function dbDeleteAllAppConfig() {
   if (!dbPool) {
     await appStateStore.deleteAllAppConfig();
-    return;
+  } else {
+    await dbPool.query(`DELETE FROM app_config`);
   }
-  await dbPool.query(`DELETE FROM app_config`);
+  promptOptimizationSkillCache = { value: DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
 }
 
 async function dbListIntegrations() {

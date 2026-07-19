@@ -191,6 +191,11 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   const { user, adminMode, isAppAdmin, loading: authLoading } = useAuth();
   const { project, loading: projectLoading, refreshing: projectRefreshing } = useProject(projectId);
   const [selectedAgent, setSelectedAgent] = useState<AgentId | null>(null);
+  const [mobilePane, setMobilePane] = useState<'pipeline' | 'artifact'>('pipeline');
+  const selectAgent = useCallback((agentId: AgentId) => {
+    setSelectedAgent(agentId);
+    setMobilePane('artifact');
+  }, []);
   // Collapsible phase sidebar (2026-07-17) — session-only (not persisted),
   // defaults to every phase expanded so existing behavior is unchanged
   // until the user actively collapses something. Only the agent list
@@ -1089,7 +1094,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           <h2>{project.name}</h2>
           <span className={styles.modeBadge}>{project.mode === 'expert' ? 'Expert' : 'Simple'}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div className={styles.topbarActions}>
           {/* U1 — pipeline progress counter */}
           {(() => {
             const completedCount = allAgentIds.filter((a) => project.agentRuns[a]?.status === 'complete').length;
@@ -1204,8 +1209,28 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         </div>
       )}
 
+      <nav className={styles.workspaceNav} aria-label="Workspace view">
+        <button
+          type="button"
+          className={styles.workspaceNavBtn + (mobilePane === 'pipeline' ? ' ' + styles.workspaceNavActive : '')}
+          aria-pressed={mobilePane === 'pipeline'}
+          onClick={() => setMobilePane('pipeline')}
+        >
+          Pipeline
+        </button>
+        <button
+          type="button"
+          className={styles.workspaceNavBtn + (mobilePane === 'artifact' ? ' ' + styles.workspaceNavActive : '')}
+          aria-pressed={mobilePane === 'artifact'}
+          disabled={!selectedAgent}
+          onClick={() => setMobilePane('artifact')}
+        >
+          Artifact
+        </button>
+      </nav>
+
       <div className={styles.body}>
-        <aside className={styles.sidebar}>
+        <aside className={styles.sidebar + (mobilePane !== 'pipeline' ? ' ' + styles.mobilePaneHidden : '')}>
           {/* Standing reminder for agent-access-scoped members — the per-
               button tooltips ("You are not assigned to run this agent...")
               only surface on hover, so a scoped member landing on the
@@ -1291,12 +1316,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       role="button"
                       tabIndex={isPhaseGateLocked ? -1 : 0}
                       aria-disabled={isPhaseGateLocked || !isClickable}
-                      onClick={() => isClickable && setSelectedAgent(agentId)}
+                      onClick={() => isClickable && selectAgent(agentId)}
                       onKeyDown={(e) => {
                         if (isPhaseGateLocked || !isClickable) return;
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          setSelectedAgent(agentId);
+                          selectAgent(agentId);
                         }
                       }}
                       title={
@@ -1400,7 +1425,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
           })}
         </aside>
 
-        <main className={styles.content}>
+        <main className={styles.content + (mobilePane !== 'artifact' ? ' ' + styles.mobilePaneHidden : '')}>
           {/* ── Re-run panel ── */}
           {rerunAgent && (
             <div className={styles.rerunPanel}>

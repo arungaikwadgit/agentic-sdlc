@@ -385,3 +385,28 @@
   margin-right: 5px;
   font-style: normal;
 }
+
+/* RESPONSIVE APP SETTINGS 2026 */
+@media (max-width: 767px) {
+  .overlay { align-items: stretch; padding: 0; }
+  .modal { width: 100%; max-width: none; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  .header { padding: 14px 16px; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { min-width: 120px; min-height: var(--touch-target); }
+  .body { padding: 16px; }
+  .promptsLayout { display: block; }
+  .promptAgentList { width: 100%; max-height: 180px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .promptEditor { padding: 14px 0 0; }
+  .row, .actions { flex-wrap: wrap; }
+  .row > *, .actions button { min-height: var(--touch-target); }
+}
+
+/* RESPONSIVE APP SETTINGS CORRECTIONS 2026 */
+@media (max-width: 767px) {
+  .footer, .promptActions, .projectsToolbar, .projectRow, .projectActions { flex-wrap: wrap; }
+  .footer button, .promptActions button, .projectsToolbar button, .projectActions button { min-height: var(--touch-target); }
+  .projectInfo { min-width: 0; flex: 1 1 220px; }
+  .projectActions { width: 100%; justify-content: flex-end; }
+  .promptTextarea { min-height: 260px; }
+}

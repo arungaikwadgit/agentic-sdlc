@@ -217,3 +217,11 @@
   display: flex;
   gap: 8px;
 }
+
+/* RESPONSIVE GITHUB MODAL 2026 */
+@media (max-width: 767px) {
+  .overlay { padding: 0; align-items: stretch; }
+  .modal { width: 100%; max-width: none; max-height: 100dvh; min-height: 100dvh; border-radius: 0; }
+  .actions { flex-wrap: wrap; }
+  .actions button { min-height: var(--touch-target); flex: 1 1 150px; }
+}

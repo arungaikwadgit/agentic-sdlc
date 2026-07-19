@@ -149,3 +149,13 @@
   background: #fef2f2;
   border-color: #fca5a5;
 }
+
+/* RESPONSIVE DIAGRAM PREVIEW 2026 */
+@media (max-width: 767px) {
+  .preview { padding: 12px; }
+  .grid { grid-template-columns: 1fr; gap: 12px; }
+  .blockHeader { flex-wrap: wrap; gap: 8px; }
+  .downloadBtn { min-height: var(--touch-target); }
+  .diagramContainer { overflow: auto; -webkit-overflow-scrolling: touch; }
+  .diagramContainer svg { min-width: 620px; }
+}
