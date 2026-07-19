@@ -528,7 +528,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     });
   });
 
-  it('Confirm Re-run for an agent in a gated phase resets that gate and reopens ReviewGateModal (TS-193)', async () => {
+  it('regenerates incomplete gated artifacts before opening ReviewGateModal (TS-193)', async () => {
     currentProject = baseProject({
       currentPhase: 'phase4',
       agentRuns: {
@@ -573,10 +573,7 @@ describe('ProjectWorkspace — re-run flow', () => {
     expect(draft.status).toBe('paused');
     expect(draft.currentPhase).toBe('phase3');
 
-    await waitFor(() => {
-      const modal = screen.getByTestId('review-gate-modal');
-      expect(modal).toHaveAttribute('data-gate-id', 'gate3');
-    });
+    expect(screen.queryByTestId('review-gate-modal')).not.toBeInTheDocument();
   });
 
   it('confirmRerun builds priorOutputs from all complete agent runs, including later-in-pipeline ones (TS-194)', async () => {

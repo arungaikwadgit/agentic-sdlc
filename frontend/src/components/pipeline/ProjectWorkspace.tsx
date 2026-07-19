@@ -3,7 +3,7 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { updateProject, updateAgentRun, clearGeneratedProjectAgentMemory } from '@/db/projectRepository';
+import { getProject, updateProject, updateAgentRun, clearGeneratedProjectAgentMemory } from '@/db/projectRepository';
 import { PipelineEngine, buildAgentPromptContext, runSingleAgent } from '@/services/pipelineEngine';
 import { generateClarifyingQuestions, mergeClarifyingAnswers } from '@/services/clarifyingQuestions';
 import { PHASE_ORDER, PHASE_AGENTS, PHASE_LABELS, REVIEW_GATES, PHASE_SDLC_STAGE } from '@/agents/constants';
@@ -38,6 +38,7 @@ import { getInviteSession } from '@/services/inviteSession';
 import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
 import { getUnassignedAgents, computeSkippedAgentIdsAfterConfirm, getUserVisibleAgentIds, isInternalAgent } from '@/lib/agentEnablement';
 import { DIAGRAM_AGENTS, hasMermaidDiagram } from '@/agents/diagramUtils';
+import { getGateReviewReadiness } from '@/lib/reviewGateReadiness';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 import type { ReviewGateId } from '@/types/project.types';
@@ -341,6 +342,21 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     return () => { cancelled = true; };
   }, [authLoading, user?.id, adminMode]);
 
+  const requestGateReview = useCallback(async (gateId: ReviewGateId): Promise<boolean> => {
+    try {
+      const latestProject = await getProject(projectId);
+      if (!latestProject || !getGateReviewReadiness(latestProject, gateId).ready) {
+        setPendingGate(null);
+        return false;
+      }
+      setPendingGate(gateId);
+      return true;
+    } catch (error) {
+      console.warn('[ProjectWorkspace] Could not verify gate artifact readiness:', error);
+      setPendingGate(null);
+      return false;
+    }
+  }, [projectId]);
   // Auto-switch to preview for orchestrator and prototype agents
   useEffect(() => {
     if (selectedAgent === 'sdlcOrchestrator' || selectedAgent === 'workingPrototype') {
@@ -362,7 +378,10 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       onAgentComplete: (agentId) => { setSelectedAgent(agentId); },
       onAgentError: (_agentId, _err) => {},
       onPhaseComplete: (_phase) => {},
-      onGateReached: (gateId) => { setEngineRunning(false); setPendingGate(gateId); },
+      onGateReached: (gateId) => {
+        setEngineRunning(false);
+        void requestGateReview(gateId);
+      },
       onClarifyingQuestionsNeeded: (agentId, questions) => {
         setEngineRunning(false);
         setPendingClarifyingQuestions({ agentId, questions, source: 'pipeline' });
@@ -372,7 +391,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
     });
     engineRef.current = engine;
     await engine.run(fromPhase);
-  }, [project, projectId]);
+  }, [project, projectId, requestGateReview]);
 
   const handleStop = () => {
     engineRef.current?.abort();
@@ -633,7 +652,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         setRerunAgent(null);
         setSelectedAgent('sdlcOrchestrator');
         setPendingCascadeRerun(null);
-        setPendingGate('gate0');
+        await requestGateReview('gate0');
       } catch (e) {
         setRerunError(String(e));
       } finally {
@@ -828,7 +847,12 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
             p.currentPhase = agentPhase;
           }
         });
-        setPendingGate(coveringGate);
+        const readyForReview = await requestGateReview(coveringGate);
+        if (!readyForReview && !isAgentAccessScoped) {
+          // Rebuild the remaining reset artifacts first. PipelineEngine opens
+          // the gate only after every covered phase has finished.
+          attemptStartPipeline(agentPhase);
+        }
       } else if (downstream.length > 0 && !isAgentAccessScoped) {
         // No review gate after this phase — auto-continue the pipeline from
         // this phase so the reset downstream agents re-run immediately.
@@ -975,6 +999,9 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
   // per-row Enable/Locked control reacts to.
   const skippedAgentCount = Object.values(project.agentRuns).filter((run) => run?.status === 'skipped').length;
   const lockedPhases = getLockedPhases(project);
+  const pendingGateReady = pendingGate
+    ? getGateReviewReadiness(project, pendingGate).ready
+    : false;
   const selectedRun = selectedAgent ? project.agentRuns[selectedAgent] : null;
   const selectedDef = selectedAgent ? AGENT_DEFINITIONS[selectedAgent] : null;
   const promptOverrideMap = new Set((project.promptOverrides ?? []).filter((o) => o.fullPrompt).map((o) => o.agentId));
@@ -1360,7 +1387,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                 {gateAfterThisPhase && (
                   <div
                     className={styles.gateIndicator + ' ' + (isActiveGate ? styles.gateActive : gateAfterState?.approved ? styles.gateApproved : styles.gatePending)}
-                    onClick={isActiveGate ? () => setPendingGate(gateAfterThisPhase as ReviewGateId) : undefined}
+                    onClick={isActiveGate ? () => { void requestGateReview(gateAfterThisPhase as ReviewGateId); } : undefined}
                     title={isActiveGate ? 'Waiting for approval — click to review' : gateAfterState?.approved ? ('Approved' + (gateApprover ? ' by ' + gateApprover.name : '')) : 'Review gate'}
                   >
                     {isActiveGate ? 'Waiting for your approval' :
@@ -1747,7 +1774,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         </main>
       </div>
 
-      {pendingGate && (
+      {pendingGate && pendingGateReady && (
         <ReviewGateModal
           gateId={pendingGate}
           project={project}
