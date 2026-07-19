@@ -25,19 +25,35 @@
   overflow: hidden;
 }
 
+/* flex-wrap here is the key fix for the header overflow bug: with a fixed
+   title block + a wide action row (approver select, hint text, two
+   buttons), a non-wrapping .header forces .headerActions to demand its
+   full unwrapped width (a flex item's default min-width:auto means it
+   won't shrink below its own max-content size even though it has its own
+   flex-wrap:wrap — see .headerActions' min-width:0 below for the other
+   half of the fix). Letting .header itself wrap means the title and the
+   action row each get their own full-width line on narrow viewports
+   instead of fighting for one row and clipping against .modal's
+   overflow:hidden. */
 .header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   padding: 18px 20px;
   border-bottom: 1px solid var(--border);
-  gap: 16px;
+  gap: 12px 16px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .header h2 {
   font-size: 16px;
   font-weight: 600;
+}
+
+.headerTitle {
+  flex: 1 1 220px;
+  min-width: 0;
 }
 
 .subtitle {
@@ -50,7 +66,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -278,4 +295,54 @@
   word-break: break-word;
   margin-top: 6px;
   color: var(--text-muted);
+}
+
+/* Narrow-viewport layout: the agent list (fixed 200px sidebar) + doc panel
+   side-by-side split from .body is unusable below ~640px — there isn't
+   room for both plus readable document text. Stack them instead: agent
+   list becomes a horizontally-scrollable tab strip across the top,
+   document panel takes the rest of the height. Also let the header's
+   action row (approver select / hints / buttons) go full-width per item
+   so touch targets stay comfortably tappable instead of shrinking. */
+@media (max-width: 640px) {
+  .modal { height: 95vh; }
+
+  .body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .agentList {
+    width: 100%;
+    flex-direction: row;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 8px;
+    gap: 4px;
+  }
+
+  .agentTab {
+    width: auto;
+    flex-shrink: 0;
+    white-space: nowrap;
+    border-radius: var(--radius);
+  }
+
+  .activeTab {
+    border-right: none;
+    border-bottom: 2px solid var(--accent);
+  }
+
+  .headerActions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .headerActions > button:not(.closeBtn),
+  .approverSelect {
+    flex: 1 1 auto;
+  }
 }

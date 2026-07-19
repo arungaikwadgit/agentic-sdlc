@@ -332,7 +332,7 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
     <div className={styles.overlay}>
       <div className={styles.modal}>
         <div className={styles.header}>
-          <div>
+          <div className={styles.headerTitle}>
             <h2>{GATE_LABELS[gateId]}</h2>
             <p className={styles.subtitle}>
               Review outputs before the pipeline continues.
