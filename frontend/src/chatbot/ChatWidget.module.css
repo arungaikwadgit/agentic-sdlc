@@ -188,12 +188,26 @@
   border-top: 1px solid var(--border);
 }
 
+/* 2026-07-20: was a single-column grid of 10px muted-text pills that read as
+   trailing fine print rather than a status readout — users reported not
+   noticing token usage / memory-answer indicators were even there, despite
+   the backend and data being correct end-to-end. metaRow puts confidence and
+   token/memory usage side by side as same-weight badges; both badge classes
+   below were bumped from 10px/border-only to 11px/filled-background so they
+   read as chips, not muted trailing text. */
+.metaRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .confidenceSupported,
 .confidenceIncomplete {
   width: fit-content;
-  padding: 3px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -210,18 +224,22 @@
 .tokenUsage,
 .memoryUsage {
   width: fit-content;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
+  padding: 3px 9px;
   border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tokenUsage {
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .memoryUsage {
   color: var(--success, #22c55e);
-  border-color: color-mix(in srgb, var(--success, #22c55e) 40%, var(--border));
-  background: color-mix(in srgb, var(--success, #22c55e) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success, #22c55e) 40%, var(--border));
+  background: color-mix(in srgb, var(--success, #22c55e) 14%, transparent);
 }
 .followUp {
   color: var(--text-muted);

@@ -68,20 +68,22 @@ function formatSourceDate(value: string | number | null | undefined): string | n
 function AgenticResult({ result }: { result: AgenticChatResponse }) {
   return (
     <div className={styles.resultMeta}>
-      <div className={result.supported ? styles.confidenceSupported : styles.confidenceIncomplete}>
-        {result.supported
-          ? result.confidence + '% evidence confidence'
-          : 'Evidence incomplete (' + result.confidence + '%)'}
-      </div>
-      <div
-        className={result.responseMode === 'memory' ? styles.memoryUsage : styles.tokenUsage}
-        title={result.responseMode === 'memory'
-          ? 'Answered from approved project memory without calling an LLM.'
-          : result.tokenUsage.promptTokens + ' input + ' + result.tokenUsage.completionTokens + ' output tokens'}
-      >
-        {result.responseMode === 'memory'
-          ? 'Memory answer - 0 LLM tokens - ' + result.tokenUsage.avoidedModelCalls + ' model calls avoided'
-          : result.tokenUsage.totalTokens.toLocaleString() + ' tokens - ' + result.tokenUsage.modelCalls + ' model ' + (result.tokenUsage.modelCalls === 1 ? 'call' : 'calls')}
+      <div className={styles.metaRow}>
+        <div className={result.supported ? styles.confidenceSupported : styles.confidenceIncomplete}>
+          {result.supported
+            ? '✓ ' + result.confidence + '% evidence confidence'
+            : '⚠ Evidence incomplete (' + result.confidence + '%)'}
+        </div>
+        <div
+          className={result.responseMode === 'memory' ? styles.memoryUsage : styles.tokenUsage}
+          title={result.responseMode === 'memory'
+            ? 'Answered from approved project memory without calling an LLM.'
+            : result.tokenUsage.promptTokens + ' input + ' + result.tokenUsage.completionTokens + ' output tokens'}
+        >
+          {result.responseMode === 'memory'
+            ? '\u{1F9E0} Memory answer - 0 LLM tokens - ' + result.tokenUsage.avoidedModelCalls + ' model calls avoided'
+            : '⚡ ' + result.tokenUsage.totalTokens.toLocaleString() + ' tokens - ' + result.tokenUsage.modelCalls + ' model ' + (result.tokenUsage.modelCalls === 1 ? 'call' : 'calls')}
+        </div>
       </div>
       {result.followUp && <div className={styles.followUp}>{result.followUp}</div>}
       {result.evidence.length > 0 && (
