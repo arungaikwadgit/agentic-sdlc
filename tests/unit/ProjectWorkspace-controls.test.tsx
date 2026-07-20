@@ -157,6 +157,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     ownerId: 'owner-user-1',
     agentRuns: {},
     reviewGates: {
+      gate0: { id: 'gate0', approved: true, afterPhases: [] },
       gate1: { id: 'gate1', approved: true, afterPhases: [] },
       gate2: { id: 'gate2', approved: true, afterPhases: [] },
       gate3: { id: 'gate3', approved: true, afterPhases: [] },

@@ -96,6 +96,7 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     updatedAt: 1000,
     agentRuns: {},
     reviewGates: {
+      gate0: { approved: true },
       gate1: { approved: true },
       gate2: { approved: true },
       gate3: { approved: true },

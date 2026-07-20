@@ -47,10 +47,22 @@ import styles from './ProjectWorkspace.module.css';
 // ── Gate locking ──────────────────────────────────────────────────────────────
 // Maps gate → last phase covered by the gate. Phases AFTER this phase are
 // locked until the gate is approved. Must stay in sync with REVIEW_GATES.
-// Gate 0 is enforced by PipelineEngine before phase0a. It is omitted from this
-// visual lock map so legacy projects without a persisted gate0 record remain
-// inspectable; attempting to run still opens the mandatory approval gate.
+// gate0 was previously omitted here so legacy projects without a persisted
+// gate0 record would remain visually inspectable, on the theory that the
+// actual run-permission check (getAgentRunPermission/getGateBlockingAgent in
+// lib/agentEnablement.ts and lib/projectAccess.ts) was the real enforcement
+// point. That split caused the 2026-07-20 bug where PRD/Project Charter/BRD
+// rendered bright/clickable in the sidebar while SDLC Orchestrator was still
+// unapproved, even though clicking "Run" on them was already correctly
+// blocked -- confusing, inconsistent UX. gate0 is included here now so the
+// sidebar's visual lock state matches the actual run-permission gate exactly
+// (same cutoff phase as GATE_AFTER_PHASE_INDEX.gate0 in agentEnablement.ts).
+// A legacy project with no persisted gate0 record can unlock the same way
+// any other never-approved gate does: an owner/admin opens the gate0 review
+// and approves it (SDLC Orchestrator's existing output is still there to
+// review) -- it does not need to be re-run.
 const GATE_UNLOCKS_AFTER: Record<string, string> = {
+  gate0: 'phase0',
   gate1: 'phase1b',
   gate2: 'phase2a',  // gate2 covers [phase2, phase2a]; lock phases after phase2a
   gate3: 'phase3c',  // gate3 covers [phase3, phase3a, phase3b, phase3c]
