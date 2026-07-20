@@ -523,116 +523,22 @@ async function loadPromptOptimizationSkill() {
 }
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
-app.post('/api/agent', checkToken, async (req, res) => {
-  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider, maxTokens } = req.body ?? {};
-
-  if (!systemPrompt || !userPrompt)
-    return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
-
-  // Per-agent access scoping (see authorizeAgentRun() below) — only runs when
-  // both projectId and agentId were sent; writes its own 403 on denial.
-  const agentAuthz = await authorizeAgentRun(req, res, { projectId, agentId });
-  if (!agentAuthz.ok) return;
-
-  // M-05 fix: server-side prompt injection detection — client-side check is bypassable
-  const INJECTION_PATTERNS = [
-    /ignore previous/i, /ignore rules/i, /ignore (all )?instructions/i,
-    /forget your instructions/i, /disregard (all )?previous/i,
-    /you are now/i, /override (your )?system/i, /bypass (the )?filter/i,
-  ];
-  const combinedPrompt = `${systemPrompt} ${userPrompt}`;
-  for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(combinedPrompt)) {
-      return res.status(400).json({ error: 'Request rejected: potential prompt injection detected.' });
-    }
-  }
-
-  const target = resolveDispatchTarget(requestedProvider, agentId);
-  const provider = target.kind === 'catalog' ? target.entry.providerType : target.provider;
-  const model = target.kind === 'catalog' ? target.entry.id : (target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL);
-
-  // Test mode — no external call
-  if (testMode) {
-    return res.json({
-      choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      provider,
-      model,
-    });
-  }
-
-  try {
-    const result = await dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens);
-    return res.json(result);
-
-  } catch (err) {
-    console.error('Proxy error:', err.message);
-    const status = err.status ?? 502;
-    return res.status(status).json({ error: err.message, raw: err.raw });
-  }
-});
-
-// Alias — newer frontend builds call /api/agents/call; route to the same handler
-app.post('/api/agents/call', checkToken, async (req, res) => {
-  // Delegate to /api/agent handler by reusing the same logic inline
-  const { systemPrompt, userPrompt, testMode, agentId, projectId, provider: requestedProvider, maxTokens } = req.body ?? {};
-
-  // Diagnostic logging (temporary) — see checkToken() above. Traces the full
-  // Test Connection / agent-call lifecycle on the backend, from authenticated
-  // user through provider resolution to the actual LLM call result.
-  const callTag = `[agents/call]`;
-  console.log(
-    `${callTag} authenticated as user=${req.authUser?.email ?? (req.authUser?.adminBypass ? '(admin-bypass)' : '(unknown)')} ` +
-    `agentId=${agentId ?? '(none)'} requestedProvider=${requestedProvider ?? '(default)'} testMode=${!!testMode}`
-  );
-
-  if (!systemPrompt || !userPrompt)
-    return res.status(400).json({ error: 'systemPrompt and userPrompt are required' });
-
-  // Per-agent access scoping (see authorizeAgentRun() below) — only runs when
-  // both projectId and agentId were sent; writes its own 403 on denial.
-  const agentAuthz = await authorizeAgentRun(req, res, { projectId, agentId });
-  if (!agentAuthz.ok) return;
-
-  const INJECTION_PATTERNS = [
-    /ignore previous/i, /ignore rules/i, /ignore (all )?instructions/i,
-    /forget your instructions/i, /disregard (all )?previous/i,
-    /you are now/i, /override (your )?system/i, /bypass (the )?filter/i,
-  ];
-  const combinedPrompt = `${systemPrompt} ${userPrompt}`;
-  for (const pattern of INJECTION_PATTERNS) {
-    if (pattern.test(combinedPrompt)) {
-      return res.status(400).json({ error: 'Request rejected: potential prompt injection detected.' });
-    }
-  }
-
-  const target = resolveDispatchTarget(requestedProvider, agentId);
-  const provider = target.kind === 'catalog' ? target.entry.providerType : target.provider;
-  const model = target.kind === 'catalog' ? target.entry.id : (target.provider === 'claude' ? ANTHROPIC_MODEL : OPENAI_MODEL);
-  console.log(`${callTag} resolved provider=${provider} model=${model}`);
-
-  if (testMode) {
-    console.log(`${callTag} testMode=true — returning stub response without calling the LLM`);
-    return res.json({
-      choices: [{ message: { role: 'assistant', content: '[TEST] ' + systemPrompt.slice(0, 80) }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      provider,
-      model,
-    });
-  }
-
-  try {
-    console.log(`${callTag} calling ${provider} API...`);
-    const started = Date.now();
-    const result = await dispatchAgentCall(target, systemPrompt, userPrompt, maxTokens);
-    console.log(`${callTag} ${provider} call succeeded in ${Date.now() - started}ms` + (result.fallbackFrom ? ` (fell back from ${result.fallbackFrom})` : ''));
-    return res.json(result);
-  } catch (err) {
-    console.error(`${callTag} ${provider} call FAILED — status=${err.status ?? 502} message=${err.message}`);
-    const status = err.status ?? 502;
-    return res.status(status).json({ error: err.message, raw: err.raw });
-  }
-});
+// Extracted 2026-07-20 (architecture upgrade Phase 3) to
+// backend/src/routes/agentDispatchRoutes.js -- verbatim, just the mount
+// point here. authorizeAgentRun is a proxy.js function declaration
+// (hoisted, never reassigned); resolveDispatchTarget/dispatchAgentCall are
+// consts already assigned earlier in this file's load order than these
+// routes were registered -- no getter needed for any of these, unlike
+// adminReset.js's ensureInviteSessionTable.
+const { createAgentDispatchRouter } = require('./routes/agentDispatchRoutes');
+app.use('/api', createAgentDispatchRouter({
+  checkToken,
+  authorizeAgentRun,
+  resolveDispatchTarget,
+  dispatchAgentCall,
+  anthropicModel: ANTHROPIC_MODEL,
+  openaiModel: OPENAI_MODEL,
+}));
 
 const CHAT_PLANNER_SYSTEM_PROMPT = `You are the Agentic SDLC Chat Orchestrator planner.
 Return only a compact JSON retrieval plan. Select only the read-only tools listed in the user prompt.
