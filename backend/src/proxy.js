@@ -656,30 +656,14 @@ function extractChatModelText(result) {
   return typeof contentText === 'string' ? contentText : '';
 }
 
-// Authenticated browser-to-runtime bridge for durable background lifecycle work.
-app.post('/api/lifecycle-events', checkToken, async (req, res) => {
-  if (!RUNTIME_API_URL || !RUNTIME_API_TOKEN) {
-    return res.status(503).json({ error: 'Background lifecycle runtime is not configured.' });
-  }
-  try {
-    const response = await fetch(RUNTIME_API_URL + '/api/v1/lifecycle-events', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Token': RUNTIME_API_TOKEN,
-      },
-      body: JSON.stringify(req.body ?? {}),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const text = await response.text();
-    res.status(response.status);
-    res.type(response.headers.get('content-type') ?? 'application/json');
-    return res.send(text);
-  } catch (error) {
-    console.error('[lifecycle-events] runtime forwarding failed:', error instanceof Error ? error.message : error);
-    return res.status(502).json({ error: 'Background lifecycle runtime is unavailable.' });
-  }
-});
+// Browser-to-runtime lifecycle-events forwarding route extracted 2026-07-19
+// (architecture upgrade Phase 3) to backend/src/routes/lifecycleForwarding.js
+// -- see that file's own doc comment for why it's named differently from
+// the unrelated backend/src/routes/lifecycleEvents.ts, and why
+// enqueueRuntimeLifecycleEvent()/fanOutRuntimeLifecycleEvent() near the top
+// of this file were deliberately NOT moved with it.
+const { createLifecycleForwardingRouter } = require('./routes/lifecycleForwarding');
+app.use('/api/lifecycle-events', createLifecycleForwardingRouter({ RUNTIME_API_URL, RUNTIME_API_TOKEN, checkToken }));
 
 app.post('/api/chat/respond', checkToken, createChatRouteHandler({
   orchestrate: async ({ request, caller }) => {
