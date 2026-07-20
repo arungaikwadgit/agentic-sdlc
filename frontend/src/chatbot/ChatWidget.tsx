@@ -3,7 +3,7 @@
  * Proprietary and Confidential - Unauthorized use prohibited.
  */
 import { useEffect, useRef, useState } from 'react';
-import { askAgenticChat, type AgenticChatResponse } from './chatApi';
+import { askAgenticChat, getChatHistory, type AgenticChatResponse } from './chatApi';
 import { matchFaq } from './faq';
 import styles from './ChatWidget.module.css';
 
@@ -142,12 +142,38 @@ export default function ChatWidget({ isAdmin = false, projectId, currentView }: 
     else node.scrollTop = node.scrollHeight;
   }, [messages, open]);
 
+  // Private-view history hydration (2026-07-20): when a project is open,
+  // load THIS user's own persisted chat turns for it (see chatApi.ts's
+  // getChatHistory) instead of always starting from a blank welcome
+  // message -- the conversation now survives a refresh/new tab/new device.
+  // Only this caller's own rows ever come back here; the shared-context
+  // benefit of the whole team's history happens server-side inside
+  // /api/chat/respond, never as raw transcripts sent to the client. Falls
+  // back to the plain welcome message on dashboard view, when no project is
+  // open, or when history is empty/unavailable -- same as before this
+  // feature existed.
   useEffect(() => {
     requestRef.current?.abort();
-    setMessages((prev) => {
-      if (prev.length !== 1 || prev[0]?.id !== 'welcome') return prev;
-      return [{ id: 'welcome', role: 'assistant', text: initialAssistantMessage(isAdmin, currentView) }];
-    });
+    const controller = new AbortController();
+    let cancelled = false;
+
+    if (currentView === 'project' && projectId) {
+      getChatHistory(projectId, controller.signal).then((history) => {
+        if (cancelled) return;
+        setMessages(
+          history.length > 0
+            ? history.map((entry) => ({ id: entry.id, role: entry.role, text: entry.text }))
+            : [{ id: 'welcome', role: 'assistant', text: initialAssistantMessage(isAdmin, currentView) }],
+        );
+      });
+    } else {
+      setMessages([{ id: 'welcome', role: 'assistant', text: initialAssistantMessage(isAdmin, currentView) }]);
+    }
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [currentView, isAdmin, projectId]);
 
   async function handleSend(text: string) {

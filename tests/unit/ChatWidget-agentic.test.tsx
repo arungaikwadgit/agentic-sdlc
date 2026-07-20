@@ -8,7 +8,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import ChatWidget from '@/chatbot/ChatWidget';
 
-const chatMocks = vi.hoisted(() => ({ askAgenticChat: vi.fn() }));
+const chatMocks = vi.hoisted(() => ({ askAgenticChat: vi.fn(), getChatHistory: vi.fn() }));
 const MODEL_USAGE = {
   promptTokens: 100,
   completionTokens: 25,
@@ -21,9 +21,19 @@ const MODEL_USAGE = {
 
 vi.mock('@/chatbot/chatApi', () => ({
   askAgenticChat: chatMocks.askAgenticChat,
+  getChatHistory: chatMocks.getChatHistory,
 }));
 
 describe('project-aware agentic ChatWidget', () => {
+  beforeEach(() => {
+    // Private-view history hydration (2026-07-20): every test in this file
+    // opens a project-scoped ChatWidget, which now fetches persisted chat
+    // history on mount. Default to "no prior history" so existing
+    // assertions about the welcome message / first exchange are unaffected;
+    // individual tests may override this mock if they need to assert on
+    // hydrated history specifically.
+    chatMocks.getChatHistory.mockResolvedValue([]);
+  });
   afterEach(() => vi.clearAllMocks());
 
   async function ask(question: string) {

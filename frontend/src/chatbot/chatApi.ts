@@ -57,6 +57,54 @@ function chatEndpoint(): string {
     : base + '/api/chat/respond';
 }
 
+function chatHistoryEndpoint(projectId: string): string {
+  const base = String(import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+  const apiBase = base === '/api' || base.endsWith('/api') ? base : base + '/api';
+  return apiBase + '/projects/' + encodeURIComponent(projectId) + '/chat/messages';
+}
+
+export interface ChatHistoryMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  createdAt: string | number;
+}
+
+/**
+ * Private-view hydration: this caller's own persisted chatbot turns for a
+ * project (see backend/src/routes/chatHistory.js). Never includes another
+ * team member's messages -- the shared-context benefit of everyone's chat
+ * history happens server-side, inside /api/chat/respond, not here.
+ * Returns [] on any failure (missing project access, DB unavailable, etc.)
+ * rather than throwing -- a history-hydration failure should degrade to
+ * "start fresh", not block the chat widget from opening at all.
+ */
+export async function getChatHistory(projectId: string, signal?: AbortSignal): Promise<ChatHistoryMessage[]> {
+  try {
+    const authHeaders = await getAuthHeader();
+    const proxyToken = getProxyToken();
+    const response = await fetch(chatHistoryEndpoint(projectId), {
+      method: 'GET',
+      headers: {
+        ...authHeaders,
+        ...(proxyToken ? { 'X-API-Token': proxyToken } : {}),
+      },
+      signal,
+    });
+    if (!response.ok) return [];
+    const payload = await response.json().catch(() => null);
+    const messages = payload && Array.isArray(payload.messages) ? payload.messages : [];
+    return messages.filter((message: unknown): message is ChatHistoryMessage => {
+      const candidate = message as Partial<ChatHistoryMessage>;
+      return !!candidate && typeof candidate.id === 'string'
+        && (candidate.role === 'user' || candidate.role === 'assistant')
+        && typeof candidate.text === 'string';
+    });
+  } catch {
+    return [];
+  }
+}
+
 function isAgenticChatResponse(value: unknown): value is AgenticChatResponse {
   if (!value || typeof value !== 'object') return false;
   const response = value as Partial<AgenticChatResponse>;

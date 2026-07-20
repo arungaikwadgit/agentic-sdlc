@@ -661,6 +661,14 @@ function extractChatModelText(result) {
 const { createLifecycleForwardingRouter } = require('./routes/lifecycleForwarding');
 app.use('/api/lifecycle-events', createLifecycleForwardingRouter({ RUNTIME_API_URL, RUNTIME_API_TOKEN, checkToken }));
 
+// Shared-context / private-view chat history (2026-07-20): a bounded recent
+// window of every team member's turns for a project is read back and fed
+// into the synthesis prompt as conversational history, and every turn is
+// persisted -- see chat/chatHistoryStore.js and migrations/012_chat_messages.sql
+// for the full rationale. chatOrchestrator.js/chatPlanner.js/chatRoute.js are
+// deliberately untouched; this wiring layer is the only place that changed.
+const { getTeamRecentMessages, saveChatMessage } = require('./chat/chatHistoryStore');
+
 app.post('/api/chat/respond', checkToken, createChatRouteHandler({
   orchestrate: async ({ request, caller }) => {
     const target = resolveDispatchTarget(undefined, 'helpAssistant');
@@ -680,15 +688,52 @@ app.post('/api/chat/respond', checkToken, createChatRouteHandler({
       isAppAdmin: isConfiguredAdminEmail,
       externalResearch: createExternalResearch(),
     });
-    return runChatOrchestrator({
-      request,
+
+    // Prefer the whole team's bounded recent history over whatever this one
+    // browser tab sent, so continuity reflects what any teammate already
+    // discussed. Falls back to the client-supplied history (today's
+    // pre-existing behavior) whenever there's no project open, no persisted
+    // team history yet, or the DB read fails -- never blocks/fails the
+    // request over this.
+    const projectId = request?.projectId ?? null;
+    const teamHistory = projectId ? await getTeamRecentMessages(dbPool, { projectId }) : [];
+    const effectiveRequest = teamHistory.length
+      ? { ...request, history: teamHistory.map((m) => ({ role: m.role, text: m.text })) }
+      : request;
+
+    const result = await runChatOrchestrator({
+      request: effectiveRequest,
       caller,
       planWithModel: (prompt) => callModel(CHAT_PLANNER_SYSTEM_PROMPT, prompt, 1024),
       synthesizeWithModel: (prompt) => callModel(CHAT_SYNTHESIS_SYSTEM_PROMPT, prompt, 2048),
       executeTool: evidenceTools.execute,
     });
+
+    // Persist this turn (both sides) for the next request's shared context
+    // and for this user's own private-view history. Fire-and-forget:
+    // saveChatMessage already swallows and logs its own errors, and nothing
+    // here awaits it before returning -- a save failure must never turn a
+    // successful chat answer into a failed request.
+    if (dbPool) {
+      const userId = caller?.userId ?? null;
+      const userEmail = caller?.email ?? null;
+      void saveChatMessage(dbPool, { projectId, userId, userEmail, role: 'user', text: request?.question });
+      void saveChatMessage(dbPool, { projectId, userId, userEmail, role: 'assistant', text: result.answer, responseMode: result.responseMode });
+    }
+
+    return result;
   },
 }));
+
+// Private-view chat history hydration (2026-07-20) -- GET
+// /api/projects/:projectId/chat/messages, returning only the caller's OWN
+// persisted turns. See backend/src/routes/chatHistory.js's doc comment for
+// why this is a separate, narrower endpoint from the shared-context read
+// wired directly into /api/chat/respond above. getDb is passed as a getter
+// (not a snapshot), matching the invite/app-state router convention, since
+// dbPool can be reassigned to null asynchronously after startup.
+const { createChatHistoryRouter } = require('./routes/chatHistory');
+app.use('/api/projects', createChatHistoryRouter({ getDb: () => dbPool, checkToken, isAppAdmin: isConfiguredAdminEmail }));
 
 // Branding/site-fetch route group extracted 2026-07-19 (architecture
 // upgrade Phase 3) to backend/src/routes/brandingFetch.js -- see that
