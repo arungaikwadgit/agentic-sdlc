@@ -61,12 +61,9 @@ async function fanOutRuntimeLifecycleEvent(eventType, sourceKey, agentKey) {
   })));
 }
 
-function lifecycleTypeForConfigKey(key) {
-  if (key === 'app:promptDefaults') return 'prompt_changed';
-  if (key === 'app:agentProviderHints' || key === 'app:modelAssignments' || key === 'app:model') return 'model_changed';
-  if (key === 'app:domainKnowledgeDefaults') return 'data_changed';
-  return null;
-}
+// lifecycleTypeForConfigKey moved to backend/src/routes/appState.js
+// (architecture upgrade Phase 3g, 2026-07-20) -- it was only ever called
+// from the two app-state config routes now living there.
 const ADMIN_EMAIL_ALLOWLIST = Array.from(new Set(
   [
     process.env.ADMIN_EMAIL_ALLOWLIST ?? '',
@@ -744,134 +741,30 @@ app.use('/api/prompt-governance', createPromptGovernanceRouter({
 }));
 
 
-// NOTE: reads are intentionally admin-agnostic (checkToken only, no requireAdmin).
-// App-level config here includes values meant to be read by any authenticated user
-// during normal flows (e.g. app:domainKnowledgeDefaults, read by every user in
-// NewProjectModal when creating a project) — only *writing* config is an admin
-// action (see PUT/POST /batch/DELETE below, which still require requireAdmin).
-app.get('/api/app-state/config', checkToken, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const keys = typeof req.query.keys === 'string'
-    ? req.query.keys.split(',').map((key) => normalizeConfigKey(key)).filter(Boolean)
-    : null;
-  const values = await dbGetAppConfigMap(keys);
-  return res.json({ values });
-});
-
-app.get('/api/app-state/config/:key', checkToken, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const key = normalizeConfigKey(req.params.key);
-  if (!key) return res.status(400).json({ error: 'key is required' });
-  const values = await dbGetAppConfigMap([key]);
-  return res.json({ key, value: values[key] ?? null });
-});
-
-app.put('/api/app-state/config/:key', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const key = normalizeConfigKey(req.params.key);
-  if (!key) return res.status(400).json({ error: 'key is required' });
-  await dbSetAppConfigValue(key, req.body?.value ?? null);
-  const lifecycleType = lifecycleTypeForConfigKey(key);
-  if (lifecycleType) {
-    void fanOutRuntimeLifecycleEvent(lifecycleType, key)
-      .catch((error) => console.error('[lifecycle-events] config trigger failed:', error.message));
-  }
-  return res.json({ ok: true });
-});
-
-app.post('/api/app-state/config/batch', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const values = req.body?.values;
-  if (!values || typeof values !== 'object' || Array.isArray(values)) {
-    return res.status(400).json({ error: 'values must be an object' });
-  }
-  const lifecycleChanges = new Set();
-  for (const [key, value] of Object.entries(values)) {
-    const normalizedKey = normalizeConfigKey(key);
-    if (!normalizedKey) continue;
-    await dbSetAppConfigValue(normalizedKey, value);
-    const lifecycleType = lifecycleTypeForConfigKey(normalizedKey);
-    if (lifecycleType) lifecycleChanges.add(lifecycleType + ':' + normalizedKey);
-  }
-  for (const change of lifecycleChanges) {
-    const [eventType, sourceKey] = change.split(':', 2);
-    void fanOutRuntimeLifecycleEvent(eventType, sourceKey)
-      .catch((error) => console.error('[lifecycle-events] batch config trigger failed:', error.message));
-  }
-  return res.json({ ok: true });
-});
-
-app.delete('/api/app-state/config', checkToken, requireAdmin, async (_req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  await dbDeleteAllAppConfig();
-  return res.json({ ok: true });
-});
-
-app.get('/api/app-state/integrations', checkToken, requireAdmin, async (_req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const items = await dbListIntegrations();
-  return res.json({ items });
-});
-
-app.get('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const item = await dbGetIntegration(req.params.id);
-  if (!item) return res.status(404).json({ error: 'Integration not found.' });
-  return res.json(item);
-});
-
-app.put('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const payload = req.body ?? {};
-  const record = {
-    id: req.params.id,
-    provider: payload.provider,
-    label: payload.label,
-    encryptedData: payload.encryptedData,
-    iv: payload.iv,
-    createdAt: payload.createdAt ?? Date.now(),
-  };
-  if (!record.id || !record.provider || !record.label || !record.encryptedData || !record.iv) {
-    return res.status(400).json({ error: 'id, provider, label, encryptedData, and iv are required.' });
-  }
-  await dbSaveIntegration(record);
-  return res.json({ ok: true, id: record.id });
-});
-
-app.delete('/api/app-state/integrations/:id', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  await dbDeleteIntegration(req.params.id);
-  return res.json({ ok: true });
-});
-
-app.get('/api/app-state/backlog-items', checkToken, requireAdmin, async (_req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const items = await dbListBacklogItems();
-  return res.json({ items });
-});
-
-app.post('/api/app-state/backlog-items', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const item = req.body ?? {};
-  if (!item.id || !item.title || !item.category || !item.priority || !item.status || !item.source) {
-    return res.status(400).json({ error: 'id, title, category, priority, status, and source are required.' });
-  }
-  await dbCreateBacklogItem(item);
-  return res.json({ ok: true, id: item.id });
-});
-
-app.patch('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  const item = await dbUpdateBacklogItem(req.params.id, req.body ?? {});
-  if (!item) return res.status(404).json({ error: 'Backlog item not found.' });
-  return res.json({ ok: true, item });
-});
-
-app.delete('/api/app-state/backlog-items/:id', checkToken, requireAdmin, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  await dbDeleteBacklogItem(req.params.id);
-  return res.json({ ok: true });
-});
+// App State (config / integrations / backlog-items) route group extracted
+// 2026-07-20 (architecture upgrade Phase 3g) to
+// backend/src/routes/appState.js -- reconciliation grep confirmed every
+// private helper it uses (lifecycleTypeForConfigKey, normalizeConfigKey,
+// dbSetAppConfigValue, dbDeleteAllAppConfig, dbListIntegrations,
+// dbGetIntegration, dbSaveIntegration, dbDeleteIntegration,
+// dbListBacklogItems, dbCreateBacklogItem, dbUpdateBacklogItem,
+// dbDeleteBacklogItem) had zero callers outside this block, even though
+// they weren't physically contiguous with these routes in the original
+// file. requireAppStateDb and dbGetAppConfigMap stay here (shared with
+// prompt-governance, user-preferences, and loadPromptOptimizationSkill) and
+// are passed in, same as Phase 3f.
+const { createAppStateRouter } = require('./routes/appState');
+app.use('/api/app-state', createAppStateRouter({
+  getDb: () => dbPool,
+  checkToken,
+  requireAdmin,
+  requireAppStateDb,
+  dbGetAppConfigMap,
+  fanOutRuntimeLifecycleEvent,
+  appStateStore,
+  tokenOptimizationSkillKey: TOKEN_OPTIMIZATION_SKILL_KEY,
+  setPromptOptimizationSkillCache: (next) => { promptOptimizationSkillCache = next; },
+}));
 
 // ── POST /api/admin/reset-application-data ────────────────────────────────
 // Wipes ALL application/user data back to a clean slate — every project,
@@ -1234,9 +1127,7 @@ async function requireAppStateDb(res) {
   }
 }
 
-function normalizeConfigKey(key) {
-  return typeof key === 'string' ? key.trim() : '';
-}
+// normalizeConfigKey moved to backend/src/routes/appState.js (Phase 3g).
 
 async function dbGetAppConfigMap(keys = null) {
   if (!dbPool) {
@@ -1257,204 +1148,12 @@ async function dbGetAppConfigMap(keys = null) {
   return values;
 }
 
-async function dbSetAppConfigValue(key, value) {
-  if (!dbPool) {
-    await appStateStore.setAppConfigValue(key, value);
-    if (key === TOKEN_OPTIMIZATION_SKILL_KEY) {
-      promptOptimizationSkillCache = { value: value ?? DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
-    }
-    return;
-  }
-  await dbPool.query(`
-    INSERT INTO app_config (key, value, updated_at)
-    VALUES ($1, $2::jsonb, NOW())
-    ON CONFLICT (key) DO UPDATE
-      SET value = EXCLUDED.value,
-          updated_at = NOW()
-  `, [key, JSON.stringify(value)]);
-  if (key === TOKEN_OPTIMIZATION_SKILL_KEY) {
-    promptOptimizationSkillCache = { value: value ?? DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
-  }
-}
-
-async function dbDeleteAllAppConfig() {
-  if (!dbPool) {
-    await appStateStore.deleteAllAppConfig();
-  } else {
-    await dbPool.query(`DELETE FROM app_config`);
-  }
-  promptOptimizationSkillCache = { value: DEFAULT_PROMPT_OPTIMIZATION_SKILL, expiresAt: 0 };
-}
-
-async function dbListIntegrations() {
-  if (!dbPool) return await appStateStore.listIntegrations();
-  const { rows } = await dbPool.query(`
-    SELECT id, provider, label, encrypted_data, iv, created_at
-    FROM app_integrations
-    ORDER BY created_at ASC
-  `);
-  return rows.map((row) => ({
-    id: row.id,
-    provider: row.provider,
-    label: row.label,
-    encryptedData: row.encrypted_data,
-    iv: row.iv,
-    createdAt: Number(row.created_at),
-  }));
-}
-
-async function dbGetIntegration(id) {
-  if (!dbPool) return await appStateStore.getIntegration(id);
-  const { rows } = await dbPool.query(`
-    SELECT id, provider, label, encrypted_data, iv, created_at
-    FROM app_integrations
-    WHERE id = $1
-    LIMIT 1
-  `, [id]);
-  const row = rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    provider: row.provider,
-    label: row.label,
-    encryptedData: row.encrypted_data,
-    iv: row.iv,
-    createdAt: Number(row.created_at),
-  };
-}
-
-async function dbSaveIntegration(record) {
-  if (!dbPool) {
-    await appStateStore.saveIntegration(record);
-    return;
-  }
-  await dbPool.query(`
-    INSERT INTO app_integrations (id, provider, label, encrypted_data, iv, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    ON CONFLICT (id) DO UPDATE
-      SET provider = EXCLUDED.provider,
-          label = EXCLUDED.label,
-          encrypted_data = EXCLUDED.encrypted_data,
-          iv = EXCLUDED.iv,
-          created_at = EXCLUDED.created_at,
-          updated_at = EXCLUDED.updated_at
-  `, [
-    record.id,
-    record.provider,
-    record.label,
-    record.encryptedData,
-    record.iv,
-    Number(record.createdAt ?? Date.now()),
-    Date.now(),
-  ]);
-}
-
-async function dbDeleteIntegration(id) {
-  if (!dbPool) {
-    await appStateStore.deleteIntegration(id);
-    return;
-  }
-  await dbPool.query(`DELETE FROM app_integrations WHERE id = $1`, [id]);
-}
-
-async function dbListBacklogItems() {
-  if (!dbPool) return await appStateStore.listBacklogItems();
-  const { rows } = await dbPool.query(`
-    SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
-    FROM admin_backlog_items
-    ORDER BY created_at ASC
-  `);
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    category: row.category,
-    priority: row.priority,
-    status: row.status,
-    source: row.source,
-    notes: row.notes ?? undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-  }));
-}
-
-async function dbCreateBacklogItem(item) {
-  if (!dbPool) {
-    await appStateStore.createBacklogItem(item);
-    return;
-  }
-  await dbPool.query(`
-    INSERT INTO admin_backlog_items (
-      id, title, description, category, priority, status, source, notes, created_at, updated_at
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-  `, [
-    item.id,
-    item.title,
-    item.description ?? '',
-    item.category,
-    item.priority,
-    item.status,
-    item.source,
-    item.notes ?? null,
-    Number(item.createdAt ?? Date.now()),
-    Number(item.updatedAt ?? Date.now()),
-  ]);
-}
-
-async function dbUpdateBacklogItem(id, patch) {
-  if (!dbPool) return await appStateStore.updateBacklogItem(id, patch);
-  const current = await dbPool.query(`
-    SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
-    FROM admin_backlog_items
-    WHERE id = $1
-    LIMIT 1
-  `, [id]);
-  if (!current.rows[0]) return null;
-  const row = current.rows[0];
-  const next = {
-    title: patch.title ?? row.title,
-    description: patch.description ?? row.description,
-    category: patch.category ?? row.category,
-    priority: patch.priority ?? row.priority,
-    status: patch.status ?? row.status,
-    source: patch.source ?? row.source,
-    notes: patch.notes === undefined ? row.notes : patch.notes,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(patch.updatedAt ?? Date.now()),
-  };
-  await dbPool.query(`
-    UPDATE admin_backlog_items
-    SET title = $2,
-        description = $3,
-        category = $4,
-        priority = $5,
-        status = $6,
-        source = $7,
-        notes = $8,
-        updated_at = $9
-    WHERE id = $1
-  `, [
-    id,
-    next.title,
-    next.description,
-    next.category,
-    next.priority,
-    next.status,
-    next.source,
-    next.notes ?? null,
-    next.updatedAt,
-  ]);
-  return { id, ...next };
-}
-
-async function dbDeleteBacklogItem(id) {
-  if (!dbPool) {
-    await appStateStore.deleteBacklogItem(id);
-    return;
-  }
-  await dbPool.query(`DELETE FROM admin_backlog_items WHERE id = $1`, [id]);
-}
+// dbSetAppConfigValue, dbDeleteAllAppConfig, dbListIntegrations,
+// dbGetIntegration, dbSaveIntegration, dbDeleteIntegration,
+// dbListBacklogItems, dbCreateBacklogItem, dbUpdateBacklogItem, and
+// dbDeleteBacklogItem all moved to backend/src/routes/appState.js
+// (Phase 3g) -- each was only ever called from the app-state routes now
+// living there.
 
 const MASTER_CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
 let masterCatalogCache = {
