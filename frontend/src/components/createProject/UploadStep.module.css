@@ -137,6 +137,21 @@
 .removeBtn:hover:not(:disabled) { background: var(--surface2); color: var(--text); }
 .removeBtn:disabled { opacity: 0.35; cursor: default; }
 
+/* ── Responsive (2026-07-20) ──────────────────────────────────────────────
+   .removeBtn is a ~18-24px icon-only hit area with no mobile override
+   anywhere in this file. Bump to the app's --touch-target convention on
+   touch-sized viewports, matching the same pattern already applied to
+   ProjectCard's .deleteBtn/.infoBtn and ProjectDetailsModal's .close. */
+@media (max-width: 767px) {
+  .removeBtn {
+    min-width: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 /* ── Ready banner ───────────────────────────────────────────────────────── */
 .readyBanner {
   display: flex;

@@ -170,6 +170,16 @@
   letter-spacing: 8px;
 }
 
+/* ── Responsive (2026-07-20) ──────────────────────────────────────────────
+   Already fluid (max-width + width:100%, centered), so nothing overflows on
+   a phone -- this is spacing/legibility polish, not a broken-layout fix.
+   48px/40px card padding plus 8px code letter-spacing eats a lot of a
+   375px viewport's width. */
+@media (max-width: 480px) {
+  .card { padding: 32px 20px; }
+  .codeInput { font-size: 20px; letter-spacing: 5px; }
+}
+
 .successIcon {
   font-size: 52px;
   color: #10b981;

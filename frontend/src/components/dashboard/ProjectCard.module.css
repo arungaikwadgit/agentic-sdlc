@@ -130,3 +130,19 @@
   background: var(--surface2);
   color: var(--accent);
 }
+
+/* ── Responsive (2026-07-20) ────────────────────────────────────────────
+   .deleteBtn/.infoBtn are icon-only (~20-26px hit area) with no mobile
+   override anywhere in this file. Bump to the app's --touch-target
+   convention on touch-sized viewports without changing the compact
+   desktop card density. */
+@media (max-width: 767px) {
+  .deleteBtn,
+  .infoBtn {
+    min-width: var(--touch-target, 44px);
+    min-height: var(--touch-target, 44px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}

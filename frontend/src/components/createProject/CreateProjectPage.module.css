@@ -234,3 +234,26 @@
   flex-shrink: 0;
 }
 .retryBtn:hover { background: #fef2f2; }
+
+/* ── Responsive (2026-07-20) ──────────────────────────────────────────────
+   .columns was a fixed 360px + 1fr grid with no fallback: on a phone
+   viewport the source panel alone (ReviewStep's .leftPanel, exposed as a
+   direct grid item via `display: contents`) nearly filled the screen and
+   the form/chat panel (.rightPanel) was squeezed to a sliver inside a
+   `overflow: hidden` parent -- content was clipped, not just cramped.
+   Breakpoint matches the convention already established in
+   pipeline/ProjectWorkspace.module.css (1024/767/479px). See
+   ReviewStep.module.css's own matching @media block for how .leftPanel/
+   .rightPanel behave once stacked. */
+@media (max-width: 767px) {
+  .columns {
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .singleCol { padding: 20px 16px; }
+  .header { padding: 0 14px; }
+  .stepBar { padding: 10px 14px; }
+  .footer { padding: 10px 14px; }
+}

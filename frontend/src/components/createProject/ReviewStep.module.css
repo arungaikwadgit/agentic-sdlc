@@ -220,6 +220,28 @@
   gap: 24px;
 }
 
+/* ── Responsive (2026-07-20) ──────────────────────────────────────────────
+   .root is `display: contents`, so .leftPanel/.rightPanel are the actual
+   grid items of the parent .columns grid (CreateProjectPage.module.css).
+   When that grid stacks to a single column at 767px, both panels become
+   grid rows instead of columns -- give the secondary Source panel a bounded
+   height with its own scroll, and let the primary form/chat panel flow with
+   the page's own scroll instead of a second nested scroll region (avoids
+   the "content hidden inside an invisible inner scrollbar" trap two nested
+   `overflow: auto` regions would otherwise create on a touch device). */
+@media (max-width: 767px) {
+  .leftPanel {
+    max-height: 38vh;
+    border-bottom: 1px solid var(--border);
+  }
+  .rightPanel {
+    overflow: visible;
+  }
+  .formScroll {
+    overflow-y: visible;
+  }
+}
+
 .fieldGroup {
   display: flex;
   flex-direction: column;
