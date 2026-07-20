@@ -18,7 +18,7 @@
  */
 import { PHASE_ORDER, PHASE_AGENTS } from '@/agents/constants';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
-import type { Project } from '@/types/project.types';
+import type { Project, ReviewGateId } from '@/types/project.types';
 import type { AgentId, PhaseId } from '@/types/agent.types';
 
 /**
@@ -76,4 +76,96 @@ export function computeSkippedAgentIdsAfterConfirm(project: Project): AgentId[] 
   const existing = new Set(project.skippedAgentIds ?? []);
   for (const id of getUnassignedAgents(project)) existing.add(id);
   return Array.from(existing);
+}
+
+/**
+ * Phase index each gate blocks entry into — verbatim copy of the map
+ * pipelineEngine.ts's automatic run loop already used privately (still
+ * used there too, via re-export, so the two never drift). Exported here
+ * since agentEnablement.ts is the documented single source of truth for
+ * "is this agent going to run" — see getGateRequiredBeforePhase below and
+ * the 2026-07-20 gate0-bypass fix it closes: manually-triggered
+ * "Run"/"Re-run" buttons in ProjectWorkspace never checked gate approval
+ * at all, only role/assignment (getAgentRunPermission in projectAccess.ts),
+ * so PRD/Project Charter/BRD were runnable immediately on a new project
+ * even though gate0 (SDLC Orchestrator plan approval) hadn't been approved
+ * yet. Only the fully-automatic pipeline run respected gate sequencing.
+ */
+export const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
+  gate0: PHASE_ORDER.indexOf('phase0a'),
+  gate1: PHASE_ORDER.indexOf('phase2'),
+  gate2: PHASE_ORDER.indexOf('phase3'),
+  gate3: PHASE_ORDER.indexOf('phase4'),
+  gate5: PHASE_ORDER.indexOf('phase6'),
+  gate6: -1,
+};
+
+/**
+ * Which gate (if any) is still unapproved and blocks entry into phaseIndex.
+ * Verbatim port of PipelineEngine's private getGateRequiredBefore method —
+ * same algorithm, same result, now shared so the automatic pipeline run and
+ * manual per-agent run permission checks can never disagree about gate
+ * sequencing.
+ */
+export function getGateRequiredBeforePhase(
+  phaseIndex: number,
+  reviewGates: Project['reviewGates'],
+): ReviewGateId | null {
+  const explicitPendingGate = Object.entries(GATE_AFTER_PHASE_INDEX)
+    .filter(([gateId, gatePhaseIndex]) => {
+      if (gatePhaseIndex < 0 || gatePhaseIndex > phaseIndex) return false;
+      const gate = reviewGates[gateId as ReviewGateId];
+      return gate !== undefined && !gate.approved;
+    })
+    .sort(([, leftIndex], [, rightIndex]) => leftIndex - rightIndex)[0];
+
+  if (explicitPendingGate) return explicitPendingGate[0] as ReviewGateId;
+
+  // Preserve the normal phase-boundary behavior for a gate that has not
+  // been persisted yet (for example the first run reaching Gate 3).
+  for (const [gateId, gatePhaseIndex] of Object.entries(GATE_AFTER_PHASE_INDEX)) {
+    if (gatePhaseIndex === phaseIndex) return gateId as ReviewGateId;
+  }
+  return null;
+}
+
+/** Which phase (if any) an agent belongs to. */
+export function getAgentPhase(agentId: AgentId): PhaseId | null {
+  for (const [phase, agents] of Object.entries(PHASE_AGENTS) as [PhaseId, AgentId[]][]) {
+    if (agents.includes(agentId)) return phase;
+  }
+  return null;
+}
+
+/**
+ * Which gate (if any) is still unapproved and blocks agentId from running
+ * right now, given the project's current reviewGates state. Returns null
+ * when there's no gate in the way (safe to run) or the agent isn't found
+ * in any phase.
+ *
+ * Deliberately NOT implemented via getGateRequiredBeforePhase above: that
+ * function assumes the caller is walking phases 0..N sequentially and has
+ * already validated (and persisted) every earlier gate, so it only treats
+ * a not-yet-persisted gate as blocking when its boundary exactly equals
+ * the phase index being checked. This function is called for an arbitrary
+ * agent directly — e.g. a manual "Run" click on a brand-new project where
+ * no automatic pipeline run has ever happened and reviewGates is still
+ * `{}` — so it can't rely on that invariant. Instead it checks every gate
+ * whose boundary is at or before this agent's phase, treating "gate not
+ * persisted yet" the same as "not approved" (both mean the gate hasn't
+ * been explicitly approved), and returns the earliest one still pending.
+ */
+export function getGateBlockingAgent(project: Project, agentId: AgentId): ReviewGateId | null {
+  const phase = getAgentPhase(agentId);
+  if (!phase) return null;
+  const phaseIndex = PHASE_ORDER.indexOf(phase);
+  if (phaseIndex < 0) return null;
+
+  const reviewGates = project.reviewGates ?? {};
+  const pending = Object.entries(GATE_AFTER_PHASE_INDEX)
+    .filter(([, gatePhaseIndex]) => gatePhaseIndex >= 0 && gatePhaseIndex <= phaseIndex)
+    .sort(([, a], [, b]) => a - b)
+    .find(([gateId]) => !reviewGates[gateId as ReviewGateId]?.approved);
+
+  return pending ? (pending[0] as ReviewGateId) : null;
 }

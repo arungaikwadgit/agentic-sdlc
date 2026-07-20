@@ -27,7 +27,19 @@ function baseProject(overrides: Partial<Project> = {}): Project {
     createdAt: 1000,
     updatedAt: 1000,
     agentRuns: {},
-    reviewGates: {},
+    // gate0/gate1/gate2 pre-approved: this file's getAgentRunPermission
+    // tests (below) exercise role/assignment logic using 'architecture'
+    // (phase3) and 'apiDesign' (phase3a), both of which fall after gate0,
+    // gate1, AND gate2 in agentEnablement.ts's GATE_AFTER_PHASE_INDEX. Gates
+    // are a separate, orthogonal dimension from role/assignment (see the
+    // dedicated 'gate blocking' describe block below for gate-specific
+    // coverage) -- pre-approving them here keeps the existing role/
+    // assignment tests focused on exactly what they were written to test.
+    reviewGates: {
+      gate0: { id: 'gate0', approved: true },
+      gate1: { id: 'gate1', approved: true },
+      gate2: { id: 'gate2', approved: true },
+    },
     promptOverrides: [],
     mode: 'simple',
     teamMembers: [],
@@ -271,5 +283,66 @@ describe('getAgentRunPermission', () => {
     const perm = getAgentRunPermission(proj, { userEmail: 'scoped@example.com' }, ARCH);
     expect(perm.canRun).toBe(false);
     expect(perm.isScoped).toBe(true);
+  });
+
+  // 2026-07-20 gate0-bypass fix: getAgentRunPermission previously never
+  // checked gate status, only role/assignment -- so on a brand-new project
+  // (reviewGates: {}) the manual "Run"/"Re-run" buttons let the project
+  // owner run PRD (manager, phase1), Project Charter, and BRD (both
+  // phase1b) immediately, even though gate0 (SDLC Orchestrator plan
+  // approval) hadn't been approved yet. Only the fully-automatic pipeline
+  // run respected gate sequencing. These tests cover the fix directly --
+  // note they use a project WITHOUT the pre-approved gate0/gate1/gate2
+  // from baseProject()'s defaults, since that's the exact "brand-new
+  // project" scenario being fixed.
+  describe('gate blocking (2026-07-20 fix)', () => {
+    const PRD = 'manager' as AgentId;
+    const ORCHESTRATOR = 'sdlcOrchestrator' as AgentId;
+
+    it('blocks the Project Owner from running PRD when gate0 has not been approved', () => {
+      const proj = baseProject({
+        reviewGates: {},
+        teamMembers: [member({ id: 'o-1', email: 'owner@example.com', appRole: 'project_owner' })],
+      });
+      const perm = getAgentRunPermission(proj, { userEmail: 'owner@example.com' }, PRD);
+      expect(perm.canRun).toBe(false);
+      expect(perm.reason).toMatch(/gate 0/i);
+    });
+
+    it('blocks a scoped Editor explicitly assigned to PRD when gate0 has not been approved (gate outranks assignment)', () => {
+      const assignments: AgentAssignment[] = [{ agentId: PRD, memberIds: ['editor-1'] }];
+      const proj = baseProject({
+        reviewGates: {},
+        teamMembers: [scopedEditor({ email: 'scoped@example.com' })],
+        agentAssignments: assignments,
+      });
+      const perm = getAgentRunPermission(proj, { userEmail: 'scoped@example.com' }, PRD);
+      expect(perm.canRun).toBe(false);
+      expect(perm.reason).toMatch(/gate 0/i);
+    });
+
+    it('does NOT block sdlcOrchestrator itself — gate0 fires after phase0, not before it', () => {
+      const proj = baseProject({
+        reviewGates: {},
+        teamMembers: [member({ id: 'o-1', email: 'owner@example.com', appRole: 'project_owner' })],
+      });
+      const perm = getAgentRunPermission(proj, { userEmail: 'owner@example.com' }, ORCHESTRATOR);
+      expect(perm.canRun).toBe(true);
+    });
+
+    it('allows PRD once gate0 is approved', () => {
+      const proj = baseProject({
+        reviewGates: { gate0: { id: 'gate0', approved: true } },
+        teamMembers: [member({ id: 'o-1', email: 'owner@example.com', appRole: 'project_owner' })],
+      });
+      const perm = getAgentRunPermission(proj, { userEmail: 'owner@example.com' }, PRD);
+      expect(perm.canRun).toBe(true);
+    });
+
+    it('adminMode still bypasses an unapproved gate0 (system-level override, unchanged)', () => {
+      const proj = baseProject({ reviewGates: {} });
+      const perm = getAgentRunPermission(proj, { adminMode: true }, PRD);
+      expect(perm.canRun).toBe(true);
+    });
   });
 });

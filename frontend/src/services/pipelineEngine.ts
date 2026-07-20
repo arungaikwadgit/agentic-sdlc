@@ -23,7 +23,7 @@ import { runL3Agent } from './l3Runtime';
 import { syncRunStart, syncRunSucceed, syncRunFail } from './runtimeApi';
 import { updateAgentRun, updateProject, getProject, getProjectAgentMemoryContext, captureProjectAgentMemory } from '@/db/projectRepository';
 import { DEFAULT_MODEL_CATALOG } from '@/agents/modelCatalog';
-import { isAgentSkipped, isInternalAgent } from '@/lib/agentEnablement';
+import { isAgentSkipped, isInternalAgent, GATE_AFTER_PHASE_INDEX, getGateRequiredBeforePhase } from '@/lib/agentEnablement';
 import { applyContextBudget, applyMemoryAwareContextBudget, parseTokenOptimizerBudgets } from '@/agents/contextBudget';
 import { generateClarifyingQuestions, hasMeaningfulClarifyingAnswers } from './clarifyingQuestions';
 import { emitLifecycleEvent } from './lifecycleEvents';
@@ -206,19 +206,10 @@ for (const [gateId, phases] of Object.entries(REVIEW_GATES)) {
   GATE_BEFORE_PHASE[lastPhase] = gateId as ReviewGateId;
 }
 
-// Map gate → which phase follows it
-const GATE_AFTER_PHASE_INDEX: Record<ReviewGateId, number> = {
-  // gate0 blocks the first preflight phase (and everything after) until the
-  // orchestrator plan is approved by a project owner or admin.
-  gate0: PHASE_ORDER.indexOf('phase0a'),
-  gate1: PHASE_ORDER.indexOf('phase2'),
-  gate2: PHASE_ORDER.indexOf('phase3'),
-  gate3: PHASE_ORDER.indexOf('phase4'),
-  // Testing approval gates entry into the Working Prototype phase.
-  gate5: PHASE_ORDER.indexOf('phase6'),
-  // Gate 6 is intentionally inactive. Use -1 so it can never match a real phase index.
-  gate6: -1,
-};
+// GATE_AFTER_PHASE_INDEX moved to lib/agentEnablement.ts (2026-07-20, gate0
+// bypass fix) so getAgentRunPermission (projectAccess.ts) can enforce the
+// exact same gate sequencing for manual per-agent runs that this class
+// already enforces for the automatic pipeline run. Re-imported above.
 
 export class PipelineEngine {
   private projectId: string;
@@ -306,22 +297,7 @@ export class PipelineEngine {
     phaseIndex: number,
     reviewGates: Project['reviewGates'],
   ): ReviewGateId | null {
-    const explicitPendingGate = Object.entries(GATE_AFTER_PHASE_INDEX)
-      .filter(([gateId, gatePhaseIndex]) => {
-        if (gatePhaseIndex < 0 || gatePhaseIndex > phaseIndex) return false;
-        const gate = reviewGates[gateId as ReviewGateId];
-        return gate !== undefined && !gate.approved;
-      })
-      .sort(([, leftIndex], [, rightIndex]) => leftIndex - rightIndex)[0];
-
-    if (explicitPendingGate) return explicitPendingGate[0] as ReviewGateId;
-
-    // Preserve the normal phase-boundary behavior for a gate that has not
-    // been persisted yet (for example the first run reaching Gate 3).
-    for (const [gateId, gatePhaseIndex] of Object.entries(GATE_AFTER_PHASE_INDEX)) {
-      if (gatePhaseIndex === phaseIndex) return gateId as ReviewGateId;
-    }
-    return null;
+    return getGateRequiredBeforePhase(phaseIndex, reviewGates);
   }
 
   private async runPhase(phase: PhaseId): Promise<void> {

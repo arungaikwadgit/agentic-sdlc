@@ -1,6 +1,16 @@
 import type { AppRole, Project, ReviewGateId, TeamMember } from '@/types/project.types';
 import { ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId } from '@/types/agent.types';
+import { getGateBlockingAgent } from '@/lib/agentEnablement';
+
+const GATE_LABELS: Record<ReviewGateId, string> = {
+  gate0: 'Gate 0 (SDLC Orchestrator plan approval)',
+  gate1: 'Gate 1',
+  gate2: 'Gate 2',
+  gate3: 'Gate 3',
+  gate5: 'Gate 5 (Testing approval)',
+  gate6: 'Gate 6',
+};
 
 export interface ProjectAccessContext {
   adminMode?: boolean;
@@ -181,6 +191,11 @@ export function getAgentRunPermission(
   ctx: ProjectAccessContext,
   agentId: AgentId
 ): AgentRunPermissionState {
+  // adminMode is a system-level "break glass" override (used by the app's
+  // own admin tooling, distinct from a project's own project_owner role) --
+  // it bypasses everything, including gates, unchanged from before. This
+  // matches the existing, deliberately-tested "admin mode always allows"
+  // behavior in tests/unit/projectAccess.test.ts.
   if (ctx.adminMode) return { canRun: true, isScoped: false, member: null, reason: null };
 
   const member = getProjectMember(project, ctx);
@@ -190,6 +205,28 @@ export function getAgentRunPermission(
 
   if (!ROLE_PERMISSIONS[member.appRole].canRunAgents) {
     return { canRun: false, isScoped: false, member, reason: 'Your assigned project role cannot run agents.' };
+  }
+
+  // Gate check: role permission alone isn't enough -- a pending gate (e.g.
+  // gate0, SDLC Orchestrator plan approval) blocks every non-adminMode
+  // caller, INCLUDING Project Owners, same as the automatic pipeline run
+  // (see getGateRequiredBeforePhase in lib/agentEnablement.ts). Until
+  // 2026-07-20 this function never checked gate status at all, only role/
+  // assignment, so the manual "Run"/"Re-run" buttons in ProjectWorkspace
+  // let the project owner run PRD/Project Charter/BRD immediately on a new
+  // project even though gate0 hadn't been approved yet -- the exact bug
+  // this closes. Placed after the role-permission checks above (so
+  // "not a member"/"role cannot run agents" keep their own specific
+  // reasons) but before the project_owner/assignment-scoping checks below
+  // (so a gate blocks an owner too, not just scoped editors).
+  const blockingGate = getGateBlockingAgent(project, agentId);
+  if (blockingGate) {
+    return {
+      canRun: false,
+      isScoped: false,
+      member,
+      reason: `${GATE_LABELS[blockingGate]} must be approved before this agent can run.`,
+    };
   }
 
   if (member.appRole === 'project_owner' || !member.agentAccessScoped) {
