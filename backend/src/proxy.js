@@ -437,9 +437,33 @@ async function forwardToServer(req, res) {
 // Forwarded app APIs enforce auth in the dedicated `server/` service.
 // Do not gate them again here with PROXY_TOKEN-only fallback auth, otherwise
 // valid Supabase JWT sessions can be rejected before reaching the real API.
-app.use('/api/projects', forwardToServer);
-app.use('/api/invites', forwardToServer);
-app.use('/api/admin', forwardToServer);
+//
+// 2026-07-20: these three mounts used to live here, BEFORE every extracted
+// router below (including two that share these exact same prefixes --
+// createAdminResetRouter at /api/admin and createChatHistoryRouter at
+// /api/projects). forwardToServer is a terminal handler (every code path
+// either responds directly or forwards+responds; it never calls next()),
+// so with these mounted first, EVERY request under /api/projects/* and
+// /api/admin/* was being fully consumed here -- confirmed via live boot +
+// curl that both createAdminResetRouter's reset-application-data route and
+// createChatHistoryRouter's chat/messages route were unreachable dead code,
+// always getting a 503 "SERVER_API_URL is not configured" (or, when
+// SERVER_API_URL IS configured in production, a blind forward to a path the
+// separate server/ service doesn't implement) instead of ever reaching
+// their real handler. Confirmed pre-existing back to commit ebb6660d, not
+// introduced by today's extraction work.
+//
+// Fix: moved to the END of route registration (just above the final 404
+// handler) instead of touching forwardToServer itself or reordering any
+// extracted router. Express tries mounts in registration order and an
+// Express Router silently falls through (calls next() internally) for any
+// sub-path it has no matching route for -- so every specific route below
+// now gets first chance to match, and anything under /api/projects/*,
+// /api/invites/*, or /api/admin/* that ISN'T one of those specific routes
+// still falls through to forwardToServer exactly as before. Nothing the
+// separate server/ service currently handles loses its forwarding; the fix
+// only stops swallowing the two paths that were never actually implemented
+// there in the first place.
 
 // ── Provider resolution ──────────────────────────────────────────────────────
 // Resolution order: explicit request `provider` -> per-agent routing hint
@@ -1232,6 +1256,22 @@ app.use('/api/invite', inviteRouterExports.router);
 // the route registration itself was still inline.
 const { createUserPreferenceRouter } = require('./routes/userPreferenceRoutes');
 app.use('/api/user-preferences', createUserPreferenceRouter({ getDb: () => dbPool, checkToken, requireAppStateDb }));
+
+// Forwarded app APIs enforce auth in the dedicated `server/` service.
+// Do not gate them again here with PROXY_TOKEN-only fallback auth, otherwise
+// valid Supabase JWT sessions can be rejected before reaching the real API.
+//
+// Relocated here 2026-07-20 (see the long comment where this used to live,
+// right after `httpsGet`/before "── Provider resolution ──") -- moved to
+// the end of route registration, after every extracted router, so
+// forwardToServer only catches whatever none of them matched. Previously
+// mounted first, it fully shadowed createAdminResetRouter (/api/admin) and
+// createChatHistoryRouter (/api/projects) since it's a terminal handler
+// that never calls next(). Unchanged: forwardToServer itself, and every
+// other path it forwards that isn't one of those two newly-local routes.
+app.use('/api/projects', forwardToServer);
+app.use('/api/invites', forwardToServer);
+app.use('/api/admin', forwardToServer);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
