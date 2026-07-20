@@ -16,7 +16,6 @@ const { createChatRouteHandler } = require('./chat/chatRoute');
 const { createChatEvidenceTools } = require('./chat/chatEvidence');
 const { runChatOrchestrator } = require('./chat/chatOrchestrator');
 const { createExternalResearch } = require('./chat/chatExternalResearch');
-const { createUserPreferenceHandlers } = require('./userPreferences');
 const {
   DEFAULT_PROMPT_OPTIMIZATION_SKILL,
   optimizePromptPair,
@@ -357,17 +356,16 @@ function requireAdmin(req, res, next) {
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    model: OPENAI_MODEL,
-    claudeEnabled: ANTHROPIC_ENABLED,
-    claudeModel: ANTHROPIC_ENABLED ? ANTHROPIC_MODEL : null,
-    defaultProvider: DEFAULT_LLM_PROVIDER,
-    proxy: CORP_PROXY || null,
-    ts: Date.now(),
-  });
-});
+// Extracted 2026-07-20 (architecture upgrade Phase 3) to
+// backend/src/routes/health.js -- verbatim, just the mount point here.
+const { createHealthRouter } = require('./routes/health');
+app.use('/api/health', createHealthRouter({
+  openaiModel: OPENAI_MODEL,
+  anthropicEnabled: ANTHROPIC_ENABLED,
+  anthropicModel: ANTHROPIC_MODEL,
+  defaultLlmProvider: DEFAULT_LLM_PROVIDER,
+  corpProxy: CORP_PROXY,
+}));
 
 // Forward selected API surfaces to the separate `server/` backend service.
 // This keeps the frontend pointed at a single proxy URL in production while
@@ -811,118 +809,33 @@ app.use('/api/app-state', createAppStateRouter({
   setPromptOptimizationSkillCache: (next) => { promptOptimizationSkillCache = next; },
 }));
 
-// ── POST /api/admin/reset-application-data ────────────────────────────────
-// Wipes ALL application/user data back to a clean slate — every project,
-// team member, agent run/job, memory record, action proposal, rollback
-// entry, and invite record. Used by the admin panel's "Reset Application
-// Data" button to reset a demo/test environment without a fresh DB.
-//
-// Master reference data (master_phases, master_agents, master_domains,
-// master_role_templates, etc. -- anything seeded by
-// scripts/seedMasterData.js) is NEVER touched by this endpoint. None of
-// the tables listed below are master_* tables, and master_* tables are
-// only ever REFERENCED BY these tables, never the reverse -- so
-// TRUNCATE ... CASCADE here cannot cascade backward into master data even
-// if a future migration adds more application tables that reference these.
-//
-// Admin-only (requireAdmin), AND requires an explicit confirmation string
-// in the body — not just admin auth — since this is a fully destructive,
-// irreversible action with no soft-delete/undo path.
-const APPLICATION_DATA_TABLES = [
-  'agent_runs',
-  'agent_jobs',
-  'memory_records',
-  'action_proposals',
-  'rollback_log',
-  'invite_log',
-  'invite_sessions',
-  'team_members',
-  'projects',
-];
+// Extracted 2026-07-20 (architecture upgrade Phase 3) to
+// backend/src/routes/adminReset.js -- verbatim, just the mount point here.
+// getEnsureInviteSessionTable is a getter (not a direct reference) because
+// ensureInviteSessionTable is destructured from inviteRouterExports further
+// down this file (it's a `const`, so referencing it directly here would hit
+// its temporal dead zone at module-load time); wrapping it in a closure
+// defers that read to actual request time, same as the original inline
+// code's behavior, just across a module boundary now.
+const { createAdminResetRouter } = require('./routes/adminReset');
+app.use('/api/admin', createAdminResetRouter({
+  getDb: () => dbPool,
+  checkToken,
+  requireAdmin,
+  getEnsureInviteSessionTable: () => ensureInviteSessionTable,
+}));
 
-app.post('/api/admin/reset-application-data', checkToken, requireAdmin, async (req, res) => {
-  if (!dbPool) return res.status(503).json({ error: 'Database is unavailable.' });
-
-  const { confirm } = req.body ?? {};
-  if (confirm !== 'RESET') {
-    return res.status(400).json({
-      error:
-        'Confirmation required. Send { "confirm": "RESET" } to proceed. This permanently deletes ' +
-        'all projects, team members, agent runs/jobs, and invite data. Master reference data ' +
-        '(domains, phases, agents, role templates) is not affected.',
-    });
-  }
-
-  try {
-    // Make sure invite_sessions exists before truncating it -- it's created
-    // lazily on first invite-accept, so a fresh/unused environment may not
-    // have it yet.
-    await ensureInviteSessionTable().catch(() => {});
-    await dbPool.query(`TRUNCATE TABLE ${APPLICATION_DATA_TABLES.join(', ')} CASCADE`);
-    const performedBy = req.authUser?.email ?? '(admin-bypass)';
-    console.log(`[admin/reset-application-data] reset by ${performedBy} — tables: ${APPLICATION_DATA_TABLES.join(', ')}`);
-    return res.json({ ok: true, tablesReset: APPLICATION_DATA_TABLES });
-  } catch (err) {
-    console.error('[admin/reset-application-data] failed:', err?.message ?? err);
-    return res.status(500).json({ error: 'Reset failed: ' + (err?.message ?? String(err)) });
-  }
-});
-
-// Public, read-only bootstrap endpoint.
-// The frontend needs this before any sign-in flow completes so it can render
-// the app shell, labels, domains, phases, and role templates.
-app.get('/api/master-data/catalog', async (_req, res) => {
-  try {
-    const catalog = await dbGetMasterCatalog();
-    return res.json(catalog ?? {});
-  } catch (err) {
-    console.error('Master catalog query failed:', err.message);
-    return res.status(500).json({ error: 'Master data catalog is unavailable.' });
-  }
-});
-
-// Admin-only: add a new domain (e.g. "Logistics") or update an existing one's
-// label/color/context. Lets an admin extend the built-in domain list from
-// Settings → Domains without a code deploy.
-app.put('/api/master-data/domains/:id', checkToken, requireAdmin, async (req, res) => {
-  const id = String(req.params.id || '').trim();
-  if (!/^[a-zA-Z][a-zA-Z0-9_-]{1,49}$/.test(id)) {
-    return res.status(400).json({
-      error: 'Domain id must be 2-50 characters, start with a letter, and contain only letters, numbers, "-", or "_".',
-    });
-  }
-  const { label, color, bgColor, context, template } = req.body ?? {};
-  if (!label || typeof label !== 'string' || !label.trim()) {
-    return res.status(400).json({ error: 'label is required.' });
-  }
-  if (!context || typeof context !== 'string' || !context.trim()) {
-    return res.status(400).json({ error: 'context is required.' });
-  }
-  const hexColorRe = /^#[0-9a-fA-F]{6}$/;
-  const colorVal = typeof color === 'string' && hexColorRe.test(color) ? color : '#64748b';
-  const bgColorVal = typeof bgColor === 'string' && hexColorRe.test(bgColor) ? bgColor : '#e2e8f0';
-
-  try {
-    const domain = await dbUpsertDomain({
-      id,
-      label: label.trim(),
-      color: colorVal,
-      bgColor: bgColorVal,
-      context: context.trim(),
-      template: typeof template === 'string' ? template : '',
-    });
-    if (!domain) {
-      return res.status(501).json({
-        error: 'Adding domains requires a direct Postgres connection (POSTGRES_URL configured on the backend). ' +
-          'This deployment does not have one configured, so this write is unavailable.',
-      });
-    }
-    return res.json({ ok: true, domain });
-  } catch (err) {
-    console.error('Domain upsert failed:', err.message);
-    return res.status(500).json({ error: 'Failed to save domain: ' + err.message });
-  }
-});
+// Extracted 2026-07-20 (architecture upgrade Phase 3) to
+// backend/src/routes/masterData.js -- verbatim, just the mount point here.
+// dbGetMasterCatalog/dbUpsertDomain are proxy.js function declarations
+// (hoisted, never reassigned) so they're passed by direct reference.
+const { createMasterDataRouter } = require('./routes/masterData');
+app.use('/api/master-data', createMasterDataRouter({
+  checkToken,
+  requireAdmin,
+  dbGetMasterCatalog,
+  dbUpsertDomain,
+}));
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1459,8 +1372,8 @@ async function authorizeAgentRun(req, res, { projectId, agentId }) {
 // architecture-upgrade-execution-plan.md. Function bodies are verbatim in
 // the new file; this is just the mount point. dbPool is passed as a getter
 // (not a snapshot) since it can be reassigned to null asynchronously after
-// startup if the initial DB connection check fails -- same pattern already
-// used a few lines below for createUserPreferenceHandlers.
+// startup if the initial DB connection check fails -- same pattern used by
+// every route module mounted in this file.
 // ══════════════════════════════════════════════════════════════════════════════
 const { createInviteRouter } = require('./routes/inviteRoutes');
 const inviteRouterExports = createInviteRouter({
@@ -1474,15 +1387,12 @@ const inviteRouterExports = createInviteRouter({
 const { hashInviteToken, isInviteExpired, appRoleRank, sendInviteEmail, getGmailTransporter, ensureInviteSessionTable } = inviteRouterExports;
 app.use('/api/invite', inviteRouterExports.router);
 
-const userPreferenceHandlers = createUserPreferenceHandlers({ getDb: () => dbPool });
-app.get('/api/user-preferences/dashboard-view', checkToken, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  return userPreferenceHandlers.getDashboardView(req, res);
-});
-app.put('/api/user-preferences/dashboard-view', checkToken, async (req, res) => {
-  if (!await requireAppStateDb(res)) return;
-  return userPreferenceHandlers.putDashboardView(req, res);
-});
+// Extracted 2026-07-20 (architecture upgrade Phase 3) to
+// backend/src/routes/userPreferenceRoutes.js -- verbatim, just the mount
+// point here. The handler logic already lived in ./userPreferences; only
+// the route registration itself was still inline.
+const { createUserPreferenceRouter } = require('./routes/userPreferenceRoutes');
+app.use('/api/user-preferences', createUserPreferenceRouter({ getDb: () => dbPool, checkToken, requireAppStateDb }));
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
