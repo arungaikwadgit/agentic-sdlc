@@ -646,6 +646,32 @@ app.use('/api/prompt-governance', createPromptGovernanceRouter({
   fanOutRuntimeLifecycleEvent,
 }));
 
+// AI Governance MVP-0 (2026-07-21) -- see
+// docs/architecture/govern-ai-gap-assessment-and-implementation-plan.md.
+// governance.js persists the aiGovernance agent's structured decision,
+// findings, and human overrides, and auto-creates backlog items;
+// agentControls.js is the admin-only global/per-project agent kill
+// switch. resolveAgentKillSwitch is required here (rather than only
+// inside agentControls.js's own router factory) because authorizeAgentRun
+// below -- defined much further down this file, but only ever CALLED at
+// request time, long after this module finishes loading top to bottom --
+// needs to call it directly, not through an HTTP round-trip to this
+// router.
+const { createGovernanceRouter } = require('./routes/governance');
+app.use('/api/governance', createGovernanceRouter({
+  getDb: () => dbPool,
+  checkToken,
+  isConfiguredAdminEmail,
+  getCallerAppRoleForProject,
+}));
+
+const { createAgentControlsRouter, resolveAgentKillSwitch } = require('./routes/agentControls');
+app.use('/api/agent-controls', createAgentControlsRouter({
+  getDb: () => dbPool,
+  checkToken,
+  requireAdmin,
+}));
+
 
 // App State (config / integrations / backlog-items) route group extracted
 // 2026-07-20 (architecture upgrade Phase 3g) to
@@ -1183,6 +1209,31 @@ async function authorizeAgentRun(req, res, { projectId, agentId }) {
   // Connection", the Risk Register suggestion helper, chat-widget prompts)
   // are out of scope for this feature and unaffected.
   if (!projectId || !agentId) return { ok: true, skipped: true };
+
+  // AI Governance MVP-0 (2026-07-21), decision 2: kill-switch check runs
+  // BEFORE the admin-bypass/admin-email checks below. That ordering is
+  // deliberate and different from the per-agent access-scoping check
+  // further down this function -- access scoping is about who's allowed
+  // to run an agent (admins are always exempt from that), but a kill
+  // switch is about whether the agent runs AT ALL. An app admin's own
+  // disable decision must still block that same app admin, or the
+  // "switch" is theater. Fails open on a missing dbPool or a resolution
+  // error, matching this function's existing defense-in-depth posture for
+  // the scoping check below (a DB hiccup must not take down agent
+  // execution entirely -- this is on top of the frontend gate, not the
+  // sole gate).
+  if (dbPool) {
+    const killSwitch = await resolveAgentKillSwitch({ getDb: () => dbPool, projectId, agentId }).catch((err) => {
+      console.warn(`[authorizeAgentRun] kill-switch resolution failed — failing open (project=${projectId}, agent=${agentId}):`, err.message);
+      return { disabled: false, source: 'error' };
+    });
+    if (killSwitch.disabled) {
+      res.status(403).json({
+        error: `This agent has been disabled${killSwitch.source === 'project' ? ' for this project' : ''} by an admin and cannot be run right now.`,
+      });
+      return { ok: false };
+    }
+  }
 
   if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
     return { ok: true, skipped: true };
