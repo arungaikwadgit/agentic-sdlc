@@ -58,6 +58,31 @@ function createPromptGovernanceRouter({
     return req.authUser?.email ?? (req.authUser?.adminBypass ? 'admin-bypass' : null);
   }
 
+  // Bug fix (2026-07-20): requireAppStateDb() fails OPEN when dbPool is null
+  // -- that's correct for appState.js/userPreferenceRoutes.js, which both
+  // have a real in-memory fallback (appStateStore) or their own explicit
+  // 503 check for the no-DB case. Prompt governance has neither -- every
+  // helper below (nextPromptVersion/getActivePromptVersion/
+  // insertPromptVersion/activatePromptVersion) calls getDb() and immediately
+  // does dbPool.query(...) with no null guard, so a null dbPool previously
+  // reached this file as an uncaught `TypeError: Cannot read properties of
+  // null (reading 'query')` deep inside those helpers instead of a clean
+  // error response. This is a local, additional guard -- requireAppStateDb
+  // itself is untouched (it still does real, necessary work: ensuring the
+  // prompt-governance tables exist via ensurePromptGovernanceTables() when a
+  // DB *is* configured) -- this just closes the gap for when one isn't.
+  function requirePromptGovernanceDb(res) {
+    const dbPool = getDb();
+    if (!dbPool) {
+      res.status(503).json({
+        error: 'Prompt governance requires a configured database connection (POSTGRES_URL). ' +
+          'This deployment does not have one configured, so this action is unavailable.',
+      });
+      return null;
+    }
+    return dbPool;
+  }
+
   async function authorizePromptOwnerAction(req, res, { projectId }) {
     if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
       return { ok: true, callerEmail: null, callerRole: 'admin' };
@@ -256,6 +281,7 @@ function createPromptGovernanceRouter({
 
   router.get('/effective', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });
@@ -277,6 +303,7 @@ function createPromptGovernanceRouter({
 
   router.get('/versions', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });
@@ -292,6 +319,7 @@ function createPromptGovernanceRouter({
 
   router.post('/global/:agentId', checkToken, requireAdmin, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const agentId = String(req.params.agentId ?? '').trim();
     const content = String(req.body?.content ?? '').trim();
     if (!agentId || !content) return res.status(400).json({ error: 'agentId and content are required.' });
@@ -317,6 +345,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/draft', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -347,6 +376,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/activate', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -379,6 +409,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/:versionId/submit', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId, versionId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -400,6 +431,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/:versionId/approve', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId, versionId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -427,6 +459,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/:versionId/activate', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId, versionId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -445,6 +478,7 @@ function createPromptGovernanceRouter({
 
   async function reviewPromptVersion(req, res, nextStatus, actorColumn, timestampColumn) {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId, versionId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -483,6 +517,7 @@ function createPromptGovernanceRouter({
 
   router.post('/project/:projectId/:agentId/:versionId/rollback', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const { projectId, agentId, versionId } = req.params;
     const auth = await authorizePromptOwnerAction(req, res, { projectId });
     if (!auth.ok) return;
@@ -516,6 +551,7 @@ function createPromptGovernanceRouter({
 
   router.post('/seed/global', checkToken, requireAdmin, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const prompts = Array.isArray(req.body?.prompts) ? req.body.prompts : [];
     if (prompts.length === 0 || prompts.length > 100) {
       return res.status(400).json({ error: 'prompts must contain between 1 and 100 entries.' });
@@ -544,6 +580,7 @@ function createPromptGovernanceRouter({
 
   router.get('/audit', checkToken, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
+    if (!requirePromptGovernanceDb(res)) return;
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });

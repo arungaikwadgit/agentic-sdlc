@@ -5,10 +5,19 @@ export {};
 //
 // promptGovernance.js's internal helpers (nextPromptVersion,
 // getActivePromptVersion, insertPromptVersion, activatePromptVersion) all
-// call `getDb().query(...)` directly with NO null-pool guard, so getDb()
-// must always return a truthy mock pool in these tests -- see the report
-// for why a real getDb()-null path here is untestable without hanging the
-// request (no try/catch anywhere in this file, see below).
+// call `getDb().query(...)` directly with NO null-pool guard of their own.
+// The route handlers guard against this explicitly via the local
+// requirePromptGovernanceDb(res) helper (added 2026-07-20, see the big
+// comment above authorizePromptOwnerAction in promptGovernance.js), which
+// is called right after requireAppStateDb() in every route. Since
+// requireAppStateDb() intentionally fails OPEN when the DB pool is null
+// (correct behavior for appState.js/userPreferenceRoutes.js, which have
+// real fallbacks -- wrong for this file, which has none), the
+// "getDb() returns null but requireAppStateDb still resolves true" case
+// below is the regression scenario the fix targets: before the fix this
+// combination reached a bare `dbPool.query(...)` on a null dbPool and threw
+// an uncaught TypeError instead of responding; now it must cleanly return
+// 503 with a JSON error body.
 
 const express = require('express');
 const { createPromptGovernanceRouter } = require('./promptGovernance');
@@ -116,6 +125,25 @@ async function withServer(overrides: any, fn: (ctx: any) => Promise<void>) {
   }
 }
 
+// Regression fixture for the 2026-07-20 fix: simulates a genuinely
+// unavailable DB pool (getDb() -> null) combined with requireAppStateDb's
+// real fail-open behavior (it resolves true even when dbPool is null,
+// because that's correct for the OTHER route files that share it). Every
+// route below must catch this via requirePromptGovernanceDb and respond
+// with a clean 503 JSON body instead of throwing when a downstream helper
+// calls `dbPool.query(...)` on the null pool.
+const NULL_DB_DEPS = {
+  getDb: () => null,
+  requireAppStateDb: async () => true,
+};
+
+async function expectCleanNullDb503(res: Response) {
+  expect(res.status).toBe(503);
+  const body: any = await res.json();
+  expect(typeof body.error).toBe('string');
+  expect(body.error.length).toBeGreaterThan(0);
+}
+
 describe('promptGovernance routes', () => {
   describe('GET /effective', () => {
     it('returns 400 when agentId is missing', async () => {
@@ -188,6 +216,13 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(503);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/effective?agentId=agentA`);
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('GET /versions', () => {
@@ -217,6 +252,13 @@ describe('promptGovernance routes', () => {
       await withServer({ requireAppStateDb }, async ({ baseUrl }) => {
         const res = await fetch(`${baseUrl}/versions?agentId=agentA`);
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/versions?agentId=agentA`);
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -289,6 +331,17 @@ describe('promptGovernance routes', () => {
           body: JSON.stringify({ content: 'x' }),
         });
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/global/agentA`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: 'x' }),
+        });
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -385,6 +438,17 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(503);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: 'x' }),
+        });
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('POST /project/:projectId/:agentId/activate', () => {
@@ -455,6 +519,17 @@ describe('promptGovernance routes', () => {
           body: JSON.stringify({ content: 'x' }),
         });
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/activate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: 'x' }),
+        });
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -532,6 +607,17 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(503);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v1/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('POST /project/:projectId/:agentId/:versionId/approve', () => {
@@ -590,6 +676,17 @@ describe('promptGovernance routes', () => {
           body: JSON.stringify({}),
         });
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v1/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -653,6 +750,17 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(503);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v1/activate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('POST /project/:projectId/:agentId/:versionId/reject', () => {
@@ -698,6 +806,17 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(409);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v1/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('POST /project/:projectId/:agentId/:versionId/changes-requested', () => {
@@ -729,6 +848,17 @@ describe('promptGovernance routes', () => {
           body: JSON.stringify({}),
         });
         expect(res.status).toBe(404);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v1/changes-requested`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -795,6 +925,17 @@ describe('promptGovernance routes', () => {
           body: JSON.stringify({}),
         });
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/project/proj-1/agentA/v-old/rollback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        await expectCleanNullDb503(res);
       });
     });
   });
@@ -888,6 +1029,17 @@ describe('promptGovernance routes', () => {
         expect(res.status).toBe(503);
       });
     });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/seed/global`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompts: [{ agentId: 'a', content: 'x' }] }),
+        });
+        await expectCleanNullDb503(res);
+      });
+    });
   });
 
   describe('GET /audit', () => {
@@ -917,6 +1069,13 @@ describe('promptGovernance routes', () => {
       await withServer({ requireAppStateDb }, async ({ baseUrl }) => {
         const res = await fetch(`${baseUrl}/audit?agentId=agentA`);
         expect(res.status).toBe(503);
+      });
+    });
+
+    it('returns a clean 503 (not a crash) when the DB pool is null but requireAppStateDb fails open', async () => {
+      await withServer(NULL_DB_DEPS, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/audit?agentId=agentA`);
+        await expectCleanNullDb503(res);
       });
     });
   });
