@@ -15,9 +15,11 @@ import {
   subscribeAppStateChange,
   updateBacklogItem,
 } from '@/services/appStateApi';
+import { listProjectRecords } from '@/db/projectRepository';
 
 // ── Seed data: all skipped/deferred enhancements from our sessions ────────────
 const SEED_ITEMS: Omit<BacklogItem, 'id' | 'createdAt' | 'updatedAt'>[] = [
+  { title: 'Voice-activated instructions for agent re-runs', description: 'Add a microphone control to the agent re-run panel so users can dictate additional instructions. Convert speech into editable text, require explicit confirmation before execution, append only the confirmed transcript to the re-run prompt, preserve typed-input fallback, and never persist raw audio.', category: 'ux', priority: 'high', status: 'open', source: 'admin-added', notes: 'Acceptance: permission and unsupported-browser handling; visible listening, transcribing, and error states; keyboard and screen-reader support; editable transcript; no automatic submit; no raw-audio persistence; transcript length limits; unit and E2E coverage.' },
   { title: 'Supabase Realtime subscriptions for live team collaboration', description: 'Use Supabase Realtime to push project/agent-run updates to all connected team members in real time, replacing the current polling approach.', category: 'feature', priority: 'high', status: 'open', source: 'ai-suggested' },
   { title: 'GitHub Actions CD — auto-deploy on push to main', description: 'Add a CD job to .github/workflows/ci.yml that deploys to Railway (backend) and Vercel (frontend) on every push to main after tests pass.', category: 'devops', priority: 'high', status: 'open', source: 'assessment' },
   { title: 'Playwright E2E full test suite', description: 'Complete the e2e test suite: project CRUD, pipeline run, agent re-run, team invite flow, review gate approval, admin panel access. Currently only auth tests exist.', category: 'testing', priority: 'high', status: 'open', source: 'assessment' },
@@ -70,9 +72,11 @@ const STATUS_LABELS: Record<BacklogItem['status'], string> = {
 // ── Seeder (runs once when table is empty) ─────────────────────────────────────
 async function seedBacklogIfEmpty() {
   const items = await listBacklogItems();
-  if (items.length > 0) return;
+  const voiceItemTitle = 'Voice-activated instructions for agent re-runs';
+  if (items.length > 0 && !(items.length === 1 && items[0]?.title === voiceItemTitle)) return;
+  const existingTitles = new Set(items.map((item) => item.title));
   const now = Date.now();
-  await Promise.all(SEED_ITEMS.map((item) => createBacklogItem({
+  await Promise.all(SEED_ITEMS.filter((item) => !existingTitles.has(item.title)).map((item) => createBacklogItem({
     ...item,
     id: nanoid(),
     createdAt: now,
@@ -138,6 +142,24 @@ export default function BacklogTab() {
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState('');
   const [allItems, setAllItems] = useState<BacklogItem[]>([]);
+  // AI Governance MVP-0 (2026-07-21): admin_backlog_items is a global list,
+  // but governance-sourced items (source === 'governance') now carry a
+  // projectId (migration 014_governance_backlog_project_scope.sql) -- this
+  // map resolves that id to a readable project name so those items are
+  // actually traceable back to the project that produced them, not just a
+  // raw UUID. Best-effort: failure to load leaves the map empty and items
+  // just show their bare projectId instead of a name.
+  const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let active = true;
+    listProjectRecords()
+      .then((projects) => {
+        if (!active) return;
+        setProjectNames(Object.fromEntries(projects.map((p) => [p.id, p.name])));
+      })
+      .catch(() => { /* best-effort — see comment above */ });
+    return () => { active = false; };
+  }, []);
 
   // Seed on first mount
   useEffect(() => { seedBacklogIfEmpty(); }, []);
@@ -269,7 +291,22 @@ export default function BacklogTab() {
                   <span style={{ ...pill, background: item.status === 'done' ? '#10b98122' : item.status === 'in-progress' ? '#0ea5e922' : item.status === 'archived' ? '#94a3b822' : '#6366f122', color: item.status === 'done' ? '#10b981' : item.status === 'in-progress' ? '#0ea5e9' : item.status === 'archived' ? '#94a3b8' : '#6366f1', border: '1px solid currentColor' }}>
                     {STATUS_LABELS[item.status]}
                   </span>
-                  <span style={{ ...pill, background: 'var(--surface2)', color: 'var(--text-muted)', fontSize: 10 }}>{item.source}</span>
+                  <span
+                    style={{
+                      ...pill,
+                      background: item.source === 'governance' ? '#8b5cf622' : 'var(--surface2)',
+                      color: item.source === 'governance' ? '#8b5cf6' : 'var(--text-muted)',
+                      border: item.source === 'governance' ? '1px solid #8b5cf644' : undefined,
+                      fontSize: 10,
+                    }}
+                  >
+                    {item.source === 'governance' ? '🛡 governance' : item.source}
+                  </span>
+                  {item.projectId && (
+                    <span style={{ ...pill, background: 'var(--surface2)', color: 'var(--text-muted)', fontSize: 10 }}>
+                      {projectNames[item.projectId] ?? item.projectId}
+                    </span>
+                  )}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                     <select
                       style={{ ...sel, fontSize: 11, padding: '2px 6px' }}

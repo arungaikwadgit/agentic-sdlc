@@ -137,6 +137,14 @@ const CreateProjectSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().optional(),
   domain: z.string().optional(),
+  // AI Governance MVP-0 (2026-07-21, decision 3) -- see
+  // govern-ai-gap-assessment-and-implementation-plan.md. A real column
+  // (migration 013_ai_governance_mvp.sql), matching `domain`'s own
+  // shape/storage -- NOT part of the `data` JSONB blob like techStack
+  // below. Capped at 3: this is soft/prompt-context only for MVP-0, not a
+  // deterministic control-pack lookup, so an unbounded list would just be
+  // noise in every downstream agent's prompt.
+  secondaryDomains: z.array(z.string()).max(3, 'Up to 3 secondary domains.').optional(),
   techStack: z.string().optional(),
   data: z.record(z.unknown()).optional(),
 });
@@ -490,6 +498,10 @@ router.post('/', requireAuth, async (req, res) => {
         name: body.name,
         description: body.description ?? '',
         domain: body.domain ?? '',
+        // AI Governance MVP-0 (2026-07-21): real column, not part of `data`
+        // above -- omitting the key entirely (rather than sending `[]`)
+        // when absent lets the column's own DB default ('{}') apply.
+        ...(body.secondaryDomains !== undefined ? { secondary_domains: body.secondaryDomains } : {}),
         status: 'draft',
         owner_id: userId,
         data: projectData,
@@ -564,9 +576,22 @@ router.patch('/:id', requireAuth, requireProjectRole('project_owner'), async (re
       ...pickArchiveFields(existing.data as Record<string, unknown> | null),
     };
 
+    // AI Governance MVP-0 (2026-07-21): secondaryDomains must NOT ride along
+    // in the `...rest` spread below -- the real column is `secondary_domains`
+    // (snake_case), and this route sends whatever's left of `body` straight
+    // to PostgREST as column names. Left in, a camelCase `secondaryDomains`
+    // key would be rejected as an unknown column on every single project
+    // update, not just ones that touch domains.
+    const { secondaryDomains, ...rest } = body;
+
     const { data, error } = await supabaseAdmin
       .from('projects')
-      .update({ ...body, data: mergedData, updated_at: new Date().toISOString() })
+      .update({
+        ...rest,
+        ...(secondaryDomains !== undefined ? { secondary_domains: secondaryDomains } : {}),
+        data: mergedData,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', req.params.id)
       .select()
       .single();

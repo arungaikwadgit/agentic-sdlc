@@ -196,4 +196,60 @@ describeOrSkip('per-agent access scoping (authorizeAgentRun, integration, real P
     expect(result.ok).toBe(false);
     expect(res._status).toBe(403);
   });
+
+  // AI Governance MVP-0 (2026-07-21) — kill-switch ordering
+  // (backend/src/routes/agentControls.js's resolveAgentKillSwitch(), called
+  // from authorizeAgentRun() before the admin-bypass/admin-email checks
+  // below it — see that function's own comment for why). Uses a dedicated,
+  // never-reused agentId so a leftover row can never affect any other test
+  // in this file (agent_global_settings/project_agent_overrides are not
+  // deleted by this file's own afterEach, which only clears `projects`) —
+  // each test cleans up its own row explicitly in a try/finally.
+  describe('kill switch (resolveAgentKillSwitch integration via authorizeAgentRun)', () => {
+    const KILL_SWITCH_AGENT = 'killSwitchTestAgent';
+
+    it('blocks even an admin-bypass caller when the agent is globally disabled — a kill switch an admin can silently bypass is not a real kill switch', async () => {
+      await dbAdmin.query(
+        `INSERT INTO agent_global_settings (agent_id, disabled) VALUES ($1, TRUE)
+         ON CONFLICT (agent_id) DO UPDATE SET disabled = TRUE`,
+        [KILL_SWITCH_AGENT],
+      );
+      try {
+        const { req, res } = fakeReqRes(null, { adminBypass: true });
+        const result = await authorizeAgentRun(req, res, { projectId, agentId: KILL_SWITCH_AGENT });
+        expect(result.ok).toBe(false);
+        expect(res._status).toBe(403);
+        expect(res._body.error).toMatch(/disabled/i);
+      } finally {
+        await dbAdmin.query(`DELETE FROM agent_global_settings WHERE agent_id = $1`, [KILL_SWITCH_AGENT]);
+      }
+    });
+
+    it('a per-project override (explicitly enabled) wins over a global disable', async () => {
+      await dbAdmin.query(
+        `INSERT INTO agent_global_settings (agent_id, disabled) VALUES ($1, TRUE)
+         ON CONFLICT (agent_id) DO UPDATE SET disabled = TRUE`,
+        [KILL_SWITCH_AGENT],
+      );
+      await dbAdmin.query(
+        `INSERT INTO project_agent_overrides (project_id, agent_id, disabled) VALUES ($1, $2, FALSE)
+         ON CONFLICT (project_id, agent_id) DO UPDATE SET disabled = FALSE`,
+        [projectId, KILL_SWITCH_AGENT],
+      );
+      try {
+        const { req, res } = fakeReqRes(OWNER_EMAIL);
+        const result = await authorizeAgentRun(req, res, { projectId, agentId: KILL_SWITCH_AGENT });
+        expect(result.ok).toBe(true);
+      } finally {
+        await dbAdmin.query(`DELETE FROM agent_global_settings WHERE agent_id = $1`, [KILL_SWITCH_AGENT]);
+        await dbAdmin.query(`DELETE FROM project_agent_overrides WHERE project_id = $1 AND agent_id = $2`, [projectId, KILL_SWITCH_AGENT]);
+      }
+    });
+
+    it('is a no-op (not disabled) when no row exists for the agent at all — matches every other enabled-by-default flag in this codebase', async () => {
+      const { req, res } = fakeReqRes(OWNER_EMAIL);
+      const result = await authorizeAgentRun(req, res, { projectId, agentId: KILL_SWITCH_AGENT });
+      expect(result.ok).toBe(true);
+    });
+  });
 });

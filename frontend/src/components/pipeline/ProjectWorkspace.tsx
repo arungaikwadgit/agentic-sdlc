@@ -33,6 +33,7 @@ import { checkPromptInjection } from '@/utils/sanitize';
 import { activateProjectPromptOverride, getGovernedEffectivePrompt } from '@/services/promptGovernance';
 import { exportAllArtifactsZip } from '@/services/exporters/documentExporter';
 import { exportPipelineMetricsXlsx } from '@/services/exporters/excelExporter';
+import { fetchGovernanceStatus, DECISION_LABELS, DECISION_COLORS, type GovernanceStatus } from '@/services/governanceStatus';
 import { getDownstreamDependents } from '@/agents/dependencyGraph';
 import { getInviteSession } from '@/services/inviteSession';
 import { getProjectExportPermission, getProjectMember, isProjectAdminUser, getAgentRunPermission } from '@/lib/projectAccess';
@@ -222,6 +223,27 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
       return next;
     });
   }, []);
+  // AI Governance MVP-0 (2026-07-21, decision 4) -- persistent risk-tier +
+  // open-findings badge in the workspace header, visible to every project
+  // member at any time (decision 8), reading from the same
+  // governance_decision/governance_finding data the gate0 modal's badge
+  // uses. Re-fetched whenever the project's aiGovernance run changes (see
+  // effect below), not just once on mount, so re-running the agent updates
+  // the badge without a full page reload.
+  const [governanceStatus, setGovernanceStatus] = useState<GovernanceStatus | null>(null);
+  useEffect(() => {
+    if (!project?.id) return;
+    let cancelled = false;
+    fetchGovernanceStatus(project.id).then((status) => {
+      if (!cancelled) setGovernanceStatus(status);
+    });
+    return () => { cancelled = true; };
+    // project.agentRuns.aiGovernance?.completedAt changing is what actually
+    // signals "a new assessment might exist" -- re-keying on the whole
+    // project object would refetch on every unrelated field edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, project?.agentRuns.aiGovernance?.completedAt]);
+
   const [pendingGate, setPendingGate] = useState<ReviewGateId | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [showTeamWarning, setShowTeamWarning] = useState(false);
@@ -1105,6 +1127,30 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
         <div className={styles.projectInfo}>
           <h2>{project.name}</h2>
           <span className={styles.modeBadge}>{project.mode === 'expert' ? 'Expert' : 'Simple'}</span>
+          {/* AI Governance MVP-0 (2026-07-21, decisions 4 + 8): persistent,
+              always-visible badge -- not gated to owner/admin, not only
+              shown at gate0. Absent entirely until aiGovernance has run at
+              least once for this project (governanceStatus.decision null). */}
+          {governanceStatus?.decision && (
+            <span
+              title={
+                governanceStatus.decision.decision_reason
+                  ?? `${DECISION_LABELS[governanceStatus.decision.decision]} — risk tier ${governanceStatus.decision.risk_tier}`
+              }
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                padding: '2px 8px',
+                borderRadius: 10,
+                color: DECISION_COLORS[governanceStatus.decision.decision],
+                border: `1px solid ${DECISION_COLORS[governanceStatus.decision.decision]}`,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              AI Gov: {DECISION_LABELS[governanceStatus.decision.decision]}
+              {governanceStatus.openFindingsCount > 0 ? ` · ${governanceStatus.openFindingsCount} open` : ''}
+            </span>
+          )}
         </div>
         <div className={styles.topbarActions}>
           {/* U1 — pipeline progress counter */}

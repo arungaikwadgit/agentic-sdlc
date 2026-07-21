@@ -2,13 +2,20 @@
  * © 2026 Arun Gaikwad. All rights reserved.
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import { getEffectivePromptDefault } from '@/agents/promptDefaults';
 import { REVIEW_GATES, PHASE_LABELS, PHASE_AGENTS } from '@/agents/constants';
 import { getDomain } from '@/agents/domains';
 import { updateAgentRun, updateProject } from '@/db/projectRepository';
-import { api } from '@/services/api';
+import { api, getAuthHeader } from '@/services/api';
+import {
+  fetchGovernanceStatus,
+  governanceApiBase,
+  DECISION_LABELS,
+  DECISION_COLORS,
+  type GovernanceStatus,
+} from '@/services/governanceStatus';
 import { checkPromptInjection } from '@/utils/sanitize';
 import { activateProjectPromptOverride } from '@/services/promptGovernance';
 import { buildTeamRoster } from '@/data/roleTemplates';
@@ -114,6 +121,61 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
   // gating and Spec/Diagram tab pattern already used in ProjectWorkspace.tsx,
   // now also available in the review gate modal (2026-07-17).
   const [showDiagram, setShowDiagram] = useState(false);
+
+  // AI Governance MVP-0 (2026-07-21, decisions 1 + 5) -- only fetched for
+  // gate0, the one gate this feature attaches enforcement to. Other gates
+  // (gate1+) are unaffected.
+  const [governanceStatus, setGovernanceStatus] = useState<GovernanceStatus | null>(null);
+  const [governanceLoaded, setGovernanceLoaded] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (gateId !== 'gate0') return;
+    let cancelled = false;
+    setGovernanceLoaded(false);
+    fetchGovernanceStatus(project.id).then((status) => {
+      if (!cancelled) {
+        setGovernanceStatus(status);
+        setGovernanceLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [gateId, project.id]);
+
+  const isGovernanceBlocked = gateId === 'gate0' && governanceStatus?.decision?.decision === 'blocked';
+  const hasGovernanceOverride = !!governanceStatus?.override;
+  // Fail OPEN if the fetch itself failed (governanceLoaded stays true, status
+  // null) or is still in flight -- this is advisory/defense-in-depth on top
+  // of a human already reviewing the artifact in this modal, not the only
+  // thing standing between a bad decision and Gate 0, so a governance-API
+  // hiccup must not make Gate 0 impossible to pass entirely.
+  const governanceBlocksApprove = isGovernanceBlocked && !hasGovernanceOverride;
+
+  async function submitGovernanceOverride() {
+    if (!overrideReason.trim()) return;
+    setOverrideSubmitting(true);
+    setOverrideError(null);
+    try {
+      const resp = await fetch(`${governanceApiBase()}/governance/${project.id}/override`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
+        body: JSON.stringify({ reason: overrideReason.trim() }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        setOverrideError(body.error ?? `Override failed (${resp.status}).`);
+        return;
+      }
+      const refreshed = await fetchGovernanceStatus(project.id);
+      setGovernanceStatus(refreshed);
+    } catch (err) {
+      setOverrideError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOverrideSubmitting(false);
+    }
+  }
 
   const members = project.teamMembers ?? [];
   const gateAssignees = getGateAssignees(project, agents);
@@ -420,11 +482,20 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
                 {!effectiveApprovedById && (
                   <span className={styles.actionRequiredHint}>* Select approver to continue</span>
                 )}
+                {governanceBlocksApprove && (
+                  <span className={styles.actionRequiredHint} style={{ color: DECISION_COLORS.blocked }}>
+                    🚫 AI Governance decision is Blocked — override with a reason below to enable Approve
+                  </span>
+                )}
                 <button
                   className="btn-primary"
                   onClick={() => onApprove(notes, effectiveApprovedById || undefined)}
-                  disabled={!effectiveApprovedById}
-                  title={!effectiveApprovedById ? 'Select who is approving before continuing.' : undefined}
+                  disabled={!effectiveApprovedById || governanceBlocksApprove}
+                  title={
+                    governanceBlocksApprove
+                      ? 'The AI Governance decision for this project is Blocked. An App Admin or the Project Owner must override it (with a reason) before this gate can be approved.'
+                      : !effectiveApprovedById ? 'Select who is approving before continuing.' : undefined
+                  }
                 >
                   Approve &amp; Continue ›
                 </button>
@@ -432,6 +503,87 @@ export default function ReviewGateModal({ gateId, project, onApprove, onReject, 
             )}
           </div>
         </div>
+
+        {/* AI Governance decision banner (gate0 only) -- see decisions 1 + 4.
+            Deliberately its own row, not squeezed into the header actions,
+            since findings + an override text field need real room. */}
+        {gateId === 'gate0' && governanceLoaded && governanceStatus?.decision && (
+          <div style={{ padding: '10px 20px', borderBottom: '1px solid var(--border, #2a2a3a)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  fontWeight: 600,
+                  fontSize: 12,
+                  padding: '3px 10px',
+                  borderRadius: 12,
+                  color: DECISION_COLORS[governanceStatus.decision.decision],
+                  border: `1px solid ${DECISION_COLORS[governanceStatus.decision.decision]}`,
+                }}
+              >
+                AI Governance: {DECISION_LABELS[governanceStatus.decision.decision]}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Risk: {governanceStatus.decision.risk_tier}
+                {governanceStatus.decision.confidence != null ? ` · Confidence ${governanceStatus.decision.confidence}%` : ''}
+                {' · '}{governanceStatus.openFindingsCount} open finding{governanceStatus.openFindingsCount === 1 ? '' : 's'}
+              </span>
+              {hasGovernanceOverride && governanceStatus.override && (
+                <span style={{ fontSize: 12, color: 'var(--accent)' }}>
+                  ✓ Overridden by {governanceStatus.override.actor_email} ({governanceStatus.override.actor_role})
+                </span>
+              )}
+            </div>
+
+            {governanceStatus.decision.decision_reason && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{governanceStatus.decision.decision_reason}</p>
+            )}
+
+            {/* Conditions checklist -- decision 1: Approved with Conditions
+                and Human Review Required render findings as a checklist,
+                non-blocking. */}
+            {governanceStatus.findings.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text-muted)' }}>
+                {governanceStatus.findings.slice(0, 5).map((f) => (
+                  <li key={f.id}>
+                    <strong>{f.severity}</strong> — {f.gap ?? f.control_id}
+                    {f.recommendation ? ` → ${f.recommendation}` : ''}
+                  </li>
+                ))}
+                {governanceStatus.findings.length > 5 && (
+                  <li>+ {governanceStatus.findings.length - 5} more (see the admin Governance tab)</li>
+                )}
+              </ul>
+            )}
+
+            {/* Override control -- decision 5: App Admin or Project Owner
+                only. Reusing canActOnGate rather than a second permission
+                check: gate0's own permission rule (see getReviewGatePermission
+                above) already restricts gate0 interaction to exactly that
+                same pair of roles. The backend independently re-validates
+                authority regardless of what this UI shows. */}
+            {isGovernanceBlocked && !hasGovernanceOverride && canActOnGate && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Reason for overriding this Blocked decision (required, logged)"
+                  style={{ flex: 1, minWidth: 260, fontSize: 12, padding: '4px 8px' }}
+                />
+                <button
+                  className="btn-secondary"
+                  onClick={submitGovernanceOverride}
+                  disabled={overrideSubmitting || !overrideReason.trim()}
+                >
+                  {overrideSubmitting ? 'Overriding...' : 'Override & Enable Approve'}
+                </button>
+              </div>
+            )}
+            {overrideError && (
+              <p style={{ fontSize: 12, color: 'var(--error)', margin: 0 }}>⚠ {overrideError}</p>
+            )}
+          </div>
+        )}
 
         <div className={styles.body}>
           {/* Agent list */}

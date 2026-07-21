@@ -332,6 +332,10 @@ export interface AgentPromptContext {
   projectDescription: string;
   domain: string;
   domainContext: string;
+  /** AI Governance MVP-0 (2026-07-21, decision 3) -- see Project.secondaryDomains.
+   *  Additional LLM-visible domain context only; not used for any
+   *  deterministic control-pack lookup yet. */
+  secondaryDomains?: string[];
   /** Outputs from previously completed agents, keyed by agentId */
   priorOutputs: Partial<Record<AgentId, string>>;
   /** Project team members with their roles and agent assignments */

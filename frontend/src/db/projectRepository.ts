@@ -98,6 +98,10 @@ interface ApiProjectRow {
   name: string;
   description: string;
   domain: string;
+  // AI Governance MVP-0 (2026-07-21, decision 3): real column
+  // (migration 013_ai_governance_mvp.sql), not part of `data` below --
+  // matches `domain`'s own shape/storage.
+  secondary_domains?: string[] | null;
   status: string;
   data: Record<string, unknown>;
   created_at: string;
@@ -112,6 +116,7 @@ interface ApiCreatePayload {
   name: string;
   description?: string;
   domain?: string;
+  secondaryDomains?: string[];
   status?: string;
   data?: Record<string, unknown>;
 }
@@ -123,6 +128,7 @@ function rowToProject(row: ApiProjectRow): Project {
     name: row.name,
     description: row.description ?? '',
     domain: (row.domain ?? '') as Project['domain'],
+    secondaryDomains: (row.secondary_domains ?? []) as Project['secondaryDomains'],
     status: (row.status as Project['status']) ?? 'draft',
     createdAt: new Date(row.created_at).getTime(),
     updatedAt: new Date(row.updated_at).getTime(),
@@ -178,6 +184,7 @@ function projectToPayload(p: Project): ApiCreatePayload {
     name: p.name,
     description: p.description,
     domain: p.domain,
+    secondaryDomains: p.secondaryDomains,
     status: p.status,
     data: {
       version: p.version,

@@ -28,7 +28,7 @@
  * (graceful degradation to L2 behaviour).
  */
 
-import { api } from './api';
+import { api, getAuthHeader } from './api';
 import { assessGovernedOutput } from './outputGovernance';
 import { hasMermaidDiagram } from '@/agents/diagramUtils';
 import type {
@@ -67,6 +67,9 @@ const MARKER_TOOL_CALL    = 'TOOL_CALL:';
 const MARKER_PLAN_REVISED = 'PLAN_REVISION:';
 const MARKER_FINAL_OUTPUT = 'FINAL_OUTPUT:';
 const MARKER_STEPS        = 'STEPS:';
+// AI Governance MVP-0 (2026-07-21) -- see agents/definitions.ts's aiGovernance
+// section 12 and govern-ai-gap-assessment-and-implementation-plan.md, F1.
+const MARKER_GOVERNANCE_DECISION_JSON = 'GOVERNANCE_DECISION_JSON:';
 
 // --- Prompt builders ---------------------------------------------------------
 
@@ -245,6 +248,148 @@ async function callWithRetry(
   }
   // Unreachable but TypeScript needs a return
   throw new Error('callWithRetry: exceeded max attempts');
+}
+
+// --- AI Governance decision extraction (MVP-0, 2026-07-21) -------------------
+// See agents/definitions.ts's aiGovernance section 12 (the
+// GOVERNANCE_DECISION_JSON block it's instructed to emit) and
+// govern-ai-gap-assessment-and-implementation-plan.md, finding F1: today's
+// Governance Decision is free text inside a prose report nothing else reads.
+// This is the other half — pulling that structured block back out of
+// FINAL_OUTPUT and persisting it via backend/src/routes/governance.js, which
+// is what actually gives Gate 0 something to enforce against.
+
+interface ParsedGovernanceFinding {
+  controlId: string;
+  severity: string;
+  gap?: string;
+  recommendation?: string;
+  ownerRole?: string;
+}
+
+interface ParsedGovernanceDecision {
+  decision: string;
+  riskTier: string;
+  confidence?: number;
+  decisionReason?: string;
+  findings: ParsedGovernanceFinding[];
+}
+
+/**
+ * Finds the MARKER_GOVERNANCE_DECISION_JSON marker in `text`, then brace-
+ * matches (tracking quoted-string state so braces inside string values don't
+ * throw off the count) to find the JSON object that follows it — more
+ * robust than assuming the block is single-line or relying on a markdown
+ * code fence the model was explicitly told not to add. Returns null if the
+ * marker is missing, the JSON doesn't parse, or required fields are absent —
+ * any of which should be treated as "no decision produced", not a crash.
+ */
+function extractGovernanceDecisionBlock(
+  text: string
+): { decision: ParsedGovernanceDecision; strippedOutput: string } | null {
+  const markerIdx = text.indexOf(MARKER_GOVERNANCE_DECISION_JSON);
+  if (markerIdx === -1) return null;
+
+  const afterMarker = text.slice(markerIdx + MARKER_GOVERNANCE_DECISION_JSON.length);
+  const braceStart = afterMarker.indexOf('{');
+  if (braceStart === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let endIdx = -1;
+  for (let i = braceStart; i < afterMarker.length; i++) {
+    const ch = afterMarker[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) { endIdx = i; break; }
+    }
+  }
+  if (endIdx === -1) return null;
+
+  const jsonStr = afterMarker.slice(braceStart, endIdx + 1);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.decision !== 'string' || typeof obj.riskTier !== 'string') return null;
+
+  const findings: ParsedGovernanceFinding[] = Array.isArray(obj.findings)
+    ? obj.findings
+        .filter((f): f is Record<string, unknown> =>
+          !!f && typeof f === 'object' &&
+          typeof (f as Record<string, unknown>).controlId === 'string' &&
+          typeof (f as Record<string, unknown>).severity === 'string')
+        .map((f) => ({
+          controlId: String(f.controlId),
+          severity: String(f.severity),
+          gap: typeof f.gap === 'string' ? f.gap : undefined,
+          recommendation: typeof f.recommendation === 'string' ? f.recommendation : undefined,
+          ownerRole: typeof f.ownerRole === 'string' ? f.ownerRole : undefined,
+        }))
+    : [];
+
+  const decision: ParsedGovernanceDecision = {
+    decision: obj.decision,
+    riskTier: obj.riskTier,
+    confidence: typeof obj.confidence === 'number' ? obj.confidence : undefined,
+    decisionReason: typeof obj.decisionReason === 'string' ? obj.decisionReason : undefined,
+    findings,
+  };
+
+  // Strip the marker + JSON from the human-facing document (trimEnd cleans
+  // up the blank line the marker's own preceding newline leaves behind) —
+  // the report a human reads should end at section 11, not with a raw JSON
+  // blob appended after it.
+  const strippedOutput = (text.slice(0, markerIdx) + afterMarker.slice(endIdx + 1)).trimEnd();
+  return { decision, strippedOutput };
+}
+
+/**
+ * Fire-and-forget POST to backend/src/routes/governance.js. Deliberately
+ * never thrown/awaited by the caller in a way that could fail the agent run
+ * or discard its (human-readable) output — a governance persistence hiccup
+ * must not block a user from seeing their assessment, it just means Gate 0
+ * enforcement has no machine-readable record for this run until retried
+ * (same fail-open posture as the rest of this feature's backend half; see
+ * proxy.js's authorizeAgentRun kill-switch comment).
+ */
+async function persistGovernanceDecision(
+  projectId: string,
+  decision: ParsedGovernanceDecision
+): Promise<void> {
+  try {
+    const apiBase = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+    const authHeaders = await getAuthHeader();
+    const resp = await fetch(`${apiBase}/governance/${projectId}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({
+        decision: decision.decision,
+        riskTier: decision.riskTier,
+        confidence: decision.confidence,
+        decisionReason: decision.decisionReason,
+        findings: decision.findings,
+      }),
+    });
+    if (!resp.ok) {
+      console.error(`[l3Runtime] governance decision persistence responded ${resp.status} for project ${projectId}`);
+    }
+  } catch (err) {
+    console.error('[l3Runtime] Failed to persist governance decision:', err instanceof Error ? err.message : err);
+  }
 }
 
 // --- Main L3 run function ----------------------------------------------------
@@ -673,6 +818,28 @@ export async function runL3Agent(
   if (requiresGovernedOutput && !l3Meta.outputGovernance) {
     const assessment = assessGovernedOutput(finalOutput);
     l3Meta.outputGovernance = { ...assessment, blocked: false };
+  }
+
+  // AI Governance MVP-0 (2026-07-21): extract and persist the structured
+  // decision block aiGovernance's own definition (section 12) instructs it
+  // to emit. Runs after every other finalization path above (normal
+  // FINAL_OUTPUT, forced tool-free finalization, or the last-resort
+  // placeholder) so it applies no matter how this run actually finished.
+  if (def.id === 'aiGovernance') {
+    const extracted = extractGovernanceDecisionBlock(finalOutput);
+    if (extracted) {
+      finalOutput = extracted.strippedOutput;
+      if (options.projectId) {
+        // Deliberately not awaited — see persistGovernanceDecision's own
+        // comment for why this must never block returning the (already
+        // human-readable) output to the caller.
+        void persistGovernanceDecision(options.projectId, extracted.decision);
+      } else {
+        console.warn('[l3Runtime] aiGovernance produced a decision block but no projectId was provided in L3RunOptions — decision was not persisted.');
+      }
+    } else {
+      console.warn('[l3Runtime] aiGovernance finished without a parseable GOVERNANCE_DECISION_JSON block — Gate 0 will have no machine-readable decision for this run.');
+    }
   }
 
   return {

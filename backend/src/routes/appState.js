@@ -174,7 +174,7 @@ function createAppStateRouter({
     const dbPool = getDb();
     if (!dbPool) return await appStateStore.listBacklogItems();
     const { rows } = await dbPool.query(`
-      SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
+      SELECT id, title, description, category, priority, status, source, notes, project_id, created_at, updated_at
       FROM admin_backlog_items
       ORDER BY created_at ASC
     `);
@@ -187,6 +187,12 @@ function createAppStateRouter({
       status: row.status,
       source: row.source,
       notes: row.notes ?? undefined,
+      // AI Governance MVP-0 (2026-07-21) -- only present on governance-
+      // sourced items (see migration 014_governance_backlog_project_scope.sql
+      // and backend/src/routes/governance.js); every pre-existing/manually-
+      // added row has project_id NULL, mapped to undefined here to match
+      // BacklogItem.projectId's optional typing.
+      projectId: row.project_id ?? undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(row.updated_at),
     }));
@@ -200,9 +206,9 @@ function createAppStateRouter({
     }
     await dbPool.query(`
       INSERT INTO admin_backlog_items (
-        id, title, description, category, priority, status, source, notes, created_at, updated_at
+        id, title, description, category, priority, status, source, notes, project_id, created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11)
     `, [
       item.id,
       item.title,
@@ -212,6 +218,7 @@ function createAppStateRouter({
       item.status,
       item.source,
       item.notes ?? null,
+      item.projectId ?? null,
       Number(item.createdAt ?? Date.now()),
       Number(item.updatedAt ?? Date.now()),
     ]);
@@ -221,7 +228,7 @@ function createAppStateRouter({
     const dbPool = getDb();
     if (!dbPool) return await appStateStore.updateBacklogItem(id, patch);
     const current = await dbPool.query(`
-      SELECT id, title, description, category, priority, status, source, notes, created_at, updated_at
+      SELECT id, title, description, category, priority, status, source, notes, project_id, created_at, updated_at
       FROM admin_backlog_items
       WHERE id = $1
       LIMIT 1
@@ -236,6 +243,10 @@ function createAppStateRouter({
       status: patch.status ?? row.status,
       source: patch.source ?? row.source,
       notes: patch.notes === undefined ? row.notes : patch.notes,
+      // project_id is intentionally NOT patchable through this endpoint
+      // (the admin Edit Item form has no field for it) -- reported back
+      // unchanged from whatever the row already had.
+      projectId: row.project_id ?? undefined,
       createdAt: Number(row.created_at),
       updatedAt: Number(patch.updatedAt ?? Date.now()),
     };

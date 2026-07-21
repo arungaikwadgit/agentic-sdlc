@@ -37,6 +37,7 @@ import {
 import type { Project } from '@/types/project.types';
 import BacklogTab from './BacklogTab';
 import TestsTab from './TestsTab';
+import GovernanceTab from './GovernanceTab';
 import styles from './AdminPanel.module.css';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
@@ -62,7 +63,7 @@ interface BackendSettings {
   appUrl: string;
 }
 
-type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend' | 'tests' | 'backlog';
+type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend' | 'tests' | 'backlog' | 'governance';
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
@@ -86,31 +87,33 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
         {/* Tabs */}
         <div className={styles.tabs}>
-          {(['health', 'projects', 'agents', 'backend', 'tests', 'backlog', 'settings'] as Tab[]).map((t) => (
+          {(['health', 'projects', 'agents', 'backend', 'tests', 'backlog', 'governance', 'settings'] as Tab[]).map((t) => (
             <button
               key={t}
               className={styles.tab + (tab === t ? ' ' + styles.tabActive : '')}
               onClick={() => setTab(t)}
             >
-              {t === 'health'   ? '🩺 Health'    :
-               t === 'projects' ? '📁 Projects'  :
-               t === 'agents'   ? '🤖 Agents'    :
-               t === 'backend'  ? '⚡ Backend'   :
-               t === 'tests'    ? '🧪 Tests'     :
-               t === 'backlog'  ? '📋 Backlog'   : '⚙️ Settings'}
+              {t === 'health'     ? '🩺 Health'     :
+               t === 'projects'   ? '📁 Projects'   :
+               t === 'agents'     ? '🤖 Agents'     :
+               t === 'backend'    ? '⚡ Backend'    :
+               t === 'tests'      ? '🧪 Tests'      :
+               t === 'backlog'    ? '📋 Backlog'    :
+               t === 'governance' ? '🛡 Governance' : '⚙️ Settings'}
             </button>
           ))}
         </div>
 
         {/* Tab Content */}
         <div className={styles.body}>
-          {tab === 'health'   && <HealthTab />}
-          {tab === 'projects' && <ProjectsTab />}
-          {tab === 'agents'   && <AgentsTab />}
-          {tab === 'backend'  && <BackendTab />}
-          {tab === 'tests'    && <TestsTab />}
-          {tab === 'backlog'  && <BacklogTab />}
-          {tab === 'settings' && <SettingsTab />}
+          {tab === 'health'     && <HealthTab />}
+          {tab === 'projects'   && <ProjectsTab />}
+          {tab === 'agents'     && <AgentsTab />}
+          {tab === 'backend'    && <BackendTab />}
+          {tab === 'tests'      && <TestsTab />}
+          {tab === 'backlog'    && <BacklogTab />}
+          {tab === 'governance' && <GovernanceTab />}
+          {tab === 'settings'   && <SettingsTab />}
         </div>
       </div>
     </div>

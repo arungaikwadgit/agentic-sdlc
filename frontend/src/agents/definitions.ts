@@ -26,7 +26,19 @@ Output only the document itself — no preamble, no meta-commentary.`;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function domainLine(ctx: AgentPromptContext): string {
-  return `\n\n## Domain Context\n${ctx.domainContext}`;
+  // AI Governance MVP-0 (2026-07-21, decision 3: "soft/prompt-based for
+  // MVP-0" -- see govern-ai-gap-assessment-and-implementation-plan.md).
+  // Secondary domains are additional LLM-visible context appended after the
+  // primary domain's resolved knowledge block -- there is no per-domain
+  // control-pack lookup keyed off these yet, so they're surfaced as a
+  // plain list for every agent (not just aiGovernance) to factor into
+  // whatever it produces (e.g. a fintech project with a healthcare
+  // secondary domain should have both sets of obligations in view).
+  const secondary = ctx.secondaryDomains?.filter(Boolean) ?? [];
+  const secondaryLine = secondary.length > 0
+    ? `\n\nSecondary domain(s) also in scope for this project: ${secondary.join(', ')}. Consider obligations, risks, and conventions specific to these in addition to the primary domain above.`
+    : '';
+  return `\n\n## Domain Context\n${ctx.domainContext}${secondaryLine}`;
 }
 
 function teamLine(ctx: AgentPromptContext): string {
@@ -286,6 +298,21 @@ const aiGovernance: AgentDefinition = {
     `9. Residual Risk & Remediation Actions`,
     `10. Governance Decision - Approved, Approved with Conditions, Human Review Required, Blocked, or Not Applicable; include rationale and Governance confidence score`,
     `11. Lifecycle Invocation Plan - required evidence, accountable owner, approval gate, and target date for onboarding, architecture, model/tool/data changes, development completion, UAT, deployment, material changes, scheduled reviews, and incidents`,
+    // AI Governance MVP-0 (2026-07-21) -- see
+    // docs/architecture/govern-ai-gap-assessment-and-implementation-plan.md,
+    // finding F1: today's Governance Decision is free text inside a prose
+    // report that nothing else in the app reads, so Gate 0 approval is
+    // fully decoupled from it. This section is additive -- it does NOT
+    // replace or shorten the 11-section prose report above, it's a
+    // machine-parseable restatement of section 10's decision + section 4's
+    // findings, in a fixed marker format frontend/src/services/l3Runtime.ts
+    // parses out of FINAL_OUTPUT and persists via POST
+    // /api/governance/:projectId/decision (backend/src/routes/governance.js),
+    // which is what actually gives the decision teeth at Gate 0.
+    `\n12. Machine-Readable Decision Block - AFTER the 11 sections above, on their own lines with nothing else before or after, emit exactly:\n` +
+    `GOVERNANCE_DECISION_JSON:\n` +
+    `{"decision": "approved" | "approved_with_conditions" | "human_review_required" | "blocked" | "not_applicable", "riskTier": "critical" | "high" | "moderate" | "low", "confidence": <0-100 number, matching section 10's stated confidence>, "decisionReason": "<1-3 sentence rationale, matching section 10>", "findings": [{"controlId": "<short stable slug, e.g. \\"missing-pii-redaction\\", reused across re-runs of this SAME project for the SAME underlying gap>", "severity": "critical" | "high" | "medium" | "low", "gap": "<what's missing or wrong>", "recommendation": "<concrete fix>", "ownerRole": "<accountable role from section 6>"}]}\n` +
+    `This must be valid, complete JSON on its own (no markdown code fence, no trailing commentary) -- it is parsed programmatically, not read by a human. Every risk/gap listed in section 4 (Identified Risks & Required Controls) that rises to Medium severity or above must appear as a finding here with a stable controlId -- omitting one from this block means it will never reach the project's backlog or the Gate 0 approver's screen, no matter how clearly section 4's prose describes it. decision, riskTier, and confidence here must exactly match what section 10 states in prose -- this block is a restatement for machines, not a second, independent judgment.`,
   ].join('\n'),
   goal: (ctx) =>
     `Produce an evidence-based AI Governance Assessment for "${ctx.projectName}" before Gate 0 owner approval.\n\n` +
@@ -296,8 +323,9 @@ const aiGovernance: AgentDefinition = {
     `STEP 4 - call get_agent_catalog and get_phase_rules: verify actual agents, dependencies, phase order, and human gates.\n` +
     `STEP 5 - call get_domain_context: identify domain-specific privacy, security, safety, and regulatory obligations.\n` +
     `STEP 6 - call get_team_roster: map accountable business, technical, risk, data, remediation, and approval owners.\n` +
-    `STEP 7 - produce all 11 sections, including the lifecycle invocation plan, and call validate_output_completeness against those section names.\n` +
-    `STEP 8 - if required evidence is missing, choose Human Review Required or Blocked; otherwise finalize one allowed decision with rationale and confidence.`,
+    `STEP 7 - produce all 11 prose sections, including the lifecycle invocation plan, and call validate_output_completeness against those section names.\n` +
+    `STEP 8 - if required evidence is missing, choose Human Review Required or Blocked; otherwise finalize one allowed decision with rationale and confidence.\n` +
+    `STEP 9 - emit section 12, the GOVERNANCE_DECISION_JSON machine-readable block, restating STEP 8's decision and every Medium+ finding from section 4 with a stable controlId. This is not optional -- a report without it cannot enforce anything at Gate 0.`,
   tools: GOVERNANCE_TOOLS,
   requiredTools: ['get_agent_output', 'get_governance_snapshot', 'get_agent_catalog', 'get_phase_rules', 'get_domain_context', 'get_team_roster', 'validate_output_completeness'],
   maxIterations: 10,

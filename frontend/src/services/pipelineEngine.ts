@@ -126,6 +126,7 @@ export function buildAgentPromptContext(
     projectDescription: project.description,
     domain: domain.id,
     domainContext: project.domainKnowledge ? `${project.domainKnowledge}\n\n---\n\n${domain.context}` : domain.context,
+    secondaryDomains: project.secondaryDomains,
     priorOutputs,
     teamRoster: buildTeamRoster(project),
     brandingGuidelines: project.brandingGuidelines,

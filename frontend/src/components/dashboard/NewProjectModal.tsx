@@ -96,6 +96,12 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [domain, setDomain] = useState<DomainId>('saas');
+  // AI Governance MVP-0 (2026-07-21, decision 3) -- see
+  // govern-ai-gap-assessment-and-implementation-plan.md. Soft/prompt-context
+  // only: no per-domain control-pack lookup keys off this yet, so it's
+  // capped at 3 to keep it from becoming prompt noise (matches the 3-item
+  // cap enforced server-side in server/src/routes/projects.ts).
+  const [secondaryDomains, setSecondaryDomains] = useState<DomainId[]>([]);
   const [mode, setMode] = useState<'simple' | 'expert'>('simple');
   const [domainKnowledge, setDomainKnowledge] = useState('');
   const [brandingGuidelines, setBrandingGuidelines] = useState('');
@@ -205,8 +211,20 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
 
   async function handleDomainChange(newDomain: DomainId) {
     setDomain(newDomain);
+    // A domain can't be both primary and secondary at once -- drop it from
+    // secondaryDomains if it was selected there before becoming primary.
+    setSecondaryDomains((prev) => prev.filter((d) => d !== newDomain));
     // Reset domain knowledge to the app-level default for the new domain (falls back to built-in template)
     setDomainKnowledge(await safeGetDomainKnowledgeDefault(newDomain));
+  }
+
+  const MAX_SECONDARY_DOMAINS = 3;
+  function toggleSecondaryDomain(id: DomainId) {
+    setSecondaryDomains((prev) => {
+      if (prev.includes(id)) return prev.filter((d) => d !== id);
+      if (prev.length >= MAX_SECONDARY_DOMAINS) return prev;
+      return [...prev, id];
+    });
   }
 
   // All Step 1 fields are mandatory except Branding Guidelines (explicitly
@@ -263,6 +281,7 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
       domain,
       status: 'draft' as const,
       mode,
+      secondaryDomains: secondaryDomains.length > 0 ? secondaryDomains : undefined,
       domainKnowledge: finalDomainKnowledge.trim() || undefined,
       brandingGuidelines: brandingGuidelines.trim() || undefined,
       owner: owner.trim(),
@@ -473,6 +492,45 @@ export default function NewProjectModal({ onClose, onCreated }: Props) {
               <p className={styles.hint}>
                 <strong>{getDomain(domain).label}</strong> — confirm domain-specific obligations during discovery.
               </p>
+
+              {/* AI Governance MVP-0 (2026-07-21, decision 3) -- see
+                  govern-ai-gap-assessment-and-implementation-plan.md, F2.
+                  Optional; soft/prompt-context only (surfaced to every
+                  agent via domainLine() in agents/definitions.ts), not a
+                  deterministic control-pack lookup yet. */}
+              <label className={styles.label}>Secondary Domain(s) (optional, up to {MAX_SECONDARY_DOMAINS})</label>
+              <div className={styles.techTagList}>
+                {Object.values(DOMAINS)
+                  .filter((d) => d.id !== domain)
+                  .map((d) => {
+                    const selected = secondaryDomains.includes(d.id);
+                    const disabled = !selected && secondaryDomains.length >= MAX_SECONDARY_DOMAINS;
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => toggleSecondaryDomain(d.id)}
+                        className={styles.techTag}
+                        style={{
+                          opacity: disabled ? 0.4 : 1,
+                          cursor: disabled ? 'not-allowed' : 'pointer',
+                          background: selected ? d.bgColor : undefined,
+                          color: selected ? d.color : undefined,
+                          border: selected ? `1px solid ${d.color}` : undefined,
+                        }}
+                        aria-pressed={selected}
+                      >
+                        {d.label}
+                      </button>
+                    );
+                  })}
+              </div>
+              {secondaryDomains.length > 0 && (
+                <p className={styles.hint}>
+                  Also applies obligations/context for: {secondaryDomains.map((id) => getDomain(id).label).join(', ')}.
+                </p>
+              )}
 
               <label className={styles.label}>Tech Stack *</label>
               {techTags.length > 0 && (

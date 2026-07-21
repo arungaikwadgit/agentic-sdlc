@@ -199,6 +199,20 @@ export interface Project {
   name: string;
   description: string;
   domain: DomainId;
+  /**
+   * AI Governance MVP-0 (2026-07-21, decision 3: "soft/prompt-based for
+   * MVP-0" -- see docs/architecture/
+   * govern-ai-gap-assessment-and-implementation-plan.md). A real Postgres
+   * column (migration 013_ai_governance_mvp.sql, `secondary_domains
+   * TEXT[]`), not part of the JSONB `data` blob every other optional
+   * Project field lives in -- matches `domain`'s own shape/storage, per
+   * that migration's own rationale comment. Threaded into every agent's
+   * prompt context (see AgentPromptContext.secondaryDomains,
+   * agents/definitions.ts's domainLine()) as additional LLM-visible
+   * context only -- no deterministic control-pack lookup keys off this
+   * yet (that's a later, not-yet-approved phase).
+   */
+  secondaryDomains?: DomainId[];
   status: ProjectStatus;
   version: number;
   createdAt: number;
