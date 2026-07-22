@@ -143,7 +143,7 @@ describe('createGovernanceRouter', () => {
     });
 
     it('inserts the decision, upserts findings, and auto-creates a backlog item for Medium+ severity only', async () => {
-      const inserted = { findings: [] as any[][], backlog: [] as any[][] };
+      const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
       const db = insertingDb(inserted);
       const { app } = buildApp({ db, getDb: () => db });
       await withServer(app, async (baseUrl) => {
@@ -168,7 +168,7 @@ describe('createGovernanceRouter', () => {
     });
 
     it('ignores an agentRunId that is not a valid UUID rather than erroring', async () => {
-      const inserted = { findings: [] as any[][], backlog: [] as any[][] };
+      const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
       const db = insertingDb(inserted);
       const { app } = buildApp({ db, getDb: () => db });
       await withServer(app, async (baseUrl) => {

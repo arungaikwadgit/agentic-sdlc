@@ -44,47 +44,68 @@ interface ProjectAgentOverride {
   disabled: boolean;
 }
 
-async function apiCall<T>(path: string, options?: RequestInit): Promise<T | null> {
+interface ApiResult<T> {
+  data: T | null;
+  error: string | null;
+}
+
+async function apiCall<T>(path: string, options?: RequestInit): Promise<ApiResult<T>> {
   try {
     const resp = await fetch(`${governanceApiBase()}${path}`, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()), ...(options?.headers ?? {}) },
     });
-    if (!resp.ok) return null;
-    return (await resp.json()) as T;
-  } catch {
-    return null;
+    if (!resp.ok) {
+      let detail = '';
+      try {
+        const body = await resp.json();
+        detail = body?.error ? `: ${body.error}` : '';
+      } catch { /* body wasn't JSON — fall back to status only */ }
+      return { data: null, error: `HTTP ${resp.status}${detail}` };
+    }
+    return { data: (await resp.json()) as T, error: null };
+  } catch (err) {
+    return { data: null, error: err instanceof Error ? err.message : 'Network error — is the backend running?' };
   }
 }
 
 export default function GovernanceTab() {
   const [rows, setRows] = useState<ProjectGovernanceRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [rowsError, setRowsError] = useState<string | null>(null);
   const [drillInId, setDrillInId] = useState<string | null>(null);
 
   const [globalSettings, setGlobalSettings] = useState<AgentGlobalSetting[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [projectOverrides, setProjectOverrides] = useState<ProjectAgentOverride[]>([]);
+  const [killSwitchError, setKillSwitchError] = useState<string | null>(null);
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null);
 
   async function loadRows() {
     setLoading(true);
+    setRowsError(null);
     try {
       const projects = await listProjectRecords();
       const statuses = await Promise.all(projects.map((p) => fetchGovernanceStatus(p.id)));
       setRows(projects.map((project, i) => ({ project, status: statuses[i] })));
+    } catch (err) {
+      setRows([]);
+      setRowsError(err instanceof Error ? err.message : 'Failed to load projects.');
     } finally {
       setLoading(false);
     }
   }
 
   async function loadGlobalSettings() {
-    const data = await apiCall<{ items: AgentGlobalSetting[] }>('/agent-controls/global');
+    const { data, error } = await apiCall<{ items: AgentGlobalSetting[] }>('/agent-controls/global');
+    if (error) { setKillSwitchError(`Failed to load global settings: ${error}`); return; }
     setGlobalSettings(data?.items ?? []);
   }
 
   async function loadProjectOverrides(projectId: string) {
     if (!projectId) { setProjectOverrides([]); return; }
-    const data = await apiCall<{ items: ProjectAgentOverride[] }>(`/agent-controls/project/${projectId}`);
+    const { data, error } = await apiCall<{ items: ProjectAgentOverride[] }>(`/agent-controls/project/${projectId}`);
+    if (error) { setKillSwitchError(`Failed to load project overrides: ${error}`); return; }
     setProjectOverrides(data?.items ?? []);
   }
 
@@ -92,18 +113,25 @@ export default function GovernanceTab() {
   useEffect(() => { void loadProjectOverrides(selectedProjectId); }, [selectedProjectId]);
 
   async function toggleGlobal(agentId: string, currentlyDisabled: boolean) {
-    await apiCall(`/agent-controls/global/${agentId}`, {
+    setKillSwitchError(null);
+    setPendingAgentId(agentId);
+    const { error } = await apiCall(`/agent-controls/global/${agentId}`, {
       method: 'POST',
       body: JSON.stringify({ disabled: !currentlyDisabled }),
     });
+    setPendingAgentId(null);
+    if (error) { setKillSwitchError(`Failed to update "${agentId}" (global): ${error}`); return; }
     await loadGlobalSettings();
   }
 
   async function toggleProjectOverride(agentId: string, currentlyDisabled: boolean | undefined) {
     if (!selectedProjectId) return;
+    setKillSwitchError(null);
+    setPendingAgentId(agentId);
+    let result: ApiResult<unknown>;
     if (currentlyDisabled === undefined) {
       // No row yet — create one, disabled.
-      await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
+      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
         method: 'POST',
         body: JSON.stringify({ disabled: true }),
       });
@@ -112,15 +140,17 @@ export default function GovernanceTab() {
       // than clearing the row, so it stays enabled even if someone later
       // disables the agent globally (see resolveAgentKillSwitch's
       // precedence in backend/src/routes/agentControls.js).
-      await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
+      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
         method: 'POST',
         body: JSON.stringify({ disabled: false }),
       });
     } else {
       // Currently an explicit enable — clear the override entirely, back
       // to "no opinion, defer to global".
-      await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, { method: 'DELETE' });
+      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, { method: 'DELETE' });
     }
+    setPendingAgentId(null);
+    if (result.error) { setKillSwitchError(`Failed to update "${agentId}" (project override): ${result.error}`); return; }
     await loadProjectOverrides(selectedProjectId);
   }
 
@@ -144,6 +174,12 @@ export default function GovernanceTab() {
       {/* Cross-project table */}
       {loading ? (
         <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>Loading…</p>
+      ) : rowsError ? (
+        <p style={{ fontSize: 13, color: 'var(--error, #ef4444)' }}>
+          Failed to load projects: {rowsError}
+          {' '}
+          <button className="btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => void loadRows()}>Retry</button>
+        </p>
       ) : rows.length === 0 ? (
         <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No projects found.</p>
       ) : (
@@ -228,6 +264,12 @@ export default function GovernanceTab() {
           Global disable applies platform-wide. A per-project override always wins over the global setting.
         </p>
 
+        {killSwitchError && (
+          <p style={{ fontSize: 12, color: 'var(--error, #ef4444)', margin: '0 0 10px' }}>
+            {killSwitchError}
+          </p>
+        )}
+
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
           <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Per-project overrides for:</label>
           <select style={sel} value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
@@ -254,18 +296,20 @@ export default function GovernanceTab() {
                   <td style={{ padding: '6px 8px' }}>
                     <button
                       className={globalDisabled ? 'btn-danger' : 'btn-secondary'}
-                      style={{ fontSize: 11, padding: '2px 8px' }}
-                      onClick={() => toggleGlobal(agentId, globalDisabled)}
+                      style={{ fontSize: 11, padding: '2px 8px', opacity: pendingAgentId === agentId ? 0.6 : 1 }}
+                      disabled={pendingAgentId === agentId}
+                      onClick={() => void toggleGlobal(agentId, globalDisabled)}
                     >
-                      {globalDisabled ? 'Disabled' : 'Enabled'}
+                      {pendingAgentId === agentId ? '…' : globalDisabled ? 'Disabled' : 'Enabled'}
                     </button>
                   </td>
                   {selectedProjectId && (
                     <td style={{ padding: '6px 8px' }}>
                       <button
                         className={overrideDisabled ? 'btn-danger' : 'btn-secondary'}
-                        style={{ fontSize: 11, padding: '2px 8px' }}
-                        onClick={() => toggleProjectOverride(agentId, overrideDisabled)}
+                        style={{ fontSize: 11, padding: '2px 8px', opacity: pendingAgentId === agentId ? 0.6 : 1 }}
+                        disabled={pendingAgentId === agentId}
+                        onClick={() => void toggleProjectOverride(agentId, overrideDisabled)}
                         title={
                           overrideDisabled === undefined
                             ? 'No project-specific setting — click to disable for this project only'
@@ -274,7 +318,7 @@ export default function GovernanceTab() {
                               : 'Explicitly enabled for this project — click to clear (defer to global)'
                         }
                       >
-                        {overrideDisabled === undefined ? '(defers to global)' : overrideDisabled ? 'Disabled' : 'Enabled (explicit)'}
+                        {pendingAgentId === agentId ? '…' : overrideDisabled === undefined ? '(defers to global)' : overrideDisabled ? 'Disabled' : 'Enabled (explicit)'}
                       </button>
                     </td>
                   )}

@@ -172,7 +172,28 @@ Run the pipeline (or just the `aiGovernance` agent specifically) for your test p
 
 ## 7. Gate 0 enforcement (the actual point of this feature)
 
-You need the agent to land on a **Blocked** decision to test the interesting path. Easiest way: temporarily edit the `aiGovernance` prompt sandbox output for a run (Prompt Sandbox tab in the gate0 modal, or just hand-craft one) so its `GOVERNANCE_DECISION_JSON` block says `"decision": "blocked"`, or find/force a real scenario that produces one. Then:
+**Correction:** `aiGovernance` is marked `visibility: 'internal'` in its agent definition (same as `tokenOptimizer`/`sdlcOrchestrator`) — `isInternalAgent()` filters it out of every agent list in the UI, including the gate0 modal's own tab list (`ReviewGateModal.tsx` explicitly excludes internal agents when building `agents`). There is no Prompt Sandbox tab for it, for anyone. It runs automatically as part of "Run Pipeline" (phase0b); it's just never manually selectable. This is pre-existing app behavior this feature didn't change.
+
+Since which decision the LLM actually produces isn't reliably reproducible, test the enforcement path deterministically by POSTing straight to the real endpoint instead — this exercises the actual `governance.js` logic, not a hand-edited output:
+
+```powershell
+$body = @{
+  decision = "blocked"
+  riskTier = "high"
+  confidence = 82
+  decisionReason = "Test: missing PII redaction evidence."
+  findings = @(
+    @{ controlId = "test-missing-redaction"; severity = "high"; gap = "No redaction pipeline documented."; recommendation = "Add a redaction step."; ownerRole = "Data Owner" }
+  )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri "http://localhost:3001/api/governance/<PROJECT_ID>/decision" `
+  -Method POST -ContentType "application/json" `
+  -Headers @{ Authorization = "Bearer admin-local-bypass-token" } `
+  -Body $body
+```
+
+`admin-local-bypass-token` only works when `NODE_ENV !== 'production'` (see `proxy.js`'s `checkToken`) — this is a local-dev-only shortcut, not something reachable in production. Swap `<PROJECT_ID>` and the port for your actual values. Then:
 
 1. Open the **Gate 0** review modal for your test project.
 2. Confirm the decision badge shows **Blocked** in red, with risk tier, confidence, and up to 5 findings listed as a checklist.

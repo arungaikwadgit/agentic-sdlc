@@ -110,10 +110,12 @@ describe('createAgentControlsRouter', () => {
     const { app } = buildApp({ db, getDb: () => db });
     await withServer(app, async (baseUrl) => {
       const globalRes = await fetch(`${baseUrl}/api/agent-controls/global`);
-      expect((await globalRes.json()).items).toEqual([{ agent_id: 'aiGovernance', disabled: true }]);
+      const globalBody: any = await globalRes.json();
+      expect(globalBody.items).toEqual([{ agent_id: 'aiGovernance', disabled: true }]);
 
       const projectRes = await fetch(`${baseUrl}/api/agent-controls/project/proj-1`);
-      expect((await projectRes.json()).items).toEqual([{ agent_id: 'aiGovernance', disabled: true }]);
+      const projectBody: any = await projectRes.json();
+      expect(projectBody.items).toEqual([{ agent_id: 'aiGovernance', disabled: true }]);
     });
   });
 });
