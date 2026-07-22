@@ -44,8 +44,15 @@ export interface GovernanceStatus {
   override: GovernanceOverrideRecord | null;
 }
 
+function getApiBase(raw?: string): string {
+  const base = (raw ?? '/api').replace(/\/$/, '');
+  if (!base || base === '/') return '/api';
+  if (base === '/api' || base.endsWith('/api')) return base;
+  return `${base}/api`;
+}
+
 export function governanceApiBase(): string {
-  return (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '');
+  return getApiBase(import.meta.env.VITE_API_URL);
 }
 
 export async function fetchGovernanceStatus(projectId: string): Promise<GovernanceStatus | null> {

@@ -87,11 +87,12 @@ export default function GovernanceTab() {
       if (projects.length === 0) { setRows([]); return; }
       const idsParam = projects.map((p) => p.id).join(',');
       const { data, error } = await apiCall<{ items: Record<string, GovernanceStatus> }>(
-        `/aggregate?projectIds=${encodeURIComponent(idsParam)}`
+        `/governance/aggregate?projectIds=${encodeURIComponent(idsParam)}`
       );
       if (error) throw new Error(error);
       const items = data?.items ?? {};
       setRows(projects.map((project) => ({ project, status: items[project.id] ?? null })));
+      setSelectedProjectId((current) => current || projects[0]?.id || '');
     } catch (err) {
       setRows([]);
       setRowsError(err instanceof Error ? err.message : 'Failed to load projects.');
@@ -128,33 +129,18 @@ export default function GovernanceTab() {
     await loadGlobalSettings();
   }
 
-  async function toggleProjectOverride(agentId: string, currentlyDisabled: boolean | undefined) {
+  async function setProjectOverride(agentId: string, disabled: boolean | null) {
     if (!selectedProjectId) return;
     setKillSwitchError(null);
     setPendingAgentId(agentId);
-    let result: ApiResult<unknown>;
-    if (currentlyDisabled === undefined) {
-      // No row yet — create one, disabled.
-      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
+    const result = disabled === null
+      ? await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, { method: 'DELETE' })
+      : await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
         method: 'POST',
-        body: JSON.stringify({ disabled: true }),
+        body: JSON.stringify({ disabled }),
       });
-    } else if (currentlyDisabled) {
-      // Currently an explicit disable — flip to an explicit enable, rather
-      // than clearing the row, so it stays enabled even if someone later
-      // disables the agent globally (see resolveAgentKillSwitch's
-      // precedence in backend/src/routes/agentControls.js).
-      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, {
-        method: 'POST',
-        body: JSON.stringify({ disabled: false }),
-      });
-    } else {
-      // Currently an explicit enable — clear the override entirely, back
-      // to "no opinion, defer to global".
-      result = await apiCall(`/agent-controls/project/${selectedProjectId}/${agentId}`, { method: 'DELETE' });
-    }
     setPendingAgentId(null);
-    if (result.error) { setKillSwitchError(`Failed to update "${agentId}" (project override): ${result.error}`); return; }
+    if (result.error) { setKillSwitchError(`Failed to update "${agentId}" for this project: ${result.error}`); return; }
     await loadProjectOverrides(selectedProjectId);
   }
 
@@ -162,9 +148,17 @@ export default function GovernanceTab() {
   const sel: React.CSSProperties = { background: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 9px', fontSize: 12 };
 
   const drillIn = rows.find((r) => r.project.id === drillInId) ?? null;
+  const selectedProject = rows.find((r) => r.project.id === selectedProjectId)?.project ?? null;
+  const selectedProjectName = selectedProject?.name ?? 'selected project';
   const globalByAgent = Object.fromEntries(globalSettings.map((s) => [s.agent_id, s.disabled]));
   const overrideByAgent = Object.fromEntries(projectOverrides.map((o) => [o.agent_id, o.disabled]));
   const agentIds = Object.keys(AGENT_DEFINITIONS) as AgentId[];
+  const statusPill = (disabled: boolean): React.CSSProperties => ({
+    ...pill,
+    color: disabled ? 'var(--error, #ef4444)' : 'var(--success, #10b981)',
+    border: `1px solid ${disabled ? 'var(--error, #ef4444)' : 'var(--success, #10b981)'}`,
+    background: disabled ? 'rgba(239, 68, 68, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -265,7 +259,7 @@ export default function GovernanceTab() {
       <div>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Agent Kill Switch</h3>
         <p style={{ margin: '2px 0 10px', fontSize: 12, color: 'var(--text-muted)' }}>
-          Global disable applies platform-wide. A per-project override always wins over the global setting.
+          Select a project to manage agent availability for that project only. Global status is shown for context; project overrides always win.
         </p>
 
         {killSwitchError && (
@@ -274,63 +268,109 @@ export default function GovernanceTab() {
           </p>
         )}
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Per-project overrides for:</label>
-          <select style={sel} value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
-            <option value="">Select a project…</option>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)' }}>Project-specific controls for:</label>
+          <select style={{ ...sel, minWidth: 280 }} value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
+            <option value="">Select a project...</option>
             {rows.map(({ project }) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </select>
+          {selectedProject && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Changes here apply only to {selectedProjectName}.
+            </span>
+          )}
         </div>
 
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-          <thead>
-            <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
-              <th style={{ padding: '4px 8px' }}>Agent</th>
-              <th style={{ padding: '4px 8px' }}>Global</th>
-              {selectedProjectId && <th style={{ padding: '4px 8px' }}>This Project</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {agentIds.map((agentId) => {
-              const globalDisabled = globalByAgent[agentId] ?? false;
-              const overrideDisabled = overrideByAgent[agentId];
-              return (
-                <tr key={agentId} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '6px 8px' }}>{AGENT_DEFINITIONS[agentId]?.name ?? agentId}</td>
-                  <td style={{ padding: '6px 8px' }}>
-                    <button
-                      className={globalDisabled ? 'btn-danger' : 'btn-secondary'}
-                      style={{ fontSize: 11, padding: '2px 8px', opacity: pendingAgentId === agentId ? 0.6 : 1 }}
-                      disabled={pendingAgentId === agentId}
-                      onClick={() => void toggleGlobal(agentId, globalDisabled)}
-                    >
-                      {pendingAgentId === agentId ? '…' : globalDisabled ? 'Disabled' : 'Enabled'}
-                    </button>
-                  </td>
-                  {selectedProjectId && (
+        {!selectedProjectId ? (
+          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Select a project to view and edit project-specific agent overrides.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                <th style={{ padding: '4px 8px' }}>Agent</th>
+                <th style={{ padding: '4px 8px' }}>Global Default</th>
+                <th style={{ padding: '4px 8px' }}>Project Override</th>
+                <th style={{ padding: '4px 8px' }}>Effective In This Project</th>
+                <th style={{ padding: '4px 8px' }}>Project Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {agentIds.map((agentId) => {
+                const globalDisabled = globalByAgent[agentId] ?? false;
+                const hasOverride = Object.prototype.hasOwnProperty.call(overrideByAgent, agentId);
+                const overrideDisabled = overrideByAgent[agentId];
+                const effectiveDisabled = hasOverride ? !!overrideDisabled : globalDisabled;
+                const sourceLabel = hasOverride
+                  ? (overrideDisabled ? 'Project-specific disable' : 'Project-specific enable')
+                  : (globalDisabled ? 'Inherited global disable' : 'Inherited global enable');
+                const pending = pendingAgentId === agentId;
+                return (
+                  <tr key={agentId} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '6px 8px' }}>{AGENT_DEFINITIONS[agentId]?.name ?? agentId}</td>
                     <td style={{ padding: '6px 8px' }}>
-                      <button
-                        className={overrideDisabled ? 'btn-danger' : 'btn-secondary'}
-                        style={{ fontSize: 11, padding: '2px 8px', opacity: pendingAgentId === agentId ? 0.6 : 1 }}
-                        disabled={pendingAgentId === agentId}
-                        onClick={() => void toggleProjectOverride(agentId, overrideDisabled)}
-                        title={
-                          overrideDisabled === undefined
-                            ? 'No project-specific setting — click to disable for this project only'
-                            : overrideDisabled
-                              ? 'Disabled for this project — click to explicitly enable'
-                              : 'Explicitly enabled for this project — click to clear (defer to global)'
-                        }
-                      >
-                        {pendingAgentId === agentId ? '…' : overrideDisabled === undefined ? '(defers to global)' : overrideDisabled ? 'Disabled' : 'Enabled (explicit)'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={statusPill(globalDisabled)}>{globalDisabled ? 'Disabled' : 'Enabled'}</span>
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: 11, padding: '2px 8px', opacity: pending ? 0.6 : 1 }}
+                          disabled={pending}
+                          onClick={() => void toggleGlobal(agentId, globalDisabled)}
+                          title="Platform-wide setting. Use carefully; it affects every project without an explicit override."
+                        >
+                          {globalDisabled ? 'Enable globally' : 'Disable globally'}
+                        </button>
+                      </div>
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    <td style={{ padding: '6px 8px' }}>
+                      {hasOverride ? (
+                        <span style={statusPill(!!overrideDisabled)}>{overrideDisabled ? 'Disabled for this project' : 'Enabled for this project'}</span>
+                      ) : (
+                        <span style={{ ...pill, color: 'var(--text-muted)', border: '1px solid var(--border)', background: 'var(--surface2)' }}>Defers to global</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={statusPill(effectiveDisabled)}>{effectiveDisabled ? 'Disabled' : 'Enabled'}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sourceLabel}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          disabled={pending || (hasOverride && overrideDisabled === false)}
+                          onClick={() => void setProjectOverride(agentId, false)}
+                          title={`Enable ${AGENT_DEFINITIONS[agentId]?.name ?? agentId} only for ${selectedProjectName}`}
+                        >
+                          Enable here
+                        </button>
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          disabled={pending || (hasOverride && overrideDisabled === true)}
+                          onClick={() => void setProjectOverride(agentId, true)}
+                          title={`Disable ${AGENT_DEFINITIONS[agentId]?.name ?? agentId} only for ${selectedProjectName}`}
+                        >
+                          Disable here
+                        </button>
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          disabled={pending || !hasOverride}
+                          onClick={() => void setProjectOverride(agentId, null)}
+                          title="Remove the project-specific setting and use the global default"
+                        >
+                          Clear override
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
