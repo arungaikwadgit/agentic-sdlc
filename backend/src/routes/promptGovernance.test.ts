@@ -1079,4 +1079,78 @@ describe('promptGovernance routes', () => {
       });
     });
   });
+
+  describe('project-scoped read access control (code-review fix)', () => {
+    // GET /effective, /versions, and /audit all share the same
+    // authorizePromptReadAccess() guard (security-review finding,
+    // 2026-07-22, see the big comment above that function in
+    // promptGovernance.js). Exercise it once per route: 401 with no
+    // auth, 403 when a projectId is given for a project the caller has
+    // no role on, 200 for an app admin, 200 for any project member (not
+    // just owner), and 200 for global scope (no projectId) even for a
+    // plain non-admin caller.
+    //
+    // That last case is a deliberate regression lock, not an oversight:
+    // the first draft of this fix made global scope admin-only, which
+    // silently broke the pre-existing "no projectId" tests above (they
+    // already expect 200 for a plain authenticated caller with no admin
+    // rights) -- caught by cross-checking against this file before ever
+    // running jest, not by a failing test run.
+    const routes = [
+      { name: 'GET /effective', path: '/effective?agentId=agentA' },
+      { name: 'GET /versions', path: '/versions?agentId=agentA' },
+      { name: 'GET /audit', path: '/audit?agentId=agentA' },
+    ];
+
+    for (const { name, path } of routes) {
+      describe(name, () => {
+        it('returns 401 when there is no authenticated caller', async () => {
+          const checkToken = (req: any, _res: any, next: any) => { req.authUser = {}; next(); };
+          await withServer({ checkToken }, async ({ baseUrl }) => {
+            const res = await fetch(`${baseUrl}${path}`);
+            expect(res.status).toBe(401);
+          });
+        });
+
+        it('returns 403 when a projectId is given for a project the caller has no role on', async () => {
+          const checkToken = (req: any, _res: any, next: any) => { req.authUser = { email: 'stranger@example.com' }; next(); };
+          const isConfiguredAdminEmail = jest.fn(() => false);
+          const getCallerAppRoleForProject = jest.fn(async () => null);
+          await withServer({ checkToken, isConfiguredAdminEmail, getCallerAppRoleForProject }, async ({ baseUrl }) => {
+            const res = await fetch(`${baseUrl}${path}&projectId=proj-1`);
+            expect(res.status).toBe(403);
+          });
+        });
+
+        it('allows any project member (not just owner) to read when projectId is given', async () => {
+          const checkToken = (req: any, _res: any, next: any) => { req.authUser = { email: 'viewer@example.com' }; next(); };
+          const isConfiguredAdminEmail = jest.fn(() => false);
+          const getCallerAppRoleForProject = jest.fn(async () => 'viewer');
+          await withServer({ checkToken, isConfiguredAdminEmail, getCallerAppRoleForProject }, async ({ baseUrl }) => {
+            const res = await fetch(`${baseUrl}${path}&projectId=proj-1`);
+            expect(res.status).toBe(200);
+          });
+        });
+
+        it('allows an app admin regardless of project membership', async () => {
+          const checkToken = (req: any, _res: any, next: any) => { req.authUser = { email: 'admin@example.com' }; next(); };
+          const isConfiguredAdminEmail = jest.fn(() => true);
+          const getCallerAppRoleForProject = jest.fn(async () => null);
+          await withServer({ checkToken, isConfiguredAdminEmail, getCallerAppRoleForProject }, async ({ baseUrl }) => {
+            const res = await fetch(`${baseUrl}${path}&projectId=proj-1`);
+            expect(res.status).toBe(200);
+          });
+        });
+
+        it('allows any authenticated caller to read global scope (no projectId)', async () => {
+          const checkToken = (req: any, _res: any, next: any) => { req.authUser = { email: 'plain-user@example.com' }; next(); };
+          const isConfiguredAdminEmail = jest.fn(() => false);
+          await withServer({ checkToken, isConfiguredAdminEmail }, async ({ baseUrl }) => {
+            const res = await fetch(`${baseUrl}${path}`);
+            expect(res.status).toBe(200);
+          });
+        });
+      });
+    }
+  });
 });

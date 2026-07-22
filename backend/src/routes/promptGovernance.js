@@ -103,6 +103,51 @@ function createPromptGovernanceRouter({
     return { ok: true, callerEmail, callerRole: 'project_owner' };
   }
 
+  // Security-review finding (2026-07-22): GET /effective, /versions, and
+  // /audit below took an optional `projectId` query param with NO
+  // authorization check beyond checkToken -- any authenticated user could
+  // read any other project's active prompt content, full version history,
+  // or audit log just by passing an arbitrary projectId. Same bug class
+  // as governance.js's original authorizeGovernanceProjectAccess gap
+  // (fixed 2026-07-22), undiscovered in this file until a broader
+  // security pass looked for it specifically.
+  //
+  // When projectId IS given: caller must be an accepted member of that
+  // project (any role) or an app admin -- read access, not the stricter
+  // project_owner-only bar authorizePromptOwnerAction enforces for
+  // actually approving/activating a prompt change.
+  //
+  // When projectId is NOT given (global scope): any authenticated user
+  // may read. There's no other project's data being exposed here -- the
+  // global default prompt for an agent applies app-wide, and the
+  // pre-existing test suite already locks in "any signed-in caller gets
+  // 200 for global scope" (see promptGovernance.test.ts's GET /effective,
+  // /versions, /audit no-projectId cases) -- an admin-only global gate
+  // would be new, undiscussed scope creep on top of the actual bug being
+  // fixed here, not a requirement of it.
+  async function authorizePromptReadAccess(req, res, { projectId }) {
+    if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+      return { ok: true };
+    }
+    const callerEmail = req.authUser?.email ?? null;
+    if (!callerEmail) {
+      res.status(401).json({ error: 'Please sign in to view prompt governance data.' });
+      return { ok: false };
+    }
+    if (!projectId) {
+      return { ok: true };
+    }
+    if (isConfiguredAdminEmail(callerEmail)) {
+      return { ok: true };
+    }
+    const callerAppRole = await getCallerAppRoleForProject(projectId, callerEmail);
+    if (!callerAppRole) {
+      res.status(403).json({ error: 'You do not have access to this project.' });
+      return { ok: false };
+    }
+    return { ok: true };
+  }
+
   async function dbAuditPrompt({ promptVersionId, projectId, agentId, action, req, metadata = {} }) {
     const dbPool = getDb();
     if (!dbPool) return;
@@ -285,6 +330,8 @@ function createPromptGovernanceRouter({
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });
+    const access = await authorizePromptReadAccess(req, res, { projectId });
+    if (!access.ok) return;
 
     const projectPrompt = projectId
       ? await getActivePromptVersion({ scope: 'project', agentId, projectId })
@@ -307,6 +354,8 @@ function createPromptGovernanceRouter({
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });
+    const access = await authorizePromptReadAccess(req, res, { projectId });
+    if (!access.ok) return;
     const dbPool = getDb();
     const { rows } = await dbPool.query(`
       SELECT *
@@ -584,6 +633,8 @@ function createPromptGovernanceRouter({
     const agentId = String(req.query.agentId ?? '').trim();
     const projectId = req.query.projectId ? String(req.query.projectId) : null;
     if (!agentId) return res.status(400).json({ error: 'agentId is required.' });
+    const access = await authorizePromptReadAccess(req, res, { projectId });
+    if (!access.ok) return;
     const dbPool = getDb();
     const { rows } = await dbPool.query(`
       SELECT * FROM agent_prompt_audit_log
