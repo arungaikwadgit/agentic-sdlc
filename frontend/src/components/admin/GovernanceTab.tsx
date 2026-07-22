@@ -8,18 +8,16 @@
  * global/per-project agent kill switch (decision 2), reading/writing
  * backend/src/routes/governance.js and backend/src/routes/agentControls.js.
  *
- * There is no "list every project's governance status" backend endpoint —
- * this fetches the project list (already used elsewhere in AdminPanel) and
- * calls the existing per-project GET for each. An N+1 pattern, acceptable
- * at this app's scale for an MVP-0 admin view; a real aggregate endpoint is
- * a reasonable follow-up if the project count grows large enough to matter.
+ * Code-review fix (2026-07-22, Suggestion #7): this used to call GET
+ * /:projectId once per project (N+1) via fetchGovernanceStatus. Now calls
+ * GET /governance/aggregate?projectIds=... once for every project on the
+ * page, via the admin-only aggregate route in governance.js.
  */
 import { useEffect, useState } from 'react';
 import { getAuthHeader } from '@/services/api';
 import { listProjectRecords } from '@/db/projectRepository';
 import { AGENT_DEFINITIONS } from '@/agents/definitions';
 import {
-  fetchGovernanceStatus,
   governanceApiBase,
   DECISION_LABELS,
   DECISION_COLORS,
@@ -86,8 +84,14 @@ export default function GovernanceTab() {
     setRowsError(null);
     try {
       const projects = await listProjectRecords();
-      const statuses = await Promise.all(projects.map((p) => fetchGovernanceStatus(p.id)));
-      setRows(projects.map((project, i) => ({ project, status: statuses[i] })));
+      if (projects.length === 0) { setRows([]); return; }
+      const idsParam = projects.map((p) => p.id).join(',');
+      const { data, error } = await apiCall<{ items: Record<string, GovernanceStatus> }>(
+        `/aggregate?projectIds=${encodeURIComponent(idsParam)}`
+      );
+      if (error) throw new Error(error);
+      const items = data?.items ?? {};
+      setRows(projects.map((project) => ({ project, status: items[project.id] ?? null })));
     } catch (err) {
       setRows([]);
       setRowsError(err instanceof Error ? err.message : 'Failed to load projects.');

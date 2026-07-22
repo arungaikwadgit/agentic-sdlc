@@ -68,6 +68,92 @@ describe('createGovernanceRouter', () => {
     });
   });
 
+  // Code-review finding (2026-07-22, Suggestion #7): replaces GovernanceTab.tsx's
+  // old N+1 fetch pattern (one GET /:projectId per project) with a single
+  // admin-only aggregate call.
+  describe('GET /aggregate', () => {
+    it('returns 403 when the caller is not an app admin', async () => {
+      const db = fakeDb({});
+      const { app } = buildApp({
+        checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'stranger@example.com' }; next(); },
+        isConfiguredAdminEmail: () => false,
+        db, getDb: () => db,
+      });
+      await withServer(app, async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/governance/aggregate?projectIds=proj-1`);
+        expect(res.status).toBe(403);
+      });
+    });
+
+    it('returns an empty items object when no valid projectIds are given', async () => {
+      const db = fakeDb({});
+      const { app } = buildApp({ db, getDb: () => db }); // default = admin bypass
+      await withServer(app, async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/governance/aggregate`);
+        const body: any = await res.json();
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ items: {} });
+      });
+    });
+
+    it('silently drops malformed (non-UUID) ids rather than erroring', async () => {
+      const db = fakeDb({
+        'FROM governance_decision': () => ({ rows: [] }),
+        'FROM governance_finding': () => ({ rows: [] }),
+      });
+      const { app } = buildApp({ db, getDb: () => db });
+      await withServer(app, async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/governance/aggregate?projectIds=not-a-uuid,also-bad`);
+        const body: any = await res.json();
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ items: {} });
+      });
+    });
+
+    it('assembles decision + findings + openFindingsCount + override per project in one pass', async () => {
+      const projA = '11111111-1111-1111-1111-111111111111';
+      const projB = '22222222-2222-2222-2222-222222222222';
+      const decisionA = { id: 'dec-a', project_id: projA, decision: 'blocked', risk_tier: 'high' };
+      const decisionB = { id: 'dec-b', project_id: projB, decision: 'approved', risk_tier: 'low' };
+      const db = fakeDb({
+        'FROM governance_decision': () => ({ rows: [decisionA, decisionB] }),
+        'FROM governance_finding': () => ({ rows: [
+          { id: 'f1', project_id: projA, severity: 'high' },
+          { id: 'f2', project_id: projA, severity: 'medium' },
+        ] }),
+        'FROM governance_override': () => ({ rows: [
+          { id: 'ov-1', governance_decision_id: 'dec-a', actor_email: 'admin@example.com', actor_role: 'app_admin', reason: 'accepted risk' },
+        ] }),
+      });
+      const { app } = buildApp({ db, getDb: () => db });
+      await withServer(app, async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/governance/aggregate?projectIds=${projA},${projB}`);
+        const body: any = await res.json();
+        expect(res.status).toBe(200);
+        expect(body.items[projA].decision).toEqual(decisionA);
+        expect(body.items[projA].openFindingsCount).toBe(2);
+        expect(body.items[projA].override.actor_email).toBe('admin@example.com');
+        expect(body.items[projB].decision).toEqual(decisionB);
+        expect(body.items[projB].openFindingsCount).toBe(0);
+        expect(body.items[projB].override).toBeNull();
+      });
+    });
+
+    it('returns null decision/empty findings/null override for a project with no governance run yet', async () => {
+      const projC = '33333333-3333-3333-3333-333333333333';
+      const db = fakeDb({
+        'FROM governance_decision': () => ({ rows: [] }),
+        'FROM governance_finding': () => ({ rows: [] }),
+      });
+      const { app } = buildApp({ db, getDb: () => db });
+      await withServer(app, async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/governance/aggregate?projectIds=${projC}`);
+        const body: any = await res.json();
+        expect(body.items[projC]).toEqual({ decision: null, findings: [], openFindingsCount: 0, override: null });
+      });
+    });
+  });
+
   describe('GET /:projectId', () => {
     it('returns null decision/empty findings/null override when nothing exists yet', async () => {
       const db = fakeDb({
@@ -181,13 +267,24 @@ describe('createGovernanceRouter', () => {
   });
 
   describe('POST /:projectId/decision', () => {
+    // Code-review finding (2026-07-22, Suggestion #5): governance_finding is
+    // now upserted via a single batched UNNEST query instead of one query
+    // per finding, so params is [projectId, controlIds[], severities[],
+    // gaps[], recommendations[], ownerRoles[]] rather than one row's worth
+    // of scalars. inserted.findings is flattened back to one entry per
+    // finding so existing "N findings processed" assertions still read the
+    // same way regardless of how many DB round-trips that took.
     function insertingDb(inserted: { decision?: any[]; findings: any[][]; backlog: any[][] }) {
       return fakeDb({
         'INSERT INTO governance_decision': (params: any[]) => { inserted.decision = params; return { rows: [] }; },
         'INSERT INTO governance_finding': (params: any[]) => {
-          inserted.findings.push(params);
-          // Echo back a row shaped like what the real upsert RETURNING would give.
-          return { rows: [{ id: `finding-${inserted.findings.length}`, control_id: params[2], severity: params[3] }] };
+          const [, controlIds, severities] = params;
+          return {
+            rows: (controlIds as string[]).map((controlId, i) => {
+              inserted.findings.push([controlId, severities[i]]);
+              return { id: `finding-${inserted.findings.length}`, control_id: controlId, severity: severities[i] };
+            }),
+          };
         },
         "SET status = 'resolved'": () => ({ rows: [] }),
         'UPDATE governance_finding SET backlog_item_id': () => ({ rows: [] }),
@@ -375,6 +472,57 @@ describe('createGovernanceRouter', () => {
           });
           expect(res.status).toBe(200);
           expect(inserted.decision![5]).toBe(92.5);
+        });
+      });
+    });
+
+    describe('batched finding upsert (code-review fix)', () => {
+      it('issues a single INSERT INTO governance_finding call for multiple findings, not one per finding', async () => {
+        let findingInsertCallCount = 0;
+        const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
+        const baseDb = insertingDb(inserted);
+        const countingQuery = jest.fn(async (sql: string, params: any[] = []) => {
+          if (sql.includes('INSERT INTO governance_finding')) findingInsertCallCount++;
+          return baseDb.query(sql, params);
+        });
+        const db = { query: countingQuery, connect: jest.fn(async () => ({ query: countingQuery, release: jest.fn() })) };
+        const { app } = buildApp({ db, getDb: () => db });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'blocked', riskTier: 'high',
+              findings: [
+                { controlId: 'a', severity: 'high' },
+                { controlId: 'b', severity: 'medium' },
+                { controlId: 'c', severity: 'critical' },
+              ],
+            }),
+          });
+          expect(res.status).toBe(200);
+          expect(findingInsertCallCount).toBe(1);
+          expect(inserted.findings).toHaveLength(3);
+        });
+      });
+
+      it('de-duplicates findings with the same controlId, keeping the last occurrence', async () => {
+        const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
+        const db = insertingDb(inserted);
+        const { app } = buildApp({ db, getDb: () => db });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'blocked', riskTier: 'high',
+              findings: [
+                { controlId: 'dup', severity: 'low' },
+                { controlId: 'dup', severity: 'critical' },
+              ],
+            }),
+          });
+          expect(res.status).toBe(200);
+          expect(inserted.findings).toHaveLength(1);
+          expect(inserted.findings[0]).toEqual(['dup', 'critical']);
         });
       });
     });

@@ -110,6 +110,83 @@ function createGovernanceRouter({
     return { ok: true };
   }
 
+  // Admin-only check, inline rather than importing proxy.js's requireAdmin
+  // -- same "duplicate a tiny check rather than risk a shared-module
+  // extraction with no verified test run" reasoning as
+  // authorizeGovernanceOverrideAction above.
+  function requireAppAdmin(req, res) {
+    if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') return true;
+    const email = req.authUser?.email ?? null;
+    if (email && isConfiguredAdminEmail(email)) return true;
+    res.status(403).json({ error: 'Admin access required.' });
+    return false;
+  }
+
+  // GET /api/governance/aggregate?projectIds=id1,id2,... -- code-review
+  // finding (2026-07-22, Suggestion #7): GovernanceTab.tsx's cross-project
+  // table used to call GET /:projectId once per project (N+1). This
+  // returns every requested project's full status (decision, open
+  // findings, latest override) in 3 queries total regardless of how many
+  // projectIds are passed, instead of 3*N. Admin-only, since this is the
+  // admin Governance tab's data source, not something a regular project
+  // member needs.
+  router.get('/aggregate', checkToken, async (req, res) => {
+    const dbPool = requireGovernanceDb(res);
+    if (!dbPool) return;
+    if (!requireAppAdmin(req, res)) return;
+
+    const rawIds = String(req.query.projectIds ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const projectIds = [...new Set(rawIds)].filter((id) => UUID_RE.test(id));
+    if (projectIds.length === 0) return res.json({ items: {} });
+
+    const decisionsResult = await dbPool.query(`
+      SELECT DISTINCT ON (project_id) *
+      FROM governance_decision
+      WHERE project_id = ANY($1::uuid[])
+      ORDER BY project_id, created_at DESC
+    `, [projectIds]);
+    const latestDecisionByProject = new Map(decisionsResult.rows.map((d) => [d.project_id, d]));
+
+    const findingsResult = await dbPool.query(`
+      SELECT * FROM governance_finding
+      WHERE project_id = ANY($1::uuid[]) AND status = 'open'
+      ORDER BY project_id,
+        CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+        first_seen_at ASC
+    `, [projectIds]);
+    const findingsByProject = new Map();
+    for (const f of findingsResult.rows) {
+      if (!findingsByProject.has(f.project_id)) findingsByProject.set(f.project_id, []);
+      findingsByProject.get(f.project_id).push(f);
+    }
+
+    const decisionIds = [...latestDecisionByProject.values()].map((d) => d.id);
+    let overrideByDecisionId = new Map();
+    if (decisionIds.length > 0) {
+      const overridesResult = await dbPool.query(`
+        SELECT DISTINCT ON (governance_decision_id) *
+        FROM governance_override
+        WHERE governance_decision_id = ANY($1::uuid[])
+        ORDER BY governance_decision_id, created_at DESC
+      `, [decisionIds]);
+      overrideByDecisionId = new Map(overridesResult.rows.map((o) => [o.governance_decision_id, o]));
+    }
+
+    const items = {};
+    for (const projectId of projectIds) {
+      const decision = latestDecisionByProject.get(projectId) ?? null;
+      const findings = findingsByProject.get(projectId) ?? [];
+      items[projectId] = {
+        decision,
+        findings,
+        openFindingsCount: findings.length,
+        override: decision ? (overrideByDecisionId.get(decision.id) ?? null) : null,
+      };
+    }
+
+    return res.json({ items });
+  });
+
   // GET /api/governance/:projectId -- latest decision + open findings +
   // most recent override (if any). Read by the gate0 modal and the
   // persistent workspace-header badge (decisions 1 and 4).
@@ -246,14 +323,24 @@ function createGovernanceRouter({
         JSON.stringify(findingsInput),
       ]);
 
-      const seenControlIds = [];
-      const upsertedFindings = [];
-      for (const f of findingsInput) {
-        const controlId = String(f.controlId).trim();
-        seenControlIds.push(controlId);
+      // Code-review finding (2026-07-22, Suggestion #5): this used to issue
+      // one INSERT...ON CONFLICT per finding (N round-trips per run). Now a
+      // single UNNEST-based batched upsert. De-dup by controlId first
+      // (keeping the last occurrence) -- Postgres errors with "ON CONFLICT
+      // DO UPDATE command cannot affect row a second time" if the same
+      // conflict target appears twice in one statement, which the old
+      // per-row loop never hit since each iteration was its own query.
+      const dedupedFindings = [...new Map(
+        findingsInput.map((f) => [String(f.controlId).trim(), f])
+      ).values()];
+      const seenControlIds = dedupedFindings.map((f) => String(f.controlId).trim());
+      let upsertedFindings = [];
+      if (dedupedFindings.length > 0) {
         const { rows } = await client.query(`
           INSERT INTO governance_finding (id, project_id, control_id, severity, status, gap, recommendation, owner_role, first_seen_at, last_seen_at)
-          VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), NOW())
+          SELECT gen_random_uuid(), $1, u.control_id, u.severity, 'open', u.gap, u.recommendation, u.owner_role, NOW(), NOW()
+          FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+            AS u(control_id, severity, gap, recommendation, owner_role)
           ON CONFLICT (project_id, control_id) DO UPDATE
             SET severity = EXCLUDED.severity,
                 status = 'open',
@@ -263,8 +350,15 @@ function createGovernanceRouter({
                 last_seen_at = NOW(),
                 resolved_at = NULL
           RETURNING *
-        `, [randomUUID(), projectId, controlId, String(f.severity), f.gap ?? null, f.recommendation ?? null, f.ownerRole ?? null]);
-        upsertedFindings.push(rows[0]);
+        `, [
+          projectId,
+          seenControlIds,
+          dedupedFindings.map((f) => String(f.severity)),
+          dedupedFindings.map((f) => f.gap ?? null),
+          dedupedFindings.map((f) => f.recommendation ?? null),
+          dedupedFindings.map((f) => f.ownerRole ?? null),
+        ]);
+        upsertedFindings = rows;
       }
 
       // Resolve findings that were open before this run but didn't

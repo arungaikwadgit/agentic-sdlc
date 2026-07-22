@@ -22,13 +22,13 @@ Status legend: 🔴 Open · 🟡 Fixed, unverified (code changed, tests not yet 
 | # | File | Issue | Status |
 |---|------|-------|--------|
 | 4 | `backend/src/routes/governance.js` | `confidence` had no bounds/NaN validation before insert. | ✅ Fixed & verified — rejects non-finite or out-of-0–100-range values with a 400. Confirmed passing 2026-07-22. |
-| 5 | `backend/src/routes/governance.js` | Per-finding upsert is one query per finding (N+1-shaped). Fine at current scale. | 🔴 Open — deferred, not addressed this pass. |
-| 6 | `backend/migrations/013_ai_governance_mvp.sql` | `governance_finding.backlog_item_id` is a TEXT reference, not a real FK — no referential integrity. | 🔴 Open — deferred, acknowledged in the migration's own comment. |
-| 7 | `frontend/src/components/admin/GovernanceTab.tsx` | Cross-project table uses an N+1 fetch pattern (one call per project). | 🔴 Open — deferred, self-documented as an accepted MVP-0 tradeoff. |
-| 8 | `backend/src/proxy.js` | Kill-switch check in `authorizeAgentRun` fails open on a DB error (deliberate design choice). | 🔴 Open — not a bug, flagged for risk-owner confirmation only. |
+| 5 | `backend/src/routes/governance.js` | Per-finding upsert is one query per finding (N+1-shaped). | ✅ Fixed & verified — batched into a single UNNEST-based upsert + de-dup by controlId. 105/105 tests passing, confirmed 2026-07-22. |
+| 6 | `backend/migrations/013_ai_governance_mvp.sql` | `governance_finding.backlog_item_id` is a TEXT reference, not a real FK — no referential integrity. | ✅ Fixed & verified — `migrations/015_governance_finding_backlog_fk.sql` applied via Supabase SQL editor, confirmed 2026-07-22. Orphaned references nulled defensively, real FK now in place with `ON DELETE SET NULL`. |
+| 7 | `frontend/src/components/admin/GovernanceTab.tsx` | Cross-project table uses an N+1 fetch pattern (one call per project). | ✅ Fixed & verified — new admin-only `GET /governance/aggregate?projectIds=...` route (3 queries total regardless of project count), `GovernanceTab.tsx` updated to use it. Backend tests 105/105 passing, frontend `tsc --noEmit` exit 0, both confirmed 2026-07-22. |
+| 8 | `backend/src/proxy.js` | Kill-switch check in `authorizeAgentRun` fails open on a DB error (deliberate design choice). | 🔴 Open — not a bug, flagged for risk-owner confirmation only, not touched this pass. |
 
 ## Verification note (2026-07-22)
 
-Findings #1–4 are fixed and verified: `tsc --noEmit` in `backend/` clean (exit 0), and `npx jest governance.test.ts --verbose` run on the user's machine — 2 suites, 98/98 tests passing, including every new test added for these fixes. Confirmed 2026-07-22.
+Findings #1–7 are all fixed and verified: backend `tsc --noEmit` clean, frontend `tsc --noEmit` clean, `npx jest governance.test.ts --verbose` — 2 suites, 105/105 tests passing (up from 98, +7 new tests across the aggregate route, batched upsert, and de-dup behavior) — and migration 015 applied successfully via the Supabase SQL editor. All confirmed 2026-07-22.
 
-Remaining open items (#5–8) are deferred, not blocking — see table above for each.
+Only #8 remains open, and it's not a bug — a deliberate fail-open design choice flagged for risk-owner confirmation, not code that needs changing.
