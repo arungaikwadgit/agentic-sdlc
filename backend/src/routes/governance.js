@@ -78,6 +78,38 @@ function createGovernanceRouter({
     return { ok: true, callerEmail, callerRole: 'project_owner' };
   }
 
+  // Code-review finding (2026-07-22, Critical #1/#2): the read routes and
+  // the decision-write route below originally had NO project-scoping
+  // check at all -- only checkToken, which merely proves the caller is
+  // SOME authenticated user, not that they have any relationship to
+  // `projectId`. That let any logged-in user read or forge governance
+  // decisions for any other project on the platform. Unlike
+  // authorizeGovernanceOverrideAction above, this does NOT require
+  // project_owner specifically -- ANY accepted team member (any app_role)
+  // may read governance status or trigger a decision write, since a
+  // regular Editor running the pipeline is the one whose action normally
+  // POSTs a new decision. Restricting that to owners/admins would break
+  // the ordinary automated flow.
+  async function authorizeGovernanceProjectAccess(req, res, { projectId }) {
+    if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
+      return { ok: true };
+    }
+    const callerEmail = req.authUser?.email ?? null;
+    if (!callerEmail) {
+      res.status(401).json({ error: 'Please sign in to access this project.' });
+      return { ok: false };
+    }
+    if (isConfiguredAdminEmail(callerEmail)) {
+      return { ok: true };
+    }
+    const callerAppRole = await getCallerAppRoleForProject(projectId, callerEmail);
+    if (!callerAppRole) {
+      res.status(403).json({ error: 'You do not have access to this project.' });
+      return { ok: false };
+    }
+    return { ok: true };
+  }
+
   // GET /api/governance/:projectId -- latest decision + open findings +
   // most recent override (if any). Read by the gate0 modal and the
   // persistent workspace-header badge (decisions 1 and 4).
@@ -85,6 +117,8 @@ function createGovernanceRouter({
     const dbPool = requireGovernanceDb(res);
     if (!dbPool) return;
     const { projectId } = req.params;
+    const access = await authorizeGovernanceProjectAccess(req, res, { projectId });
+    if (!access.ok) return;
 
     const decisionResult = await dbPool.query(`
       SELECT * FROM governance_decision
@@ -126,12 +160,15 @@ function createGovernanceRouter({
   router.get('/:projectId/history', checkToken, async (req, res) => {
     const dbPool = requireGovernanceDb(res);
     if (!dbPool) return;
+    const { projectId } = req.params;
+    const access = await authorizeGovernanceProjectAccess(req, res, { projectId });
+    if (!access.ok) return;
     const { rows } = await dbPool.query(`
       SELECT * FROM governance_decision
       WHERE project_id = $1
       ORDER BY created_at DESC
       LIMIT 50
-    `, [req.params.projectId]);
+    `, [projectId]);
     return res.json({ items: rows });
   });
 
@@ -147,6 +184,8 @@ function createGovernanceRouter({
     const dbPool = requireGovernanceDb(res);
     if (!dbPool) return;
     const { projectId } = req.params;
+    const access = await authorizeGovernanceProjectAccess(req, res, { projectId });
+    if (!access.ok) return;
     const body = req.body ?? {};
 
     const decision = String(body.decision ?? '').trim();
@@ -156,6 +195,17 @@ function createGovernanceRouter({
     }
     if (!RISK_TIERS.has(riskTier)) {
       return res.status(400).json({ error: `riskTier must be one of: ${[...RISK_TIERS].join(', ')}` });
+    }
+    // Code-review finding (2026-07-22, Suggestion #1): confidence used to
+    // go straight through Number(body.confidence) with no bounds/NaN
+    // check, so a non-numeric or out-of-range value could land in the
+    // NUMERIC(5,2) column unchecked.
+    let confidence = null;
+    if (body.confidence != null) {
+      confidence = Number(body.confidence);
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 100) {
+        return res.status(400).json({ error: 'confidence must be a finite number between 0 and 100.' });
+      }
     }
     const findingsInput = Array.isArray(body.findings) ? body.findings : [];
     for (const f of findingsInput) {
@@ -169,95 +219,117 @@ function createGovernanceRouter({
 
     const agentRunId = body.agentRunId && UUID_RE.test(String(body.agentRunId)) ? body.agentRunId : null;
     const decisionId = randomUUID();
-    await dbPool.query(`
-      INSERT INTO governance_decision (id, project_id, agent_run_id, risk_tier, decision, confidence, decision_reason, findings)
-      VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8::jsonb)
-    `, [
-      decisionId,
-      projectId,
-      agentRunId,
-      riskTier,
-      decision,
-      body.confidence != null ? Number(body.confidence) : null,
-      body.decisionReason ?? null,
-      JSON.stringify(findingsInput),
-    ]);
 
-    const seenControlIds = [];
-    const upsertedFindings = [];
-    for (const f of findingsInput) {
-      const controlId = String(f.controlId).trim();
-      seenControlIds.push(controlId);
-      const { rows } = await dbPool.query(`
-        INSERT INTO governance_finding (id, project_id, control_id, severity, status, gap, recommendation, owner_role, first_seen_at, last_seen_at)
-        VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), NOW())
-        ON CONFLICT (project_id, control_id) DO UPDATE
-          SET severity = EXCLUDED.severity,
-              status = 'open',
-              gap = EXCLUDED.gap,
-              recommendation = EXCLUDED.recommendation,
-              owner_role = EXCLUDED.owner_role,
-              last_seen_at = NOW(),
-              resolved_at = NULL
-        RETURNING *
-      `, [randomUUID(), projectId, controlId, String(f.severity), f.gap ?? null, f.recommendation ?? null, f.ownerRole ?? null]);
-      upsertedFindings.push(rows[0]);
-    }
+    // Code-review finding (2026-07-22, High #3): this whole sequence --
+    // decision insert, findings upsert, stale-finding resolution +
+    // backlog status flip, and backlog auto-create/update -- used to run
+    // as unwrapped sequential dbPool.query() calls. A crash or error
+    // partway through left the decision row and finding rows out of sync
+    // (e.g. a "Blocked" decision recorded with none of its findings
+    // upserted yet). Wrapped in a single transaction on a dedicated
+    // client so it's all-or-nothing.
+    const client = await dbPool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // Resolve findings that were open before this run but didn't reappear
-    // -- and, if a backlog item exists for one, mark it done (decision 6:
-    // a re-run that resolves a finding updates its backlog item's status
-    // rather than leaving a stale duplicate).
-    const resolvedResult = seenControlIds.length > 0
-      ? await dbPool.query(`
-          UPDATE governance_finding
-          SET status = 'resolved', resolved_at = NOW()
-          WHERE project_id = $1 AND status = 'open' AND NOT (control_id = ANY($2::text[]))
-          RETURNING *
-        `, [projectId, seenControlIds])
-      : await dbPool.query(`
-          UPDATE governance_finding
-          SET status = 'resolved', resolved_at = NOW()
-          WHERE project_id = $1 AND status = 'open'
-          RETURNING *
-        `, [projectId]);
-    for (const resolved of resolvedResult.rows) {
-      if (resolved.backlog_item_id) {
-        await dbPool.query('UPDATE admin_backlog_items SET status = $2, updated_at = $3 WHERE id = $1', [resolved.backlog_item_id, 'done', Date.now()]);
-      }
-    }
-
-    // Auto-create/update backlog items for Medium+ severity, still-open
-    // findings (decision 7). De-dup by (projectId, controlId) via a
-    // deterministic id (decision 6), so a re-run upserts the same row
-    // instead of inserting a duplicate. Category is hard-coded 'security'
-    // for now rather than a new 'governance' BacklogItem['category'] value
-    // -- adding that value would also require updating BacklogTab.tsx's
-    // CATEGORY_COLORS map (a Record keyed by every category), which is
-    // frontend BacklogTab.tsx work (a separate, not-yet-done task), not a
-    // backend-only change.
-    for (const finding of upsertedFindings) {
-      if (!BACKLOG_ELIGIBLE_SEVERITIES.has(finding.severity)) continue;
-      const backlogId = `gov-${projectId}-${finding.control_id}`;
-      const now = Date.now();
-      await dbPool.query(`
-        INSERT INTO admin_backlog_items (id, project_id, title, description, category, priority, status, source, notes, created_at, updated_at)
-        VALUES ($1, $2::uuid, $3, $4, 'security', $5, 'open', 'governance', $6, $7, $7)
-        ON CONFLICT (id) DO UPDATE
-          SET title = EXCLUDED.title,
-              description = EXCLUDED.description,
-              priority = EXCLUDED.priority,
-              updated_at = $7
+      await client.query(`
+        INSERT INTO governance_decision (id, project_id, agent_run_id, risk_tier, decision, confidence, decision_reason, findings)
+        VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8::jsonb)
       `, [
-        backlogId,
+        decisionId,
         projectId,
-        `Governance finding: ${finding.control_id}`,
-        finding.gap || finding.recommendation || 'See AI Governance Assessment for detail.',
-        finding.severity,
-        finding.recommendation ?? null,
-        now,
+        agentRunId,
+        riskTier,
+        decision,
+        confidence,
+        body.decisionReason ?? null,
+        JSON.stringify(findingsInput),
       ]);
-      await dbPool.query('UPDATE governance_finding SET backlog_item_id = $2 WHERE id = $1', [finding.id, backlogId]);
+
+      const seenControlIds = [];
+      const upsertedFindings = [];
+      for (const f of findingsInput) {
+        const controlId = String(f.controlId).trim();
+        seenControlIds.push(controlId);
+        const { rows } = await client.query(`
+          INSERT INTO governance_finding (id, project_id, control_id, severity, status, gap, recommendation, owner_role, first_seen_at, last_seen_at)
+          VALUES ($1, $2, $3, $4, 'open', $5, $6, $7, NOW(), NOW())
+          ON CONFLICT (project_id, control_id) DO UPDATE
+            SET severity = EXCLUDED.severity,
+                status = 'open',
+                gap = EXCLUDED.gap,
+                recommendation = EXCLUDED.recommendation,
+                owner_role = EXCLUDED.owner_role,
+                last_seen_at = NOW(),
+                resolved_at = NULL
+          RETURNING *
+        `, [randomUUID(), projectId, controlId, String(f.severity), f.gap ?? null, f.recommendation ?? null, f.ownerRole ?? null]);
+        upsertedFindings.push(rows[0]);
+      }
+
+      // Resolve findings that were open before this run but didn't
+      // reappear -- and, if a backlog item exists for one, mark it done
+      // (decision 6: a re-run that resolves a finding updates its
+      // backlog item's status rather than leaving a stale duplicate).
+      const resolvedResult = seenControlIds.length > 0
+        ? await client.query(`
+            UPDATE governance_finding
+            SET status = 'resolved', resolved_at = NOW()
+            WHERE project_id = $1 AND status = 'open' AND NOT (control_id = ANY($2::text[]))
+            RETURNING *
+          `, [projectId, seenControlIds])
+        : await client.query(`
+            UPDATE governance_finding
+            SET status = 'resolved', resolved_at = NOW()
+            WHERE project_id = $1 AND status = 'open'
+            RETURNING *
+          `, [projectId]);
+      for (const resolved of resolvedResult.rows) {
+        if (resolved.backlog_item_id) {
+          await client.query('UPDATE admin_backlog_items SET status = $2, updated_at = $3 WHERE id = $1', [resolved.backlog_item_id, 'done', Date.now()]);
+        }
+      }
+
+      // Auto-create/update backlog items for Medium+ severity, still-open
+      // findings (decision 7). De-dup by (projectId, controlId) via a
+      // deterministic id (decision 6), so a re-run upserts the same row
+      // instead of inserting a duplicate. Category is hard-coded 'security'
+      // for now rather than a new 'governance' BacklogItem['category'] value
+      // -- adding that value would also require updating BacklogTab.tsx's
+      // CATEGORY_COLORS map (a Record keyed by every category), which is
+      // frontend BacklogTab.tsx work (a separate, not-yet-done task), not a
+      // backend-only change.
+      for (const finding of upsertedFindings) {
+        if (!BACKLOG_ELIGIBLE_SEVERITIES.has(finding.severity)) continue;
+        const backlogId = `gov-${projectId}-${finding.control_id}`;
+        const now = Date.now();
+        await client.query(`
+          INSERT INTO admin_backlog_items (id, project_id, title, description, category, priority, status, source, notes, created_at, updated_at)
+          VALUES ($1, $2::uuid, $3, $4, 'security', $5, 'open', 'governance', $6, $7, $7)
+          ON CONFLICT (id) DO UPDATE
+            SET title = EXCLUDED.title,
+                description = EXCLUDED.description,
+                priority = EXCLUDED.priority,
+                updated_at = $7
+        `, [
+          backlogId,
+          projectId,
+          `Governance finding: ${finding.control_id}`,
+          finding.gap || finding.recommendation || 'See AI Governance Assessment for detail.',
+          finding.severity,
+          finding.recommendation ?? null,
+          now,
+        ]);
+        await client.query('UPDATE governance_finding SET backlog_item_id = $2 WHERE id = $1', [finding.id, backlogId]);
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(`[governance] POST /decision transaction failed for project ${projectId}, rolled back:`, err instanceof Error ? err.message : err);
+      return res.status(500).json({ error: 'Failed to persist governance decision.' });
+    } finally {
+      client.release();
     }
 
     return res.json({ ok: true, decisionId });

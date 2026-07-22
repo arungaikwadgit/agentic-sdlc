@@ -35,14 +35,23 @@ async function withServer(app: any, fn: (baseUrl: string) => Promise<void>) {
 // in the order this route file actually issues queries. Deliberately
 // simple (not a real query planner) -- this is enough to exercise every
 // branch in governance.js without a real Postgres instance.
+//
+// .connect() returns a "client" backed by the same dispatch table, plus a
+// no-op release() and pass-through handling for BEGIN/COMMIT/ROLLBACK --
+// needed since POST /:projectId/decision (2026-07-22 code-review fix)
+// wraps its writes in a transaction on a dedicated client rather than
+// issuing queries straight against the pool.
 function fakeDb(handlers: Record<string, (params: any[]) => any>) {
+  const query = jest.fn(async (sql: string, params: any[] = []) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+    for (const [keyword, handler] of Object.entries(handlers)) {
+      if (sql.includes(keyword)) return handler(params);
+    }
+    throw new Error(`fakeDb: no handler matched for SQL containing none of [${Object.keys(handlers).join(', ')}]: ${sql.slice(0, 80)}`);
+  });
   return {
-    query: jest.fn(async (sql: string, params: any[] = []) => {
-      for (const [keyword, handler] of Object.entries(handlers)) {
-        if (sql.includes(keyword)) return handler(params);
-      }
-      throw new Error(`fakeDb: no handler matched for SQL containing none of [${Object.keys(handlers).join(', ')}]: ${sql.slice(0, 80)}`);
-    }),
+    query,
+    connect: jest.fn(async () => ({ query, release: jest.fn() })),
   };
 }
 
@@ -88,6 +97,85 @@ describe('createGovernanceRouter', () => {
         expect(body.decision).toEqual(decisionRow);
         expect(body.openFindingsCount).toBe(1);
         expect(body.override.actor_email).toBe('owner@example.com');
+      });
+    });
+
+    // Code-review finding (2026-07-22, Critical #2): GET /:projectId and
+    // /history used to have no project-scoping check at all beyond
+    // checkToken -- any authenticated user could read any project's
+    // governance data. These cover the fix.
+    describe('project-scoped access control (code-review fix)', () => {
+      const emptyDb = () => fakeDb({
+        'FROM governance_decision': () => ({ rows: [] }),
+        'FROM governance_finding': () => ({ rows: [] }),
+      });
+
+      it('returns 401 when there is no authenticated caller', async () => {
+        const db = emptyDb();
+        const { app } = buildApp({
+          checkToken: (_req: any, _res: any, next: any) => next(),
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1`);
+          expect(res.status).toBe(401);
+        });
+      });
+
+      it('returns 403 when the caller has no role on this project', async () => {
+        const db = emptyDb();
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'stranger@example.com' }; next(); },
+          isConfiguredAdminEmail: () => false,
+          getCallerAppRoleForProject: async () => null,
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1`);
+          expect(res.status).toBe(403);
+        });
+      });
+
+      it('allows a caller with ANY project role (not just owner) to read', async () => {
+        const db = emptyDb();
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'viewer@example.com' }; next(); },
+          isConfiguredAdminEmail: () => false,
+          getCallerAppRoleForProject: async () => 'viewer',
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1`);
+          expect(res.status).toBe(200);
+        });
+      });
+
+      it('allows an app admin regardless of project membership', async () => {
+        const db = emptyDb();
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'admin@example.com' }; next(); },
+          isConfiguredAdminEmail: () => true,
+          getCallerAppRoleForProject: async () => null,
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1`);
+          expect(res.status).toBe(200);
+        });
+      });
+
+      it('applies the same check to GET /:projectId/history', async () => {
+        const db = fakeDb({ 'FROM governance_decision': () => ({ rows: [] }) });
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'stranger@example.com' }; next(); },
+          isConfiguredAdminEmail: () => false,
+          getCallerAppRoleForProject: async () => null,
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/history`);
+          expect(res.status).toBe(403);
+        });
       });
     });
   });
@@ -178,6 +266,147 @@ describe('createGovernanceRouter', () => {
         });
         expect(res.status).toBe(200);
         expect(inserted.decision![2]).toBeNull();
+      });
+    });
+
+    // Code-review finding (2026-07-22, Critical #1): this route used to
+    // have no project-scoping check at all -- any authenticated user
+    // could POST an arbitrary decision for any project.
+    describe('project-scoped access control (code-review fix)', () => {
+      it('returns 401 when there is no authenticated caller', async () => {
+        const db = fakeDb({});
+        const { app } = buildApp({
+          checkToken: (_req: any, _res: any, next: any) => next(),
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low' }),
+          });
+          expect(res.status).toBe(401);
+        });
+      });
+
+      it('returns 403 when the caller has no role on this project', async () => {
+        const db = fakeDb({});
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'stranger@example.com' }; next(); },
+          isConfiguredAdminEmail: () => false,
+          getCallerAppRoleForProject: async () => null,
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low' }),
+          });
+          expect(res.status).toBe(403);
+        });
+      });
+
+      // The important distinction from POST /override: any project role
+      // is enough here, not just project_owner -- a regular Editor
+      // running the pipeline is the one whose action normally triggers
+      // this write, so restricting it to owners would break that flow.
+      it('allows a non-owner project member (e.g. editor) to persist a decision', async () => {
+        const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
+        const db = insertingDb(inserted);
+        const { app } = buildApp({
+          checkToken: (req: any, _res: any, next: any) => { req.authUser = { email: 'editor@example.com' }; next(); },
+          isConfiguredAdminEmail: () => false,
+          getCallerAppRoleForProject: async () => 'editor',
+          db, getDb: () => db,
+        });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low', findings: [] }),
+          });
+          expect(res.status).toBe(200);
+        });
+      });
+    });
+
+    describe('confidence bounds validation (code-review fix)', () => {
+      it('rejects a non-numeric confidence', async () => {
+        const { app } = buildApp({ db: fakeDb({}), getDb: () => fakeDb({}) });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low', confidence: 'high-ish', findings: [] }),
+          });
+          expect(res.status).toBe(400);
+          const body: any = await res.json();
+          expect(body.error).toMatch(/confidence must be a finite number/i);
+        });
+      });
+
+      it('rejects a confidence above 100', async () => {
+        const { app } = buildApp({ db: fakeDb({}), getDb: () => fakeDb({}) });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low', confidence: 150, findings: [] }),
+          });
+          expect(res.status).toBe(400);
+        });
+      });
+
+      it('rejects a negative confidence', async () => {
+        const { app } = buildApp({ db: fakeDb({}), getDb: () => fakeDb({}) });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low', confidence: -1, findings: [] }),
+          });
+          expect(res.status).toBe(400);
+        });
+      });
+
+      it('accepts a valid confidence within range', async () => {
+        const inserted: { decision?: any[]; findings: any[][]; backlog: any[][] } = { findings: [], backlog: [] };
+        const db = insertingDb(inserted);
+        const { app } = buildApp({ db, getDb: () => db });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision: 'approved', riskTier: 'low', confidence: 92.5, findings: [] }),
+          });
+          expect(res.status).toBe(200);
+          expect(inserted.decision![5]).toBe(92.5);
+        });
+      });
+    });
+
+    describe('transaction rollback on mid-sequence failure (code-review fix)', () => {
+      it('rolls back and returns 500 if the findings upsert fails after the decision insert succeeds', async () => {
+        let decisionInserted = false;
+        let rolledBack = false;
+        let committed = false;
+        const query = jest.fn(async (sql: string) => {
+          if (sql === 'BEGIN') return { rows: [] };
+          if (sql === 'ROLLBACK') { rolledBack = true; return { rows: [] }; }
+          if (sql === 'COMMIT') { committed = true; return { rows: [] }; }
+          if (sql.includes('INSERT INTO governance_decision')) { decisionInserted = true; return { rows: [] }; }
+          if (sql.includes('INSERT INTO governance_finding')) { throw new Error('simulated DB failure mid-transaction'); }
+          throw new Error(`unexpected query in rollback test: ${sql.slice(0, 60)}`);
+        });
+        const db = { query, connect: jest.fn(async () => ({ query, release: jest.fn() })) };
+        const { app } = buildApp({ db, getDb: () => db });
+        await withServer(app, async (baseUrl) => {
+          const res = await fetch(`${baseUrl}/api/governance/proj-1/decision`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              decision: 'blocked', riskTier: 'high',
+              findings: [{ controlId: 'a', severity: 'high' }],
+            }),
+          });
+          expect(res.status).toBe(500);
+          expect(decisionInserted).toBe(true);
+          expect(rolledBack).toBe(true);
+          expect(committed).toBe(false);
+        });
       });
     });
   });
