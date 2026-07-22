@@ -268,12 +268,20 @@ describe('Token-optimization rollout — requiredTools / intermediateSystemPromp
     ([, def]) => !!def.intermediateSystemPrompt
   );
 
-  it('only agents with a real quality-standards/format section to drop have an intermediateSystemPrompt (devopsEngineer/infraEngineer/observabilityEngineer/onCallEngineer deliberately do not — their systemPrompt is already minimal)', () => {
+  // 2026-07-22 — prompt accuracy/token-optimizer pass gave devopsEngineer,
+  // infraEngineer, observabilityEngineer, and onCallEngineer real "## X
+  // Standards" quality-bar sections (previously their systemPrompt was
+  // just BASE_SYSTEM + one identity sentence, which is why they were
+  // excluded here before). They now have genuine content worth dropping
+  // during tool-gathering iterations, so they've been added to the
+  // rollout alongside the original 7.
+  it('only agents with a real quality-standards/format section to drop have an intermediateSystemPrompt', () => {
     const ids = agentsWithIntermediatePrompt.map(([id]) => id).sort();
     expect(ids).toEqual(
       [
         'sdlcOrchestrator', 'tokenOptimizer', 'aiGovernance', 'manager',
         'projectCharter', 'stakeholder', 'workingPrototype',
+        'devopsEngineer', 'infraEngineer', 'observabilityEngineer', 'onCallEngineer',
       ].sort()
     );
   });
