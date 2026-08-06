@@ -11,7 +11,6 @@ const http    = require('http');
 const tls     = require('tls');
 const rateLimit = require('express-rate-limit');
 const { createLocalProjectStore } = require('./localProjectStore');
-const { createInMemoryAppStateStore } = require('./appStateStore');
 const {
   DEFAULT_PROMPT_OPTIMIZATION_SKILL,
   optimizePromptPair,
@@ -32,6 +31,33 @@ const SERVER_API_URL = (process.env.SERVER_API_URL ?? '').replace(/\/$/, '');
 const RUNTIME_API_URL = (process.env.RUNTIME_API_URL ?? '').replace(/\/$/, '');
 const RUNTIME_API_TOKEN = process.env.RUNTIME_API_TOKEN ?? '';
 const ADMIN_BYPASS_BEARER = 'admin-local-bypass-token';
+
+function getProductionAuthConfigurationErrors(env = process.env) {
+  if (env.NODE_ENV !== 'production') return [];
+  const hasSupabaseAuth = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+  const hasSharedToken = Boolean(env.PROXY_TOKEN);
+  const errors = [];
+  if (!hasSupabaseAuth && !hasSharedToken) {
+    errors.push('Configure SUPABASE_URL + SUPABASE_ANON_KEY or PROXY_TOKEN.');
+  }
+  if (env.SUPABASE_URL && !env.SUPABASE_ANON_KEY) {
+    errors.push('SUPABASE_ANON_KEY is required when SUPABASE_URL is configured.');
+  }
+  if (env.SUPABASE_ANON_KEY && !env.SUPABASE_URL) {
+    errors.push('SUPABASE_URL is required when SUPABASE_ANON_KEY is configured.');
+  }
+  if (String(env.ALLOW_INSECURE_LOCAL_AUTH ?? '').toLowerCase() === 'true') {
+    errors.push('ALLOW_INSECURE_LOCAL_AUTH cannot be enabled in production.');
+  }
+  return errors;
+}
+
+function assertProductionAuthConfiguration(env = process.env) {
+  const errors = getProductionAuthConfigurationErrors(env);
+  if (errors.length) {
+    throw new Error(`Invalid production authentication configuration: ${errors.join(' ')}`);
+  }
+}
 
 async function enqueueRuntimeLifecycleEvent(payload) {
   if (!RUNTIME_API_URL || !RUNTIME_API_TOKEN) return false;
@@ -122,14 +148,14 @@ async function fetchSupabaseTable(path) {
 // backend/src/routes/inviteRoutes.js — see docs/architecture/
 // architecture-upgrade-execution-plan.md. Function bodies are verbatim in
 // the new file; this is just the require + destructure that reconstructs
-// the exact same bindings (getSupabaseAdmin, generateDefaultPassword,
+// the exact same bindings (getSupabaseAdmin,
 // findSupabaseUserByEmail, provisionInviteeAccount) so every call site below
 // (and every test that does require('./proxy').provisionInviteeAccount
 // etc.) keeps working unchanged. SUPABASE_URL/SUPABASE_SERVICE_KEY are
 // passed in because they're proxy.js's own module-scope constants (defined
 // above, read-only after load).
 const { createInviteAccountProvisioning } = require('./routes/inviteRoutes');
-const { getSupabaseAdmin, generateDefaultPassword, findSupabaseUserByEmail, provisionInviteeAccount } =
+const { getSupabaseAdmin, findSupabaseUserByEmail, provisionInviteeAccount } =
   createInviteAccountProvisioning({ SUPABASE_URL, SUPABASE_SERVICE_KEY });
 
 // Anthropic (Claude) — optional second provider
@@ -166,7 +192,6 @@ try {
 }
 
 const localProjectStore = createLocalProjectStore();
-const appStateStore = createInMemoryAppStateStore();
 
 // Per-agent provider routing hints (agentId -> 'openai' | 'claude').
 // Falls back to DEFAULT_LLM_PROVIDER for any agent not listed here.
@@ -310,14 +335,20 @@ async function checkToken(req, res, next) {
     console.log(`${authTag} no Bearer Authorization header (raw value: ${authHeader ? 'non-empty, non-Bearer' : 'empty'})`);
   }
 
-  // Path 2: Shared secret (PROXY_TOKEN) — used by admin-mode and server-to-server calls.
-  // If neither SUPABASE_URL nor PROXY_TOKEN is set, allow (local dev with no auth configured).
+  // Path 2: Shared secret used by explicitly trusted server-to-server calls.
   if (!PROXY_TOKEN && !SUPABASE_URL) {
-    console.log(`${authTag} no PROXY_TOKEN and no SUPABASE_URL configured — allowing (open/local mode)`);
-    return next();
+    const insecureLocalAuth = process.env.NODE_ENV !== 'production'
+      && String(process.env.ALLOW_INSECURE_LOCAL_AUTH ?? '').toLowerCase() === 'true';
+    if (insecureLocalAuth) {
+      console.warn(`${authTag} ALLOW_INSECURE_LOCAL_AUTH enabled — allowing local unauthenticated request`);
+      return next();
+    }
+    console.error(`${authTag} no authentication verifier is configured — rejecting`);
+    return res.status(503).json({ error: 'Authentication service is not configured.' });
   }
   if (PROXY_TOKEN && req.headers['x-api-token'] === PROXY_TOKEN) {
-    console.log(`${authTag} valid X-API-Token header — allowing`);
+    console.log(`${authTag} valid X-API-Token header — allowing trusted service account`);
+    req.authUser = { email: null, serviceAccount: true };
     return next();
   }
   // If we have Supabase configured but no valid JWT arrived, reject
@@ -330,8 +361,8 @@ async function checkToken(req, res, next) {
     console.log(`${authTag} reached final PROXY_TOKEN check with no valid JWT and no/mismatched X-API-Token — rejecting (bare Unauthorized)`);
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  console.log(`${authTag} no auth mechanism matched but none required — allowing`);
-  next();
+  console.error(`${authTag} configured authentication verifier is unavailable - rejecting`);
+  return res.status(503).json({ error: 'Authentication service is temporarily unavailable.' });
 }
 
 function isConfiguredAdminEmail(email) {
@@ -464,33 +495,6 @@ async function forwardToServer(req, res) {
 // separate server/ service currently handles loses its forwarding; the fix
 // only stops swallowing the two paths that were never actually implemented
 // there in the first place.
-
-// ── Provider resolution ──────────────────────────────────────────────────────
-// Resolution order: explicit request `provider` -> per-agent routing hint
-// (AGENT_PROVIDER_MAP) -> DEFAULT_LLM_PROVIDER. Falls back to 'openai' if
-// Claude is requested/hinted but not enabled (missing key or disabled flag).
-//
-// Kept as a separate, still-exported function (rather than folding into
-// resolveDispatchTarget below) because a couple of call sites only need the
-// legacy openai/claude string, not a full dispatch target — e.g. anywhere
-// that reports `provider`/`model` before actually calling out.
-function resolveProvider(requestedProvider, agentId) {
-  let provider = DEFAULT_LLM_PROVIDER;
-
-  if (agentId && AGENT_PROVIDER_MAP[agentId]) {
-    provider = AGENT_PROVIDER_MAP[agentId];
-  }
-
-  if (requestedProvider === 'openai' || requestedProvider === 'claude') {
-    provider = requestedProvider;
-  }
-
-  if (provider === 'claude' && !ANTHROPIC_ENABLED) {
-    provider = 'openai';
-  }
-
-  return provider;
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // resolveDispatchTarget/dispatchAgentCall/clampMaxTokens (plus the private
@@ -666,6 +670,7 @@ app.use('/api/governance', createGovernanceRouter({
 }));
 
 const { createAgentControlsRouter, resolveAgentKillSwitch } = require('./routes/agentControls');
+const { resolveAgentGateAuthorization } = require('./agentGatePolicy');
 app.use('/api/agent-controls', createAgentControlsRouter({
   getDb: () => dbPool,
   checkToken,
@@ -693,7 +698,6 @@ app.use('/api/app-state', createAppStateRouter({
   requireAppStateDb,
   dbGetAppConfigMap,
   fanOutRuntimeLifecycleEvent,
-  appStateStore,
   tokenOptimizationSkillKey: TOKEN_OPTIMIZATION_SKILL_KEY,
   setPromptOptimizationSkillCache: (next) => { promptOptimizationSkillCache = next; },
 }));
@@ -761,10 +765,9 @@ const dbSslOption = dbIsLocalHost ? false : { rejectUnauthorized: false };
 // A Railway restart (deploy, OOM, health-check failure) will silently drop all
 // pending invites when running without a database.
 if (!dbConnectionString) {
-  console.warn(
-    '[WARN] No Postgres connection string is configured — invite tokens are stored in-memory only.\n' +
-    '       All pending invites will be lost if the backend process restarts.\n' +
-    '       Set POSTGRES_URL_LOCAL for local development and POSTGRES_URL_PRODUCTION for production.'
+  console.error(
+    '[ERROR] No Postgres connection string is configured. Database-backed routes will return 503.\n' +
+    '        Set POSTGRES_URL_LOCAL for local development and POSTGRES_URL_PRODUCTION for production.'
   );
 } // token -> { projectId, projectName, email, name, appRole, invitedBy, invitedAt, acceptedAt }
 
@@ -787,7 +790,7 @@ if (dbConnectionString) {
       // identical ("DB connection failed, using in-memory store"). Logging
       // err.message/err.code here so the actual cause is visible instead of
       // guessed at.
-      console.warn(`Invite system: DB connection failed (${err.code ?? 'no code'}: ${err.message}), using in-memory store`);
+      console.error(`Database connection failed (${err.code ?? 'no code'}: ${err.message}); database-backed routes are disabled.`);
       dbPool = null;
     });
   } catch { dbPool = null; }
@@ -962,7 +965,8 @@ async function ensurePromptGovernanceTables() {
 
 async function requireAppStateDb(res) {
   if (!dbPool) {
-    return true;
+    res.status(503).json({ error: 'Postgres is unavailable.' });
+    return false;
   }
   try {
     await ensureAppStateTables();
@@ -977,9 +981,7 @@ async function requireAppStateDb(res) {
 // normalizeConfigKey moved to backend/src/routes/appState.js (Phase 3g).
 
 async function dbGetAppConfigMap(keys = null) {
-  if (!dbPool) {
-    return await appStateStore.getAppConfigMap(keys);
-  }
+  if (!dbPool) throw new Error('Postgres is unavailable.');
   const query = keys?.length
     ? {
         text: `SELECT key, value FROM app_config WHERE key = ANY($1::text[])`,
@@ -1183,7 +1185,7 @@ async function getCallerAgentAccess(projectId, email) {
     FROM projects p, jsonb_array_elements(COALESCE(p.data->'teamMembers', '[]'::jsonb)) AS member
     WHERE p.id = $1 AND lower(member->>'email') = $2
     LIMIT 1
-  `, [projectId, normalizedEmail]).catch(() => ({ rows: [] }));
+  `, [projectId, normalizedEmail]);
   return result.rows[0] ?? null;
 }
 
@@ -1210,29 +1212,49 @@ async function authorizeAgentRun(req, res, { projectId, agentId }) {
   // are out of scope for this feature and unaffected.
   if (!projectId || !agentId) return { ok: true, skipped: true };
 
-  // AI Governance MVP-0 (2026-07-21), decision 2: kill-switch check runs
-  // BEFORE the admin-bypass/admin-email checks below. That ordering is
-  // deliberate and different from the per-agent access-scoping check
-  // further down this function -- access scoping is about who's allowed
-  // to run an agent (admins are always exempt from that), but a kill
-  // switch is about whether the agent runs AT ALL. An app admin's own
-  // disable decision must still block that same app admin, or the
-  // "switch" is theater. Fails open on a missing dbPool or a resolution
-  // error, matching this function's existing defense-in-depth posture for
-  // the scoping check below (a DB hiccup must not take down agent
-  // execution entirely -- this is on top of the frontend gate, not the
-  // sole gate).
-  if (dbPool) {
-    const killSwitch = await resolveAgentKillSwitch({ getDb: () => dbPool, projectId, agentId }).catch((err) => {
-      console.warn(`[authorizeAgentRun] kill-switch resolution failed — failing open (project=${projectId}, agent=${agentId}):`, err.message);
-      return { disabled: false, source: 'error' };
+  if (!dbPool) {
+    console.error(`[authorizeAgentRun] authorization database unavailable (project=${projectId}, agent=${agentId})`);
+    res.status(503).json({ error: 'Agent authorization is temporarily unavailable.' });
+    return { ok: false };
+  }
+
+  let killSwitch;
+  try {
+    killSwitch = await resolveAgentKillSwitch({ getDb: () => dbPool, projectId, agentId });
+  } catch (err) {
+    console.error(`[authorizeAgentRun] kill-switch resolution failed (project=${projectId}, agent=${agentId}): ${err?.message ?? err}`);
+    res.status(503).json({ error: 'Agent governance controls are temporarily unavailable.' });
+    return { ok: false };
+  }
+  if (killSwitch.disabled) {
+    res.status(403).json({
+      error: `This agent has been disabled${killSwitch.source === 'project' ? ' for this project' : ''} by an admin and cannot be run right now.`,
     });
-    if (killSwitch.disabled) {
-      res.status(403).json({
-        error: `This agent has been disabled${killSwitch.source === 'project' ? ' for this project' : ''} by an admin and cannot be run right now.`,
-      });
-      return { ok: false };
-    }
+    return { ok: false };
+  }
+
+  // Human review gates are authoritative at the same trusted boundary as
+  // membership, assignment, and kill-switch checks. Admins and service
+  // accounts do not bypass this policy; they may approve a gate through the
+  // governed project flow, but cannot silently execute past it.
+  let gateAuthorization;
+  try {
+    gateAuthorization = await resolveAgentGateAuthorization({
+      db: dbPool,
+      projectId,
+      agentId,
+    });
+  } catch (err) {
+    console.error(`[authorizeAgentRun] review-gate resolution failed (project=${projectId}, agent=${agentId}): ${err?.message ?? err}`);
+    res.status(503).json({ error: 'Review-gate authorization is temporarily unavailable.' });
+    return { ok: false };
+  }
+  if (!gateAuthorization.allowed) {
+    res.status(gateAuthorization.status ?? 403).json({
+      error: gateAuthorization.error ?? 'A required review gate has not been approved.',
+      blockingGate: gateAuthorization.blockingGate,
+    });
+    return { ok: false };
   }
 
   if (req.authUser?.adminBypass && process.env.NODE_ENV !== 'production') {
@@ -1242,28 +1264,25 @@ async function authorizeAgentRun(req, res, { projectId, agentId }) {
   if (callerEmail && isConfiguredAdminEmail(callerEmail)) {
     return { ok: true, skipped: true };
   }
-  if (!dbPool) {
-    // Fail-open: this is defense-in-depth on top of the frontend gate, not
-    // the sole gate, and a DB hiccup must not take down agent execution
-    // entirely (mirrors the invite system's existing graceful-degradation
-    // posture elsewhere in this file).
-    console.warn(`[authorizeAgentRun] dbPool unavailable — skipping per-agent check (project=${projectId}, agent=${agentId})`);
+  if (req.authUser?.serviceAccount) {
     return { ok: true, skipped: true };
   }
   if (!callerEmail) {
-    // No resolvable identity (e.g. PROXY_TOKEN/open-mode calls) -- nothing
-    // to scope against; pre-existing behavior for these paths is unchanged.
-    return { ok: true, skipped: true };
+    res.status(401).json({ error: 'A verified user identity is required to run a project agent.' });
+    return { ok: false };
   }
 
-  const access = await getCallerAgentAccess(projectId, callerEmail).catch(() => null);
+  let access;
+  try {
+    access = await getCallerAgentAccess(projectId, callerEmail);
+  } catch (err) {
+    console.error(`[authorizeAgentRun] access lookup failed (project=${projectId}, agent=${agentId}): ${err?.message ?? err}`);
+    res.status(503).json({ error: 'Agent authorization is temporarily unavailable.' });
+    return { ok: false };
+  }
   if (!access) {
-    // Caller has no team_members/JSONB roster entry we could find for this
-    // project (e.g. projectAccess.ts's synthetic ownerFallbackMember() case,
-    // which has no persisted row at all). Don't 403 a path this function
-    // hasn't fully mapped -- leave it to whatever project-level auth already
-    // gates that request elsewhere.
-    return { ok: true, skipped: true };
+    res.status(403).json({ error: 'You are not a member of this project.' });
+    return { ok: false };
   }
   if (access.app_role === 'project_owner') return { ok: true };
   if (!access.agent_access_scoped) return { ok: true }; // legacy/grandfathered member — full access, as before this feature
@@ -1330,6 +1349,7 @@ app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 // not when it's `require()`d — e.g. from a test file that wants to exercise
 // individual functions without starting a live server.
 if (require.main === module) {
+  assertProductionAuthConfiguration();
   app.listen(PORT, () => {
     console.log(`Agentic SDLC proxy  http://localhost:${PORT}  model=${OPENAI_MODEL}`);
     console.log(CORP_PROXY ? `Corporate proxy: ${CORP_PROXY}` : 'Direct connection (no proxy configured)');
@@ -1357,11 +1377,13 @@ module.exports = {
   appRoleRank,
   isInviteExpired,
   isConfiguredAdminEmail,
-  // Exported for unit testing only (default-password invite provisioning):
-  generateDefaultPassword,
+  // Exported for unit testing only (one-time-link invite provisioning):
   provisionInviteeAccount,
   findSupabaseUserByEmail,
   getSupabaseAdmin,
+  getProductionAuthConfigurationErrors,
+  assertProductionAuthConfiguration,
+  checkToken,
   // Exported for unit testing only (per-agent access scoping, 2026-07-11):
   authorizeAgentRun,
   getCallerAgentAccess,

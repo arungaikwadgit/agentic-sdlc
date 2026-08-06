@@ -36,12 +36,12 @@
 //     already-separate backend/src/promptOptimizationSkill.js module, so
 //     this file requires that module directly rather than having proxy.js
 //     pass it through.
-//   - resolveProvider() (a sibling function in proxy.js, right next to
-//     resolveDispatchTarget) is NOT moved — grepped and confirmed it has no
-//     call sites anywhere in the repo (pre-existing dead code). Left exactly
-//     where it is, untouched, per the "don't touch what you don't need to"
-//     discipline — cleaning up dead code is a separate, later, explicitly
-//     labeled commit if wanted at all.
+//   - resolveProvider() previously lived in proxy.js, right next to
+//     resolveDispatchTarget, but had no call sites anywhere in the repo
+//     (confirmed via repo-wide grep) and was never exported. Removed
+//     entirely in a later, explicitly labeled dead-code-removal pass — this
+//     comment is kept as a pointer for anyone who goes looking for it in
+//     git history.
 
 const http = require('http');
 const https = require('https');
