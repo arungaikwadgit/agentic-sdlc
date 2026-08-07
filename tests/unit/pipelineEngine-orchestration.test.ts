@@ -54,18 +54,94 @@ vi.mock('../../frontend/src/agents/promptDefaults', () => ({
   getAgentModelAssignments: vi.fn(async () => ({})),
 }));
 
+// vi.hoisted: callAgentMock must be the literal same function object used by
+// BOTH the services/api mock (so TS-28's
+// `vi.mocked(api.callAgent).mockRejectedValueOnce(...)` still works) AND
+// l3Runtime's runL3Agent mock below (so the L3 path delegates through the
+// same lever instead of hitting the real, unmocked api.ts). A dynamic
+// `await import('.../services/api')` inside the l3Runtime factory was tried
+// first and silently resolved to the REAL api.ts instead of this mock
+// (confirmed via its real internal [auth]/[callAgent] console logging
+// appearing in test output) -- dynamic import() inside a vi.mock factory
+// isn't reliably intercepted by Vitest's module mocking the way a static
+// import is. vi.hoisted() sharing one reference sidesteps that entirely, and
+// matches the pattern already proven in pipelineEngine-singleAgent.test.ts.
+const { callAgentMock, extractTextMock } = vi.hoisted(() => ({
+  callAgentMock: vi.fn(async () => ({
+    choices: [{ message: { content: 'mock agent output' }, finish_reason: 'stop' }],
+    usage: { total_tokens: 5 },
+  })),
+  extractTextMock: (r: any) => r.choices?.[0]?.message?.content ?? '',
+}));
+
 vi.mock('../../frontend/src/services/api', () => ({
   api: {
-    callAgent: vi.fn(async () => ({
-      choices: [{ message: { content: 'mock agent output' }, finish_reason: 'stop' }],
-      usage: { total_tokens: 5 },
-    })),
-    extractText: (r: any) => r.choices?.[0]?.message?.content ?? '',
+    callAgent: callAgentMock,
+    extractText: extractTextMock,
   },
 }));
 
 vi.mock('../../frontend/src/services/lifecycleEvents', () => ({
   emitLifecycleEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Confirmed root cause (via diagnostic instrumentation, not guessed): agents
+// with AgentDefinition.goal set as a function + tools (sdlcOrchestrator and
+// others in this suite) route through the L3 path (runL3Agent), whose real
+// implementation enforces requiredTools call sequences and a governance
+// footer ("Validation & Confidence" section with a parseable confidence
+// score) as of PR-004. The api.callAgent mock above returns a fixed, static
+// response with no tool calls and no governance footer, so runL3Agent
+// legitimately rejects it on every retry and eventually reports a permanent
+// error -- which is why every onAgentComplete assertion below saw "Number of
+// calls: 0" (the real failures were landing in onAgentError/onPipelineError,
+// which most of these tests don't check). This suite's stated purpose is
+// phase/gate sequencing, not L3 tool-loop/governance validation (that's
+// l3Runtime-requiredTools.test.ts's job), so mock runL3Agent itself, routed
+// through the same shared callAgentMock so TS-28's induced rejection still
+// propagates.
+vi.mock('../../frontend/src/services/l3Runtime', () => ({
+  runL3Agent: vi.fn(async () => {
+    const resp = await callAgentMock();
+    const output = extractTextMock(resp) || 'mock L3 agent output';
+    return {
+      output,
+      tokensUsed: (resp as { usage?: { total_tokens?: number } })?.usage?.total_tokens ?? 10,
+      provider: 'openai' as const,
+      model: 'gpt-4o',
+      l3: { goal: 'test', planRevisions: [], toolTrace: [], decisions: [], iterationCount: 1, iterationTokens: [] },
+    };
+  }),
+}));
+
+// pipelineEngine.ts calls resolvePromptForRun() (services/promptRunPolicy.ts) on
+// every agent run to resolve prompt governance/provenance. Its real
+// implementation calls getGovernedEffectivePrompt() -> a network fetch with no
+// server to answer it in this test environment. Left unmocked, every agent run
+// throws inside pipelineEngine's per-agent try/catch and is routed to
+// onAgentError instead of onAgentComplete -- which is why every assertion below
+// that checks onAgentComplete saw "Number of calls: 0" rather than a real
+// per-test failure. Mock it to the pre-governance behavior these tests already
+// assume: pass the requested/fallback prompt straight through, ungoverned.
+vi.mock('../../frontend/src/services/promptRunPolicy', () => ({
+  resolvePromptForRun: vi.fn(async ({
+    fallbackPrompt,
+    requestedPrompt,
+  }: {
+    fallbackPrompt: string;
+    requestedPrompt?: string;
+  }) => ({
+    prompt: requestedPrompt ?? fallbackPrompt,
+    provenance: {
+      source: 'development-fallback',
+      governed: false,
+      version: null,
+      versionId: null,
+      checksum: 'test-checksum',
+      emergencyOverride: false,
+      resolvedAt: Date.now(),
+    },
+  })),
 }));
 
 import { PipelineEngine, type PipelineCallbacks } from '../../frontend/src/services/pipelineEngine';
@@ -377,7 +453,24 @@ describe('PipelineEngine', () => {
     // Resuming directly at phase4 with gate3 unapproved should hit the
     // "required gate before phase" branch (getGateRequiredBefore), which is
     // otherwise unreachable during normal sequential execution.
-    mockProject = freshProject({ status: 'paused', currentPhase: 'phase4', reviewGates: {} });
+    //
+    // gate0/gate1/gate2 are explicitly pre-approved here (unlike this
+    // fixture's original `reviewGates: {}`) specifically to isolate gate3
+    // as the only pending gate. Leaving them unapproved doesn't test what
+    // this test's name claims: getGateRequiredBeforePhase correctly reports
+    // the EARLIEST unresolved gate, so an all-empty reviewGates at phase4
+    // reports gate0, not gate3 — that's TS-27b's sibling test below
+    // ("does not let a pipeline resume skip an unpersisted gate..."), not
+    // this one. This one is specifically about gate3 blocking on its own.
+    mockProject = freshProject({
+      status: 'paused',
+      currentPhase: 'phase4',
+      reviewGates: {
+        gate0: { id: 'gate0', afterPhases: ['phase0'], approved: true, approvedAt: Date.now() },
+        gate1: { id: 'gate1', afterPhases: ['phase1', 'phase1b'], approved: true, approvedAt: Date.now() },
+        gate2: { id: 'gate2', afterPhases: ['phase2'], approved: true, approvedAt: Date.now() },
+      },
+    });
     const callbacks = makeCallbacks();
     const engine = new PipelineEngine('proj-1', callbacks);
 
@@ -388,6 +481,42 @@ describe('PipelineEngine', () => {
     expect(mockProject.status).toBe('paused');
     expect(mockProject.currentPhase).toBe('phase4');
     expect(callbacks.onPipelineComplete).not.toHaveBeenCalled();
+  });
+
+  // Regression test for the bug diagnosed 2026-08-07: TS-27b above only
+  // proves the check works when the resume phase exactly equals the
+  // blocking gate's own boundary (gate3's boundary IS phase4, and the test
+  // resumes AT phase4) -- getGateRequiredBeforePhase's old fallback handled
+  // that exact-match case correctly even before the fix, because it never
+  // needed to look past a gate it hadn't reached yet. It's resuming from a
+  // phase AFTER an unpersisted gate's boundary that exposed the real bug:
+  // a project.currentPhase that ends up downstream of a gate nobody has
+  // reviewed yet (the ordinary state the very first time any pipeline
+  // pauses at a gate -- see the comment on getGateRequiredBeforePhase)
+  // must still stop there, not run straight through every phase behind it.
+  it('does not let a pipeline resume skip an unpersisted gate whose boundary is behind the resume phase', async () => {
+    // gate0's boundary is phase0a; gate3's is phase4. Resuming at phase5 --
+    // two full gate boundaries past gate0, one past gate3 -- with
+    // reviewGates completely empty must still stop at the EARLIEST pending
+    // gate (gate0), not silently run phase1 through phase5's agents.
+    mockProject = freshProject({ status: 'paused', currentPhase: 'phase5', reviewGates: {} });
+    const callbacks = makeCallbacks();
+    const engine = new PipelineEngine('proj-1', callbacks);
+
+    await engine.run('phase5');
+
+    expect(callbacks.onGateReached).toHaveBeenCalledWith('gate0');
+    expect(callbacks.onAgentStart).not.toHaveBeenCalled();
+    expect(callbacks.onAgentComplete).not.toHaveBeenCalled();
+    expect(mockProject.status).toBe('paused');
+    expect(callbacks.onPipelineComplete).not.toHaveBeenCalled();
+
+    // Every agent from phase1 onward must remain untouched -- none of them
+    // should have been marked complete by the buggy pre-fix behavior.
+    const laterAgents: AgentId[] = ['manager', 'projectCharter', 'brd', 'stakeholder', 'architecture'];
+    for (const agentId of laterAgents) {
+      expect(mockProject.agentRuns[agentId]?.status).not.toBe('complete');
+    }
   });
 
   it('runs all agents in a parallel phase (phase2) via the shared queue (TS-31)', async () => {
