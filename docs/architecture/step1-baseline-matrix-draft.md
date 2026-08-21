@@ -60,17 +60,52 @@ Legend: 🟢 Confirmed working in production/main · 🟡 Exists but limited/par
 | Load/performance testing | 🟡 | One k6 script, 10 virtual users | Not remotely enterprise-scale; single scenario | `tests/performance/pipeline-load.js` | Needs real load modeling before any production-scale claim |
 | User feedback capture (thumbs/rating on agent output) | 🔴 | Absent — confirmed by grep, zero hits across `*.ts`/`*.js` for feedback-capture patterns | No mechanism to learn from user corrections/ratings at all | Grep, earlier this session | Blocks any future "agents improve from feedback" claim entirely — there's no data being captured to improve from |
 
+## F. Data Layer & Schema Governance (new category — largest single finding of this pass)
+
+| Component | Status | Current Capability | Gap | Evidence | Production Impact |
+|---|---|---|---|---|---|
+| Migration files vs. live applied schema | 🔴 | Live `pgmigrations` tracking table (node-pg-migrate's own record, queried directly) shows migrations `000` through `023` have run against production, at three batch timestamps (2026-07-06, 2026-07-24, 2026-07-25) | The `main` branch's `backend/migrations/` folder only contains `000`-`009` and `011`-`015` — **migration `010` (`voice_rerun_backlog`) and `016` through `023` (`policy_decisions`, `memory_policy_audit`, `signed_policy_decisions`, `policy_decision_consumption`, `autonomous_agentic_execution_backlog`, `agent_token_usage_view`, `tool_call_audit_log`, `correlation_ids`) do not exist as files in the repo at all.** A fresh `npm run migrate:up` against a new environment today would stop short of production's actual schema — it cannot reproduce what's live. This also fully explains an earlier finding this session (two SECURITY DEFINER views flagged by the security advisor with no matching migration file anywhere in the repo) — migration `021` created them; that file was simply never committed. | `execute_sql` against live `pgmigrations` table this session, cross-checked against `ls backend/migrations/*.sql` earlier this session | High, and the single biggest "is this reproducible" gap found in the whole program so far. Disaster recovery, new-environment stand-up, or onboarding a new engineer would all silently diverge from production today. This should be a very early, high-priority remediation item — not folded into a general "testing strategy" wave |
+| RLS policy coverage, precise count (correcting an earlier session's blanket characterization) | 🟡 | Queried directly: `projects` and `team_members` each have 4 real policies (SELECT/INSERT/UPDATE/DELETE, `app_role`-based); `agent_runs`, `agent_jobs`, `memory_records`, `rollback_log`, `invite_log`, `action_proposals` each have exactly 1 (a blanket `ALL` policy); the remaining 26 of 34 tables have RLS enabled with **zero** policies — deny-by-default, service-role-key-only access | This is a legitimate, common pattern for backend-only tables (default-deny until the app explicitly opens access), not automatically a defect — but it means "24 tables, zero DB-layer defense in depth" (an earlier session's phrasing) overstates it for the core user-facing tables and understates the precise count for governance/audit tables. Worth a deliberate per-table review, not a blanket fix | `execute_sql` against `pg_policies` this session | Refines, not reverses, the earlier finding — replace the earlier blanket claim with this table when Step 6 specs reference RLS posture |
+
+## G. Application-Layer RBAC
+
+| Component | Status | Current Capability | Gap | Evidence | Production Impact |
+|---|---|---|---|---|---|
+| Role model | 🟢 | Four roles (`project_owner`/`editor`/`reviewer`/`viewer`), defined identically in frontend types and the DB `app_role` enum | None known — the two are in sync | `frontend/src/types/project.types.ts:10`; `backend/migrations/000_full_schema.sql:47` | — |
+| Permission checks | 🟢 | Centralized in `frontend/src/lib/projectAccess.ts`: `getProjectMember`, `isProjectAdminUser`, `getProjectExportPermission`, `getReviewGatePermission`, `getAgentRunPermission` | Not yet checked: whether backend routes (`server/src`) independently re-verify these permissions server-side, or trust the frontend's checks | `frontend/src/lib/projectAccess.ts:54-189` | ⚪ Requires verification — if the server API doesn't re-check permissions itself, a malicious client could bypass frontend-only RBAC entirely. This is a meaningfully different risk level depending on the answer and should be checked before any security-facing claim |
+
+## H. Third-Party Integrations
+
+| Component | Status | Current Capability | Gap | Evidence | Production Impact |
+|---|---|---|---| ---|---|
+| Supported providers | 🟡 | Five: Jira, Confluence, GitHub, GitLab, Slack (types only defined for Jira and GitHub credential shapes) | Confluence/GitLab/Slack credential shapes aren't typed yet — unclear if those three are fully wired or placeholder | `frontend/src/types/integration.types.ts` | Scope this precisely before any Step 6 spec claims "N integrations supported" |
+| Credential storage | 🟡 | Client-side AES-GCM encryption (`utils/crypto.ts`), passphrase stored in `localStorage`, synced via `appStateApi` | This is a **separate** credential-storage mechanism from `backend/src/integrationCredentialCrypto.js` (server-side AES-256-GCM) — two parallel systems for what sounds like the same concern | `frontend/src/hooks/useIntegrations.ts` | ⚪ Requires verification — need to confirm these serve genuinely different purposes (e.g. one for user-level API keys, one for org-level) rather than being redundant/inconsistent security postures |
+
+## I. Cost & Token Governance
+
+| Component | Status | Current Capability | Gap | Evidence | Production Impact |
+|---|---|---|---|---|---|
+| Token usage tracking (DB) | 🟢 (schema exists) | `agent_token_usage` / `agent_token_usage_summary` views live in production (migration `021`, per Ledger F above) | The migration file that creates them isn't in the repo (see Data Layer finding above) | Live Supabase `get_advisors` + `pgmigrations`, this session | Same reproducibility gap as Ledger F |
+| Token Optimizer / AI Governance agents | 🟡 | Both are real pipeline agents (`frontend/src/agents/definitions.ts:222`, `:283`), exempted from team-assignment-skip so they always run in the synchronous pipeline | The separate **async** background-worker path for these (per earlier finding) is off in production (`BACKGROUND_WORKER_ENABLED` unset) — so only the in-pipeline synchronous run happens, not whatever the background worker was meant to add | `frontend/src/agents/definitions.ts`; earlier live Railway variable check | Any spec assuming the background worker's periodic/async governance runs needs to state plainly that only the synchronous, in-pipeline version currently runs |
+
+## J. Frontend UI — Structural Inventory (not a quality audit)
+
+| Component | Status | Current Capability | Gap | Evidence | Production Impact |
+|---|---|---|---|---|---|
+| Component organization | 🟢 | 11 feature-organized directories under `frontend/src/components/`: admin(4 files), auth(5), common(4), createProject(6), dashboard(5), documents(6), invite(1), pipeline(7), reviewGate(1), settings(2), team(1) — 42 `.tsx` files total | This is a structural count only — no per-component quality/accessibility/consistency review has been done | `find frontend/src/components` this session | A real UI/UX audit (design-system consistency, accessibility) is a distinct future pass, not implied by this row |
+| Agent roster size (correction) | 🟢 | **32** agent definitions confirmed by direct count (`frontend/src/agents/definitions.ts`), not "30" as stated in earlier session notes and in this document's own RAG section above | Minor factual correction, noted so it doesn't propagate | `grep -c "^\s*id:\s*'"` this session | Update "30 pipeline agents" references elsewhere in this program to 32 |
+
 ---
 
 ## What this matrix does NOT cover yet
 
 Explicitly out of scope for this pass — not overlooked, deliberately deferred to avoid guessing:
 
-- Frontend UI component inventory (dashboards, individual agent panels, mockup previews, etc.)
-- The full 30-agent roster's individual prompt quality/scope (only the RAG-grounding gap above is characterized)
-- RBAC role/permission matrix detail (only the DB-layer RLS gap is characterized here — app-layer RBAC itself needs its own pass)
-- Third-party integrations (Slack/Jira/etc. connectors, if any exist in this codebase — not yet checked)
-- Cost/token-usage governance beyond the "worker is off" finding above
+- Per-agent prompt quality/scope for all 32 agents individually (only the RAG-grounding gap is characterized at the fleet level)
+- Whether `server/src` independently re-verifies RBAC (flagged ⚪ in section G, needs a dedicated check)
+- Full typing/wiring confirmation for Confluence/GitLab/Slack integrations (flagged 🟡 in section H)
+- Per-component UI/UX quality, accessibility, and design-system-consistency audit (section J is structural only)
+- The 3 backend integration tests that need a live Postgres to run at all (noted in section E but not executed)
 
 These become their own rows once a dedicated evidence pass is run for each — continuing this matrix, not restarting it.
 
