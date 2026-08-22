@@ -1,0 +1,40 @@
+-- =============================================================================
+-- Migration 010: Voice / rerun backlog -- reconstructed retroactively,
+--                 2026-08-22, Agentic SDLC Enterprise-Readiness Program,
+--                 Wave 1 item 1 (see docs/architecture/step4-specs-wave1-draft.md).
+--
+-- Apply directly with psql (see docs/DEVELOPMENT.md):
+--   psql "$POSTGRES_URL_PRODUCTION" -f backend/migrations/010_voice_rerun_backlog.sql
+--
+-- WHY THIS FILE EXISTS, AND WHY IT IS INTENTIONALLY A NO-OP
+-- -----------------------------------------------------------
+-- Production's `pgmigrations` table records this migration as applied
+-- (2026-07-24), but this repo's `backend/migrations/` directory never had a
+-- matching file -- discovered during this program's Step 1 baseline audit.
+-- This file closes that gap for tracking purposes.
+--
+-- Investigated before writing this file (per Process Rule 1 -- cited,
+-- cross-checked, flagged rather than guessed): searched live production
+-- schema (information_schema.columns, pg_indexes, pg_proc, pg_type) for any
+-- column, index, enum, or function referencing "voice" or "rerun" anywhere
+-- in `public`. Found none. Also searched this repo's application code:
+-- 'agent_rerun' exists as one value of the free-text
+-- `LifecycleEventType` union in backend/src/lifecycle/lifecyclePolicy.ts,
+-- and both agent_jobs.trigger_type and lifecycle_events.event_type (the
+-- columns that would carry it) are plain TEXT with no CHECK constraint --
+-- both already existed before this migration's tracked date (trigger_type:
+-- 009_background_agent_lifecycle.sql; event_type: also 009, same file).
+-- No "voice"-specific code path was found at all.
+--
+-- Conclusion: this migration's actual DDL, if any, left no discoverable
+-- trace in the current live schema. Rather than fabricate plausible-looking
+-- columns or indexes that were never actually applied -- which would make
+-- this reconstruction WORSE than having no file, since a future `psql -f`
+-- of a fabricated file could silently diverge from production -- this file
+-- intentionally does nothing. If "voice" backlog handling turns out to need
+-- real schema (a dedicated trigger_type enum value, a voice-specific queue
+-- table, etc.), that is new work for a future migration, not a
+-- reconstruction of this one.
+-- =============================================================================
+
+SELECT 1; -- intentional no-op; see header comment.

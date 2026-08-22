@@ -1,0 +1,39 @@
+-- =============================================================================
+-- Migration 018: Signed policy decisions -- reconstructed retroactively,
+--                 2026-08-22, Agentic SDLC Enterprise-Readiness Program,
+--                 Wave 1 item 1 (see docs/architecture/step4-specs-wave1-draft.md).
+--
+-- Apply directly with psql (see docs/DEVELOPMENT.md):
+--   psql "$POSTGRES_URL_PRODUCTION" -f backend/migrations/018_signed_policy_decisions.sql
+--
+-- WHY THIS FILE EXISTS, AND WHY IT IS INTENTIONALLY A NO-OP
+-- -----------------------------------------------------------
+-- Same situation as 010_voice_rerun_backlog.sql -- production's
+-- `pgmigrations` records this as applied (2026-07-24, same batch as
+-- 006-022), but no matching file existed in this repo.
+--
+-- Investigated before writing this file: checked policy_decisions (016) and
+-- every other table for a signature-shaped column (signed_by, signature,
+-- signed_at, signer_*) -- none exist anywhere in `public`. Checked
+-- governance_override (the one table that conceptually could carry a human
+-- sign-off: it has actor_email/actor_role/reason on a governance_decision_id
+-- FK) and action_proposals (has decided_by/decided_at) -- both predate this
+-- migration (001_initial_schema) and neither has a signature-specific
+-- column. Checked pg_proc for any sign/verify function -- none. Checked
+-- application code (backend/src, server/src, frontend/src) for
+-- signed_by/signPolicyDecision/policySignature -- zero hits outside this
+-- program's own planning docs.
+--
+-- Conclusion: no discoverable live schema trace, same as 010. Two plausible
+-- explanations, neither of which changes the right action here: (a) the
+-- "signing" concept was implemented purely at the application layer inside
+-- policy_decisions.metadata (JSONB), needing no dedicated column, or (b) the
+-- feature was planned and tracked but its schema was simplified/rolled into
+-- 019_policy_decision_consumption.sql's consumed_at/consumption_key by the
+-- time it actually shipped. Either way, fabricating a signature column here
+-- would assert something false about production. This file is an
+-- intentional no-op so `pgmigrations` numbering stays continuous without
+-- claiming schema that was never applied.
+-- =============================================================================
+
+SELECT 1; -- intentional no-op; see header comment.
