@@ -6,7 +6,7 @@
  */
 import { getAuthHeader } from '@/services/api';
 import type { BacklogItem } from '@/types/adminData.types';
-import type { IntegrationCredential } from '@/types/integration.types';
+import type { DecryptedIntegration, IntegrationCredential, IntegrationProvider } from '@/types/integration.types';
 
 function getApiBase(raw: string | undefined): string {
   const base = (raw ?? '/api').replace(/\/$/, '');
@@ -91,20 +91,32 @@ export async function listIntegrations(): Promise<IntegrationCredential[]> {
   return (data?.items ?? []) as IntegrationCredential[];
 }
 
-export async function getIntegration(id: string): Promise<IntegrationCredential | null> {
+/** Fetches and server-side decrypts one integration's credentials. Returns
+ * null both for a genuinely missing record and for a LEGACY_RECORD (saved
+ * under the old client-side encryption scheme, no longer decryptable) --
+ * callers already treat "not found" as "prompt reconnect", which is the
+ * right UX for both cases. */
+export async function getIntegration<T = Record<string, unknown>>(
+  id: string
+): Promise<DecryptedIntegration<T> | null> {
   try {
-    return await apiFetch(`/app-state/integrations/${encodeURIComponent(id)}`) as IntegrationCredential;
+    return await apiFetch(`/app-state/integrations/${encodeURIComponent(id)}`) as DecryptedIntegration<T>;
   } catch (error) {
     if (error instanceof Error && /not found/i.test(error.message)) return null;
     throw error;
   }
 }
 
-export async function saveIntegration(record: IntegrationCredential): Promise<void> {
-  await apiFetch(`/app-state/integrations/${encodeURIComponent(record.id)}`, {
+export async function saveIntegration(
+  id: string,
+  provider: IntegrationProvider,
+  label: string,
+  credentials: object
+): Promise<void> {
+  await apiFetch(`/app-state/integrations/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(record),
+    body: JSON.stringify({ provider, label, credentials }),
   });
   emit('integrations');
 }

@@ -3,7 +3,6 @@
  * Proprietary and Confidential — Unauthorized use prohibited.
  */
 import { useEffect, useState } from 'react';
-import { encrypt, decrypt } from '@/utils/crypto';
 import type { IntegrationCredential, IntegrationProvider } from '@/types/integration.types';
 import {
   deleteIntegration,
@@ -13,17 +12,19 @@ import {
   subscribeAppStateChange,
 } from '@/services/appStateApi';
 
-const PASSPHRASE_KEY = 'sdlc_enc_passphrase';
-
-function getPassphrase(): string {
-  let p = localStorage.getItem(PASSPHRASE_KEY);
-  if (!p) {
-    p = crypto.randomUUID(); // device-scoped passphrase, persisted so saved credentials remain decryptable across sessions
-    localStorage.setItem(PASSPHRASE_KEY, p);
-  }
-  return p;
-}
-
+// Encryption is server-side as of this pass (backend/src/integrationCredentialCrypto.js,
+// wired into backend/src/routes/appState.js). Previously this hook encrypted
+// client-side with a passphrase auto-generated via crypto.randomUUID() and
+// stored in localStorage -- meaning credentials became permanently
+// undecryptable if localStorage was ever cleared, and the "key" never lived
+// anywhere centrally rotatable. The backend now holds the only key
+// (APP_INTEGRATION_ENCRYPTION_KEY) and this hook just passes plaintext
+// credentials over the authenticated /api/app-state/integrations connection.
+// Records saved under the old scheme come back as 404 from GET
+// /integrations/:id (see that route's LEGACY_RECORD handling) -- loadCredential
+// below treats that identically to "never connected", so existing call sites
+// (ProjectSettings.tsx, GithubPushModal.tsx) already prompt reconnect without
+// needing a separate migration UI.
 export function useIntegrations() {
   const [integrations, setIntegrations] = useState<IntegrationCredential[]>([]);
 
@@ -53,29 +54,15 @@ export function useIntegrations() {
     credentials: object,
     id?: string
   ): Promise<string> {
-    const passphrase = getPassphrase();
-    const json = JSON.stringify(credentials);
-    const { ciphertext, iv, salt } = await encrypt(json, passphrase);
-
-    const record: IntegrationCredential = {
-      id: id ?? crypto.randomUUID(),
-      provider,
-      label,
-      encryptedData: JSON.stringify({ ciphertext, salt }),
-      iv,
-      createdAt: Date.now(),
-    };
-    await saveIntegration(record);
-    return record.id;
+    const recordId = id ?? crypto.randomUUID();
+    await saveIntegration(recordId, provider, label, credentials);
+    return recordId;
   }
 
   async function loadCredential<T>(id: string): Promise<T | null> {
-    const record = await getIntegration(id);
-    if (!record) return null;
-    const passphrase = getPassphrase();
-    const { ciphertext, salt } = JSON.parse(record.encryptedData);
-    const json = await decrypt({ ciphertext, iv: record.iv, salt }, passphrase);
-    return JSON.parse(json) as T;
+    const decrypted = await getIntegration(id);
+    if (!decrypted) return null;
+    return decrypted.credentials as T;
   }
 
   async function removeCredential(id: string): Promise<void> {

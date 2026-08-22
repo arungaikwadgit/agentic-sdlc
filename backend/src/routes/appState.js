@@ -38,6 +38,12 @@
 // Extraction discipline (plan Section 0.1): every function body below is a
 // byte-for-byte verbatim copy from proxy.js.
 
+const {
+  encryptIntegrationCredentials,
+  decryptIntegrationCredentials,
+  IntegrationCredentialCryptoError,
+} = require('../integrationCredentialCrypto');
+
 function createAppStateRouter({
   getDb,
   checkToken,
@@ -353,27 +359,78 @@ function createAppStateRouter({
     return res.json({ items });
   });
 
+  // Server-side encryption (integrationCredentialCrypto.js) as of this pass --
+  // previously this module only stored/returned whatever ciphertext the
+  // browser had already produced with a device-local, localStorage-held
+  // passphrase (see git history: frontend/src/utils/crypto.ts +
+  // frontend/src/hooks/useIntegrations.ts). That meant credentials became
+  // permanently undecryptable if a user cleared localStorage or switched
+  // devices, and the encryption key never lived anywhere centrally
+  // rotatable/auditable. integrationCredentialCrypto.js already existed,
+  // fully built and tested, but nothing ever called it -- this wires it in.
+  // Existing rows saved under the old client-side scheme fail decryption
+  // here with IntegrationCredentialCryptoError('LEGACY_RECORD', ...) (see
+  // that module's STORAGE_MARKER check) -- treated the same as "not found"
+  // below so the existing frontend "reconnect this integration" flow just
+  // handles it, no separate migration UI needed.
   router.get('/integrations/:id', checkToken, requireAdmin, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
     const item = await dbGetIntegration(req.params.id);
     if (!item) return res.status(404).json({ error: 'Integration not found.' });
-    return res.json(item);
+    try {
+      const credentials = decryptIntegrationCredentials({
+        id: item.id,
+        provider: item.provider,
+        encryptedData: item.encryptedData,
+        iv: item.iv,
+        keyValue: process.env.APP_INTEGRATION_ENCRYPTION_KEY,
+      });
+      return res.json({
+        id: item.id,
+        provider: item.provider,
+        label: item.label,
+        credentials,
+        createdAt: item.createdAt,
+      });
+    } catch (error) {
+      if (error instanceof IntegrationCredentialCryptoError && error.code === 'LEGACY_RECORD') {
+        return res.status(404).json({ error: 'Integration not found.', code: 'LEGACY_RECORD' });
+      }
+      if (error instanceof IntegrationCredentialCryptoError) {
+        return res.status(500).json({ error: error.message, code: error.code });
+      }
+      throw error;
+    }
   });
 
   router.put('/integrations/:id', checkToken, requireAdmin, async (req, res) => {
     if (!await requireAppStateDb(res)) return;
     const payload = req.body ?? {};
+    if (!payload.provider || !payload.label || !payload.credentials) {
+      return res.status(400).json({ error: 'provider, label, and credentials are required.' });
+    }
+    let encryptedData, iv;
+    try {
+      ({ encryptedData, iv } = encryptIntegrationCredentials({
+        id: req.params.id,
+        provider: payload.provider,
+        credentials: payload.credentials,
+        keyValue: process.env.APP_INTEGRATION_ENCRYPTION_KEY,
+      }));
+    } catch (error) {
+      if (error instanceof IntegrationCredentialCryptoError) {
+        return res.status(500).json({ error: error.message, code: error.code });
+      }
+      throw error;
+    }
     const record = {
       id: req.params.id,
       provider: payload.provider,
       label: payload.label,
-      encryptedData: payload.encryptedData,
-      iv: payload.iv,
+      encryptedData,
+      iv,
       createdAt: payload.createdAt ?? Date.now(),
     };
-    if (!record.id || !record.provider || !record.label || !record.encryptedData || !record.iv) {
-      return res.status(400).json({ error: 'id, provider, label, encryptedData, and iv are required.' });
-    }
     await dbSaveIntegration(record);
     return res.json({ ok: true, id: record.id });
   });

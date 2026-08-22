@@ -8,10 +8,23 @@ export interface IntegrationCredential {
   id: string;
   provider: IntegrationProvider;
   label: string;
-  /** AES-GCM encrypted JSON blob of the actual credentials */
+  /** Server-side AES-256-GCM encrypted JSON blob (backend/src/integrationCredentialCrypto.js).
+   * Opaque to the frontend -- only used for the metadata list view; never decrypted client-side. */
   encryptedData: string;
-  /** Base64 IV used during encryption */
+  /** Storage-format marker set by the backend encryption module, not a real IV the frontend uses. */
   iv: string;
+  createdAt: number;
+}
+
+/** Returned by GET /app-state/integrations/:id -- the backend decrypts
+ * server-side and sends the plaintext credentials over the authenticated
+ * connection. Distinct from IntegrationCredential (the list/metadata shape,
+ * which stays opaque). */
+export interface DecryptedIntegration<T = Record<string, unknown>> {
+  id: string;
+  provider: IntegrationProvider;
+  label: string;
+  credentials: T;
   createdAt: number;
 }
 

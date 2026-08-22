@@ -5,6 +5,10 @@ export {};
 
 const express = require('express');
 const { createAppStateRouter } = require('./appState');
+const {
+  encryptIntegrationCredentials,
+  decryptIntegrationCredentials,
+} = require('../integrationCredentialCrypto');
 
 function defaultAppStateStore(): any {
   return {
@@ -488,17 +492,45 @@ describe('appState routes', () => {
   });
 
   describe('GET /integrations/:id', () => {
-    it('returns the integration when found', async () => {
+    // Server-side decryption (backend/src/integrationCredentialCrypto.js) as
+    // of the item #14 migration -- this route now decrypts before
+    // responding, so these tests exercise the real crypto module against a
+    // fixed test key rather than asserting on opaque ciphertext passthrough.
+    const TEST_KEY = '11'.repeat(32);
+    const originalKey = process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+
+    beforeEach(() => {
+      process.env.APP_INTEGRATION_ENCRYPTION_KEY = TEST_KEY;
+    });
+
+    afterAll(() => {
+      if (originalKey === undefined) delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      else process.env.APP_INTEGRATION_ENCRYPTION_KEY = originalKey;
+    });
+
+    it('returns the decrypted credentials when found', async () => {
+      const { encryptedData, iv } = encryptIntegrationCredentials({
+        id: 'i1',
+        provider: 'slack',
+        credentials: { token: 'secret-token' },
+        keyValue: TEST_KEY,
+      });
       const db = {
         query: jest.fn().mockResolvedValue({
-          rows: [{ id: 'i1', provider: 'slack', label: 'Slack', encrypted_data: 'enc', iv: 'iv1', created_at: 2000 }],
+          rows: [{ id: 'i1', provider: 'slack', label: 'Slack', encrypted_data: encryptedData, iv, created_at: 2000 }],
         }),
       };
       await withServer({ db }, async ({ baseUrl }) => {
         const res = await fetch(`${baseUrl}/integrations/i1`);
         const body: any = await res.json();
         expect(res.status).toBe(200);
-        expect(body).toEqual({ id: 'i1', provider: 'slack', label: 'Slack', encryptedData: 'enc', iv: 'iv1', createdAt: 2000 });
+        expect(body).toEqual({
+          id: 'i1',
+          provider: 'slack',
+          label: 'Slack',
+          credentials: { token: 'secret-token' },
+          createdAt: 2000,
+        });
       });
     });
 
@@ -508,6 +540,43 @@ describe('appState routes', () => {
         const res = await fetch(`${baseUrl}/integrations/missing`);
         expect(res.status).toBe(404);
         expect(await res.json()).toEqual({ error: 'Integration not found.' });
+      });
+    });
+
+    it('returns 404 with code LEGACY_RECORD for records saved under the old client-side scheme', async () => {
+      const db = {
+        query: jest.fn().mockResolvedValue({
+          rows: [{
+            id: 'i1',
+            provider: 'slack',
+            label: 'Slack',
+            encrypted_data: 'client-side-aes-gcm-ciphertext',
+            iv: 'browser-generated-iv',
+            created_at: 2000,
+          }],
+        }),
+      };
+      await withServer({ db }, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/integrations/i1`);
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: 'Integration not found.', code: 'LEGACY_RECORD' });
+      });
+    });
+
+    it('returns 500 with code KEY_NOT_CONFIGURED when the encryption key env var is unset', async () => {
+      delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      const db = {
+        query: jest.fn().mockResolvedValue({
+          rows: [{ id: 'i1', provider: 'slack', label: 'Slack', encrypted_data: '{}', iv: 'server:aes-256-gcm:v1', created_at: 2000 }],
+        }),
+      };
+      await withServer({ db }, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/integrations/i1`);
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({
+          error: 'Integration credential encryption is not configured.',
+          code: 'KEY_NOT_CONFIGURED',
+        });
       });
     });
 
@@ -532,9 +601,24 @@ describe('appState routes', () => {
   });
 
   describe('PUT /integrations/:id', () => {
-    const validPayload = { provider: 'slack', label: 'Slack', encryptedData: 'enc', iv: 'iv1' };
+    // Payload shape changed under the item #14 migration: the frontend now
+    // sends plaintext credentials and the route encrypts server-side
+    // (backend/src/integrationCredentialCrypto.js) instead of receiving an
+    // already-encrypted blob from the browser.
+    const TEST_KEY = '11'.repeat(32);
+    const originalKey = process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+    const validPayload = { provider: 'slack', label: 'Slack', credentials: { token: 'secret-token' } };
 
-    it('saves the integration and returns ok+id', async () => {
+    beforeEach(() => {
+      process.env.APP_INTEGRATION_ENCRYPTION_KEY = TEST_KEY;
+    });
+
+    afterAll(() => {
+      if (originalKey === undefined) delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      else process.env.APP_INTEGRATION_ENCRYPTION_KEY = originalKey;
+    });
+
+    it('encrypts the credentials server-side and saves the integration', async () => {
       await withServer({}, async ({ baseUrl, deps }) => {
         const res = await fetch(`${baseUrl}/integrations/i1`, {
           method: 'PUT',
@@ -545,8 +629,19 @@ describe('appState routes', () => {
         expect(await res.json()).toEqual({ ok: true, id: 'i1' });
         expect(deps.db.query).toHaveBeenCalledWith(
           expect.stringContaining('INSERT INTO app_integrations'),
-          expect.arrayContaining(['i1', 'slack', 'Slack', 'enc', 'iv1']),
+          expect.arrayContaining(['i1', 'slack', 'Slack']),
         );
+        const [, params] = deps.db.query.mock.calls[0];
+        const [, , , encryptedData, iv] = params;
+        expect(iv).toBe('server:aes-256-gcm:v1');
+        expect(encryptedData).not.toContain('secret-token');
+        expect(decryptIntegrationCredentials({
+          id: 'i1',
+          provider: 'slack',
+          encryptedData,
+          iv,
+          keyValue: TEST_KEY,
+        })).toEqual({ token: 'secret-token' });
       });
     });
 
@@ -555,10 +650,26 @@ describe('appState routes', () => {
         const res = await fetch(`${baseUrl}/integrations/i1`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'slack', label: 'Slack', encryptedData: 'enc' }),
+          body: JSON.stringify({ provider: 'slack', label: 'Slack' }),
         });
         expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: 'id, provider, label, encryptedData, and iv are required.' });
+        expect(await res.json()).toEqual({ error: 'provider, label, and credentials are required.' });
+      });
+    });
+
+    it('returns 500 with code KEY_NOT_CONFIGURED when the encryption key env var is unset', async () => {
+      delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      await withServer({}, async ({ baseUrl }) => {
+        const res = await fetch(`${baseUrl}/integrations/i1`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(validPayload),
+        });
+        expect(res.status).toBe(500);
+        expect(await res.json()).toEqual({
+          error: 'Integration credential encryption is not configured.',
+          code: 'KEY_NOT_CONFIGURED',
+        });
       });
     });
 
@@ -874,6 +985,24 @@ describe('appState routes', () => {
     // promptGovernance.js -- see report).
     const getDb = () => null;
 
+    // GET/PUT /integrations/:id still run through the real server-side
+    // crypto module regardless of which storage backend is active (the
+    // crypto call happens in the route handler, not inside dbGetIntegration/
+    // dbSaveIntegration) -- so these fallback tests need a real key and a
+    // real encrypted envelope too, same as the DB-backed describe blocks
+    // above.
+    const TEST_KEY = '11'.repeat(32);
+    const originalKey = process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+
+    beforeEach(() => {
+      process.env.APP_INTEGRATION_ENCRYPTION_KEY = TEST_KEY;
+    });
+
+    afterAll(() => {
+      if (originalKey === undefined) delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      else process.env.APP_INTEGRATION_ENCRYPTION_KEY = originalKey;
+    });
+
     it('PUT /config/:key falls back to appStateStore.setAppConfigValue', async () => {
       const appStateStore = defaultAppStateStore();
       await withServer({ getDb, appStateStore }, async ({ baseUrl }) => {
@@ -938,10 +1067,23 @@ describe('appState routes', () => {
 
     it('GET /integrations/:id falls back to appStateStore.getIntegration (found)', async () => {
       const appStateStore = defaultAppStateStore();
-      appStateStore.getIntegration.mockResolvedValue({ id: 'i1', provider: 'p', label: 'l', encryptedData: 'e', iv: 'v', createdAt: 1 });
+      const { encryptedData, iv } = encryptIntegrationCredentials({
+        id: 'i1',
+        provider: 'p',
+        credentials: { token: 'secret-token' },
+        keyValue: TEST_KEY,
+      });
+      appStateStore.getIntegration.mockResolvedValue({ id: 'i1', provider: 'p', label: 'l', encryptedData, iv, createdAt: 1 });
       await withServer({ getDb, appStateStore }, async ({ baseUrl }) => {
         const res = await fetch(`${baseUrl}/integrations/i1`);
         expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({
+          id: 'i1',
+          provider: 'p',
+          label: 'l',
+          credentials: { token: 'secret-token' },
+          createdAt: 1,
+        });
       });
     });
 
@@ -959,10 +1101,13 @@ describe('appState routes', () => {
         const res = await fetch(`${baseUrl}/integrations/i1`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: 'p', label: 'l', encryptedData: 'e', iv: 'v' }),
+          body: JSON.stringify({ provider: 'p', label: 'l', credentials: { token: 'secret-token' } }),
         });
         expect(res.status).toBe(200);
         expect(appStateStore.saveIntegration).toHaveBeenCalled();
+        const [record] = appStateStore.saveIntegration.mock.calls[0];
+        expect(record.iv).toBe('server:aes-256-gcm:v1');
+        expect(record.encryptedData).not.toContain('secret-token');
       });
     });
 
