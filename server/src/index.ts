@@ -22,7 +22,6 @@ import { v4 as uuidv4 } from 'uuid';
 
 import projectsRouter   from './routes/projects';
 import agentsRouter     from './routes/agents';
-import invitesRouter    from './routes/invites';
 import adminTestsRouter from './routes/adminTests';
 import { supabaseAdmin } from './lib/supabase';
 
@@ -59,6 +58,18 @@ if (missing.length > 0) {
 
 const app  = express();
 const PORT = Number(process.env.PORT ?? 3001);
+
+// ── Trust proxy ───────────────────────────────────────────────────────────────
+// Railway terminates TLS and proxies every request through exactly one hop
+// before it reaches this container, setting X-Forwarded-For to the real
+// client IP. Without this, Express's default (trust nothing) makes
+// express-rate-limit below key its counters off Railway's own proxy IP
+// instead of the caller's -- logged directly from this service's own
+// production traffic as a recurring ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// warning on every request (Step 2 dependency-map finding #19). `1` (not
+// `true`) trusts exactly the nearest hop, matching Railway's topology,
+// rather than trusting every hop in an arbitrarily long forwarded-for chain.
+app.set('trust proxy', 1);
 
 // ── Compression ───────────────────────────────────────────────────────────────
 app.use(compression());
@@ -153,8 +164,20 @@ app.use('/api/agents/', rateLimit({
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/projects', projectsRouter);
 app.use('/api/agents',   agentsRouter);
-app.use('/api/invites',  invitesRouter);
 app.use('/api/admin',    adminTestsRouter);
+// NOTE: '/api/invites' (plural) intentionally has no route here. The real,
+// live invite system is backend/src/routes/inviteRoutes.js, mounted at
+// singular '/api/invite' on the backend/proxy service (confirmed via
+// frontend/src/components/invite/InviteAcceptPage.tsx, which calls
+// /api/invite/validate and /api/invite/:token/accept, never the plural
+// path). This service used to also mount a parallel './routes/invites.ts'
+// here -- removed 2026-08-21 (Wave 1 remediation, item 6) because every one
+// of its handlers queried `project_members` and `invites`, two tables
+// migration 006_consolidate_team_members.sql explicitly DROPPED from
+// production (confirmed live: only `team_members` exists). It was
+// unreachable from the frontend (confirmed by grep -- nothing calls plural
+// /api/invites), so this was dead code that would 404/500 if anything ever
+// hit it, not a live break. Falls through to the 404 handler below now.
 
 // ── Health check (enhanced) ───────────────────────────────────────────────────
 app.get('/health', async (_req: Request, res: Response) => {
