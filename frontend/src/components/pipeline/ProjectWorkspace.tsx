@@ -18,6 +18,7 @@ import type { Tab as ProjectSettingsTab, InviteLinkInfo, InviteErrorInfo } from 
 import ExportMenu from '../documents/ExportMenu';
 import GithubPushModal from '../documents/GithubPushModal';
 import AgentThinkingPanel from './AgentThinkingPanel';
+import AgentFeedbackWidget from './AgentFeedbackWidget';
 import ReviewImprovePanel from './ReviewImprovePanel';
 import MockupPreview from '../documents/MockupPreview';
 import DiagramPreview from '../documents/DiagramPreview';
@@ -1682,6 +1683,7 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
                       <button className={styles.docTab + ' ' + (docViewMode === 'preview' ? styles.docTabActive : '')} onClick={() => setDocViewMode('preview')}>Prototype</button>
                     </div>
                   )}
+                  {selectedAgent && <AgentFeedbackWidget projectId={projectId} agentId={selectedAgent} />}
                   <button
                     className={styles.thinkingBtn + ' ' + (docViewMode === 'thinking' ? styles.thinkingBtnActive : '')}
                     onClick={() => setDocViewMode(docViewMode === 'thinking' ? 'spec' : 'thinking')}

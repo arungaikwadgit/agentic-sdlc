@@ -38,6 +38,7 @@ import type { Project } from '@/types/project.types';
 import BacklogTab from './BacklogTab';
 import TestsTab from './TestsTab';
 import GovernanceTab from './GovernanceTab';
+import FeedbackTab from './FeedbackTab';
 import styles from './AdminPanel.module.css';
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api';
@@ -63,7 +64,7 @@ interface BackendSettings {
   appUrl: string;
 }
 
-type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend' | 'tests' | 'backlog' | 'governance';
+type Tab = 'health' | 'projects' | 'agents' | 'settings' | 'backend' | 'tests' | 'backlog' | 'governance' | 'feedback';
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
 
         {/* Tabs */}
         <div className={styles.tabs}>
-          {(['health', 'projects', 'agents', 'backend', 'tests', 'backlog', 'governance', 'settings'] as Tab[]).map((t) => (
+          {(['health', 'projects', 'agents', 'backend', 'tests', 'backlog', 'governance', 'feedback', 'settings'] as Tab[]).map((t) => (
             <button
               key={t}
               className={styles.tab + (tab === t ? ' ' + styles.tabActive : '')}
@@ -99,7 +100,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                t === 'backend'    ? '⚡ Backend'    :
                t === 'tests'      ? '🧪 Tests'      :
                t === 'backlog'    ? '📋 Backlog'    :
-               t === 'governance' ? '🛡 Governance' : '⚙️ Settings'}
+               t === 'governance' ? '🛡 Governance' :
+               t === 'feedback'   ? '💬 Feedback'   : '⚙️ Settings'}
             </button>
           ))}
         </div>
@@ -113,6 +115,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
           {tab === 'tests'      && <TestsTab />}
           {tab === 'backlog'    && <BacklogTab />}
           {tab === 'governance' && <GovernanceTab />}
+          {tab === 'feedback'   && <FeedbackTab />}
           {tab === 'settings'   && <SettingsTab />}
         </div>
       </div>

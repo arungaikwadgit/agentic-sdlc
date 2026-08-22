@@ -702,6 +702,17 @@ app.use('/api/app-state', createAppStateRouter({
   setPromptOptimizationSkillCache: (next) => { promptOptimizationSkillCache = next; },
 }));
 
+// Item #18 (Step 6 prioritization matrix), 2026-08-22 -- user feedback
+// capture on agent output. New route group, no proxy.js precursor -- see
+// backend/src/routes/agentFeedback.js header comment for design rationale
+// (migration 024_agent_feedback.sql).
+const { createAgentFeedbackRouter } = require('./routes/agentFeedback');
+app.use('/api/agent-feedback', createAgentFeedbackRouter({
+  getDb: () => dbPool,
+  checkToken,
+  requireAdmin,
+}));
+
 // Extracted 2026-07-20 (architecture upgrade Phase 3) to
 // backend/src/routes/adminReset.js -- verbatim, just the mount point here.
 // getEnsureInviteSessionTable is a getter (not a direct reference) because
