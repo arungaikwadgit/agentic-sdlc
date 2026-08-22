@@ -23,7 +23,7 @@ on. It is responsible for:
 
 - Storing all project data (agent runs, review gates, team, settings) locally
   in the browser via IndexedDB, with no backend database.
-- Running the 30-agent, 11-phase SDLC pipeline in the correct order, with
+- Running the 32-agent, 11-phase SDLC pipeline in the correct order, with
   parallel execution where the phase allows it.
 - Pausing the pipeline at review gates until a human approves.
 - Supporting resume after a pause or browser refresh (agent runs marked
@@ -247,7 +247,7 @@ events).
 
 **Phase/gate model**, derived from `agents/constants.ts`:
 
-- `PHASE_ORDER`: `phase0, phase1, phase1b, phase2, phase3, phase3b, phase4, phase5, phase6, phase7, phase8` (11 phases, 30 agents total via `PHASE_AGENTS`).
+- `PHASE_ORDER`: `phase0, phase1, phase1b, phase2, phase3, phase3b, phase4, phase5, phase6, phase7, phase8` (11 phases, 32 agents total via `PHASE_AGENTS`). Note: this phase list itself is stale — `agents/constants.ts` now defines 17 phases (also includes phase0a, phase0b, phase2a, phase3a, phase3c, phase4a), not the 11 listed here. Only the agent count was corrected as part of item #22; the phase list predates several rounds of pipeline expansion and needs its own refresh, out of scope for this pass.
 - `PARALLEL_PHASES`: `phase2, phase3, phase4, phase7, phase8` run their agents concurrently (via a shared `PQueue` with `concurrency: 3`); all other phases run agents sequentially.
 - `REVIEW_GATES`: `gate1` (after phase1 + phase1b), `gate2` (after phase2), `gate3` (after phase3 + phase3b), `gate5` (after phase5), `gate6` (exploratory — no phases required, no approval gate).
 - Two derived lookup tables are built at module load:

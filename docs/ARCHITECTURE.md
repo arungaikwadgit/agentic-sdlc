@@ -179,6 +179,8 @@ flowchart LR
 | Phase | Name | Agents | Parallel? | Review Gate |
 |-------|------|--------|-----------|-------------|
 | phase0 | SDLC Orchestrator | sdlcOrchestrator (1) | No | - |
+| phase0a | Token Optimization | tokenOptimizer (1) | No | - |
+| phase0b | AI Governance | aiGovernance (1) | No | - |
 | phase1 | PRD | manager (1) | No | gate1 (after phase1 + phase1b) |
 | phase1b | Foundation | projectCharter, brd (2) | No | gate1 |
 | phase2 | Requirements Tier 1 | businessRules, stakeholder, userStory, feasibility (4) | Yes | gate2 after phase2a |
@@ -194,7 +196,9 @@ flowchart LR
 | phase7 | DevOps | devopsEngineer, infraEngineer (2) | Yes | - |
 | phase8 | Operations | observabilityEngineer, onCallEngineer (2) | Yes | - |
 
-**Total: 30 agents, 15 execution phases, 4 active approval gates.**
+**Total: 32 agents, 17 phases, 4 active approval gates.**
+
+(30 agents was a stale count that also omitted phase0a/phase0b above — added them so this table's own row count and its total agree, per the item #22 agent-count correction, 2026-08-22. "17 phases" counts every row above, including the two 1-agent preflight phases; other docs describing a narrower "execution phases" subset were left as-is — that's a different, unverified claim this pass didn't check.)
 
 Parallel tiers run with bounded concurrency. Dependency tiers were split so agents no longer start before upstream same-domain prerequisites complete.
 

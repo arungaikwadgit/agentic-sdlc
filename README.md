@@ -1,6 +1,6 @@
 # Agentic SDLC Framework
 
-A browser-based tool that automates the software development lifecycle using 30 AI agents, a backend API gateway, a dedicated runtime service, and PostgreSQL-backed shared state.
+A browser-based tool that automates the software development lifecycle using 32 AI agents, a backend API gateway, a dedicated runtime service, and PostgreSQL-backed shared state.
 
 ## Architecture
 
@@ -137,7 +137,7 @@ GitHub Actions runs on every push to `main`/`dev` and on PRs:
 ## Features
 
 - Multi-project dashboard with domain color coding
-- 30 AI agents producing SDLC artifacts
+- 32 AI agents producing SDLC artifacts
 - Simple/Expert mode
 - Review gates across the pipeline
 - Export each document as `.md` or `.docx`

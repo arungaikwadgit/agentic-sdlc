@@ -16,8 +16,9 @@ const MOCK_CTX: AgentPromptContext = {
   ],
 };
 
-// All agent IDs declared across all phases (30 agents, 11 phases including
-// phase0/SDLC Orchestrator, phase1b, and phase3b)
+// All agent IDs declared across all phases (32 agents, 17 phases -- see the
+// toHaveLength(32) and 17-phases assertions below, which this comment was
+// out of sync with before the item #22 agent-count correction).
 const ALL_AGENT_IDS: AgentId[] = PHASE_ORDER.flatMap((ph) => PHASE_AGENTS[ph]);
 
 describe('PHASE_ORDER and PHASE_AGENTS', () => {

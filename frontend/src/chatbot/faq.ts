@@ -51,7 +51,7 @@ export const FAQ_ENTRIES: FaqEntry[] = [
     keywords: ['agent', 'agents', 'how many agents', 'list of agents', 'what agents'],
     question: 'What are the agents and how do they work?',
     answer:
-      'There are 30 agents in total, one per document output. Agents run in either L2 mode (single LLM call, fast) or L3 agentic mode (goal-directed loop — plan, gather context from prior outputs, iterate up to 8 times). Complex agents like UX Mockups and Working Prototype use L3. You can re-run any agent at any time, and edit its system prompt before re-running.',
+      'There are 32 agents in total, one per document output. Agents run in either L2 mode (single LLM call, fast) or L3 agentic mode (goal-directed loop — plan, gather context from prior outputs, iterate up to 8 times). Complex agents like UX Mockups and Working Prototype use L3. You can re-run any agent at any time, and edit its system prompt before re-running.',
   },
   {
     id: 'pipeline-execution',
