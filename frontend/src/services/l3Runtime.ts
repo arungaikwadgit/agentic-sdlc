@@ -415,6 +415,21 @@ export async function runL3Agent(
     iterationTokens: [],
   };
 
+  // Item #5 Phase 3 -- persist structured evidence/citations onto the run's
+  // own metadata (same additive treatment as missingDiagram below), gated
+  // on the agent opting in via evidenceSources AND the memory context
+  // actually carrying semantic evidence (both undefined for every agent
+  // except tokenOptimizer today, and even for tokenOptimizer whenever the
+  // similarity search found nothing or the Runtime API call failed --
+  // neither case is an error, both just mean "no citations this run").
+  if ((def.evidenceSources?.length ?? 0) > 0 && ctx.memoryContext?.evidenceItems?.length) {
+    l3Meta.evidence = {
+      items: ctx.memoryContext.evidenceItems,
+      confidence: ctx.memoryContext.evidenceConfidence ?? 0,
+      sufficient: ctx.memoryContext.evidenceSufficient ?? false,
+    };
+  }
+
   // Build the enriched system prompt
   const l3SystemPrompt = buildL3SystemPrompt(options.systemPrompt, goal, tools, initialPlanSteps);
   // See AgentDefinition.intermediateSystemPrompt — a shorter variant used

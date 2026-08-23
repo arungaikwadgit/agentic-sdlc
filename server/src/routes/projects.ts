@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { supabaseAdmin } from '../lib/supabase';
 import { requireAuth, requireProjectRole, requireAppAdmin, isAppAdmin } from '../middleware/auth';
 import { buildArtifactMemoryDigest, selectProjectMemoryContext, type ProjectMemoryRecord } from '../services/projectMemory';
+import { fetchSemanticEvidence } from '../services/semanticMemory';
 
 const router = Router();
 
@@ -167,6 +168,12 @@ const AgentMemoryQuerySchema = z.object({
   dependencies: z.string().max(1_000).optional(),
   maxChars: z.coerce.number().int().min(1_000).max(12_000).default(6_000),
   limit: z.coerce.number().int().min(1).max(12).default(6),
+  // Item #5 Phase 3: when present, the caller (pipelineEngine.ts) has
+  // opted this agent into semantic evidence grounding -- see
+  // AgentDefinition.evidenceSources, currently set on tokenOptimizer only.
+  // Absent for every other agent, which keeps this whole code path a
+  // no-op for the other ~31 agents' requests.
+  query: z.string().min(1).max(2_000).optional(),
 });
 
 const CaptureAgentMemorySchema = z.object({
@@ -317,14 +324,48 @@ router.get(
         domainRecords = (data ?? []) as ProjectMemoryRecord[];
       }
 
-      res.json(selectProjectMemoryContext({
+      const baseContext = selectProjectMemoryContext({
         records: [...((projectRecords ?? []) as ProjectMemoryRecord[]), ...domainRecords],
         projectId: params.id,
         agentKey: params.agentKey,
         dependencyKeys: dependencies,
         maxChars: query.maxChars,
         limit: query.limit,
-      }));
+      });
+
+      // Item #5 Phase 3: only present when the caller sent `query` --
+      // currently only pipelineEngine.ts's tokenOptimizer call does this
+      // (see AgentDefinition.evidenceSources). Every other agent's request
+      // omits `query`, so this whole block is skipped and the response is
+      // byte-for-byte what selectProjectMemoryContext alone produces today.
+      if (query.query) {
+        const semantic = await fetchSemanticEvidence({
+          projectId: params.id,
+          query: query.query,
+          domainId: project.domain,
+        });
+        if (semantic && semantic.items.length > 0) {
+          const semanticSection = semantic.items
+            .map((item) => `### ${item.title} [similarity-ranked, authority ${item.authority}]\n${item.excerpt}`)
+            .join('\n\n');
+          res.json({
+            ...baseContext,
+            summary: baseContext.summary
+              ? `${baseContext.summary}\n\n---\n\n## Semantically Retrieved Evidence (pgvector similarity search)\n${semanticSection}`
+              : `## Semantically Retrieved Evidence (pgvector similarity search)\n${semanticSection}`,
+            evidenceItems: semantic.items,
+            evidenceConfidence: semantic.confidence,
+            evidenceSufficient: semantic.sufficient,
+          });
+          return;
+        }
+        // semantic === null (config/timeout/error) or found nothing --
+        // fall through to the existing keyword-only response below exactly
+        // as if `query` had never been sent. Never fail the request over
+        // this best-effort addition.
+      }
+
+      res.json(baseContext);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: err.errors });
       console.error('[GET /projects/:id/agent-context/:agentKey]', err);

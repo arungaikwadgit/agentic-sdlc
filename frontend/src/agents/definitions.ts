@@ -227,6 +227,14 @@ const tokenOptimizer: AgentDefinition = {
   outputLabel: 'Token & Cost Optimization Assessment',
   visibility: 'internal',
   dependsOn: ['sdlcOrchestrator'],
+  // Item #5 Phase 3 pilot -- see AgentDefinition.evidenceSources doc comment.
+  // Chosen as the pilot agent per docs/architecture/agentic-rag-gap-analysis-
+  // and-plan.md Phase 3: internal-only (visibility: 'internal' above,
+  // already excluded from workspace/export views), doesn't produce a
+  // document a client reviews at a gate, and already reads project
+  // metrics/snapshots -- a rough edge here has near-zero user-facing blast
+  // radius, unlike piloting on a customer-visible document agent.
+  evidenceSources: ['project_memory'],
   systemPrompt: BASE_SYSTEM + '\n\n' +
     'You are the background Token Optimizer Agent. The application-level Token Optimizer Preflight Skill runs deterministically before every real LLM provider call; your role is to analyze aggregate usage and improve that shared skill, context budgets, model routing, handoffs, and stop conditions. Never mutate protected prompts or workflow controls without approval.\n\n' +
     'Optimization principles:\n' +
@@ -264,7 +272,14 @@ const tokenOptimizer: AgentDefinition = {
     `STEP 4 - call get_token_usage_summary: establish measured usage and clearly separate estimates from actuals.\n` +
     `STEP 5 - produce all 9 required sections, including the lifecycle invocation plan; do not recommend removing protected controls.\n` +
     `STEP 6 - call validate_output_completeness with the draft and all 9 section names.\n` +
-    `STEP 7 - revise missing or unsafe recommendations, then finalize with an approval recommendation and confidence score.`,
+    `STEP 7 - revise missing or unsafe recommendations, then finalize with an approval recommendation and confidence score.` +
+    // Item #5 Phase 3: only present when the pgvector similarity search
+    // found something for this project (see AgentDefinition.evidenceSources,
+    // ctx.memoryContext.evidenceItems) -- absent for a project with no prior
+    // memory records, which is not an error, just nothing to cite yet.
+    (ctx.memoryContext?.evidenceItems?.length
+      ? `\n\nSTEP 8 - The "Semantically Retrieved Evidence" section below your Durable Project Memory contains ${ctx.memoryContext.evidenceItems.length} project-specific source(s) found by similarity search, each with a title you can reference by name. Where a recommendation in your Workload Baseline or Optimization Register draws on one of these, name the source in that row's evidence column instead of writing "estimated" alone.`
+      : ''),
   tools: OPTIMIZATION_TOOLS,
   requiredTools: ['get_agent_output', 'get_agent_catalog', 'get_available_models', 'get_token_usage_summary', 'validate_output_completeness'],
   maxIterations: 8,

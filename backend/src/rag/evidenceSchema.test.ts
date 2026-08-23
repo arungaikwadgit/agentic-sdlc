@@ -91,7 +91,7 @@ describe('capEvidence', () => {
     const result = capEvidence(items, 25_000);
     // First item consumes 20,000 (capped at min(3000, remaining) per item, so
     // actually each item is capped at min(3000, remaining) -- verify total budget respected.
-    const totalChars = result.reduce((sum, item) => sum + item.excerpt.length, 0);
+    const totalChars = result.reduce((sum: number, item: { excerpt: string }) => sum + item.excerpt.length, 0);
     expect(totalChars).toBeLessThanOrEqual(25_000);
     expect(result.length).toBeGreaterThan(0);
   });

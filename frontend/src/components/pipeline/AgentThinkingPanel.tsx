@@ -193,6 +193,42 @@ function TokenBreakdown({ entries }: { entries: IterationTokenEntry[] }) {
   );
 }
 
+// Item #5 Phase 3 -- renders l3.evidence when present (see l3Runtime.ts's
+// runL3Agent and AgentDefinition.evidenceSources). Same collapsible pattern
+// as TokenBreakdown above. Undefined/absent for every agent except
+// tokenOptimizer today, and even for tokenOptimizer whenever the
+// similarity search found nothing.
+function EvidenceCitations({ evidence }: { evidence: NonNullable<L3RuntimeMeta['evidence']> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={styles.planBlock}>
+      <div
+        className={styles.planHeader}
+        onClick={() => setOpen((o) => !o)}
+        role="button"
+        tabIndex={0}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className={styles.planBadge}>
+          📎 Cited Evidence — {evidence.items.length} source{evidence.items.length === 1 ? '' : 's'}, {evidence.confidence}% confidence
+          {evidence.sufficient ? '' : ' (below sufficiency threshold)'}
+        </span>
+        <span className={styles.planTime}>{open ? '▲' : '▼'}</span>
+      </div>
+      {open && (
+        <ol className={styles.planSteps}>
+          {evidence.items.map((item, i) => (
+            <li key={`${item.sourceType}-${item.sourceId}-${i}`} className={styles.planStep}>
+              <strong>{item.title}</strong>{' '}({item.sourceType}, authority {item.authority})
+              {item.updatedAt ? ` — updated ${new Date(item.updatedAt).toLocaleDateString()}` : ''}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 // ── L3 full trace ─────────────────────────────────────────────────────────────
 
 function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
@@ -285,6 +321,12 @@ function L3Trace({ l3 }: { l3: L3RuntimeMeta }) {
           token cost. */}
       {l3.iterationTokens && l3.iterationTokens.length > 0 && (
         <TokenBreakdown entries={l3.iterationTokens} />
+      )}
+
+      {/* Item #5 Phase 3 -- cited evidence from pgvector semantic grounding,
+          currently tokenOptimizer only (see AgentDefinition.evidenceSources). */}
+      {l3.evidence && l3.evidence.items.length > 0 && (
+        <EvidenceCitations evidence={l3.evidence} />
       )}
 
       {/* Initial plan */}

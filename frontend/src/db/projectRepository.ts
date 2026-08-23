@@ -481,6 +481,19 @@ export async function deleteProjectDocuments(projectId: string): Promise<void> {
 }
 
 
+/** One cited source in a semantic-grounding result (item #5 Phase 3) --
+ *  mirrors backend/src/rag/evidenceSchema.js's evidenceItem() shape. */
+export interface ProjectMemoryEvidenceItem {
+  sourceType: string;
+  sourceId: string;
+  title: string;
+  version: string | null;
+  updatedAt: string | null;
+  excerpt: string;
+  authority: number;
+  authorized: boolean;
+}
+
 export interface ProjectAgentMemoryContext {
   summary: string;
   recordIds: string[];
@@ -488,18 +501,41 @@ export interface ProjectAgentMemoryContext {
   estimatedTokens: number;
   sourceCharacters: number;
   selectedCharacters: number;
+  /**
+   * Item #5 Phase 3 -- present only when the caller supplied a
+   * semanticQuery AND the pgvector similarity search
+   * (backend/src/routes/memoryRecords.ts's /similar) found at least one
+   * match. Absent for every request that doesn't pass semanticQuery
+   * (every agent except tokenOptimizer today) -- see
+   * AgentDefinition.evidenceSources.
+   */
+  evidenceItems?: ProjectMemoryEvidenceItem[];
+  evidenceConfidence?: number;
+  evidenceSufficient?: boolean;
 }
 
 export async function getProjectAgentMemoryContext(
   projectId: string,
   agentId: AgentId,
   dependencyKeys: readonly AgentId[] = [],
+  /**
+   * Item #5 Phase 3: when supplied, server/src's agent-context route also
+   * runs a pgvector similarity search against this text and folds the
+   * result into the response (both as a labeled section appended to
+   * `summary` and as structured `evidenceItems`/`evidenceConfidence`).
+   * Only pipelineEngine.ts's tokenOptimizer call passes this today -- see
+   * AgentDefinition.evidenceSources.
+   */
+  semanticQuery?: string,
 ): Promise<ProjectAgentMemoryContext> {
   const query = new URLSearchParams({
     dependencies: dependencyKeys.join(','),
     maxChars: '6000',
     limit: '6',
   });
+  if (semanticQuery && semanticQuery.trim()) {
+    query.set('query', semanticQuery.trim().slice(0, 2000));
+  }
   return apiFetch<ProjectAgentMemoryContext>(
     `/api/projects/${encodeURIComponent(projectId)}/agent-context/${encodeURIComponent(agentId)}?${query.toString()}`,
   );

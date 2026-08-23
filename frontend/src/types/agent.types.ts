@@ -164,6 +164,21 @@ export interface L3RuntimeMeta {
    * incompleteRequiredTools/outputGovernance above.
    */
   missingDiagram?: boolean;
+  /**
+   * Item #5 Phase 3 -- set only when AgentDefinition.evidenceSources is
+   * set AND the run's ctx.memoryContext carried semantic evidence (see
+   * AgentMemoryContext.evidenceItems). Undefined/absent means either the
+   * agent hasn't opted into evidence grounding, or the similarity search
+   * found nothing / the Runtime API call failed -- both are silent,
+   * non-blocking fallbacks to the agent's normal (pre-Phase-3) behavior,
+   * never a run failure. Surfaced as a citations panel in
+   * AgentThinkingPanel, same additive treatment as missingDiagram above.
+   */
+  evidence?: {
+    items: MemoryEvidenceItem[];
+    confidence: number;
+    sufficient: boolean;
+  };
 }
 
 export interface AgentDefinition {
@@ -255,6 +270,25 @@ export interface AgentDefinition {
    * UI-side set this should stay in sync with.
    */
   requiresDiagram?: boolean;
+  /**
+   * Item #5 Phase 3 (RAG grounding pilot) -- opts this agent into
+   * pgvector-backed semantic evidence retrieval. When set, pipelineEngine.ts
+   * builds a synthetic query from this agent's own description + the
+   * project description and passes it to getProjectAgentMemoryContext,
+   * which asks server/src's agent-context route to also run a similarity
+   * search (see db/projectRepository.ts, server/src/services/
+   * semanticMemory.ts). The resulting evidence is both appended as prose
+   * to ctx.memoryContext.summary (so it reads naturally in the prompt,
+   * same as every agent's existing durable-memory section) and persisted
+   * structurally on L3RuntimeMeta.evidence for citation display in
+   * AgentThinkingPanel. Undefined for every agent except tokenOptimizer
+   * today -- see docs/architecture/agentic-rag-gap-analysis-and-plan.md
+   * Phase 3 (pilot on one internal, non-customer-facing agent first).
+   * The array's contents are currently informational only (not yet a
+   * lookup key into a per-source-type retrieval strategy); 'project_memory'
+   * is the only value in use.
+   */
+  evidenceSources?: string[];
 }
 
 /** One question/answer pair collected via the pre-generation clarifying-
@@ -314,6 +348,19 @@ export interface GovernanceSnapshot {
   creationApproval: { approverRole?: string; approvedAt?: number } | null;
 }
 
+/** One cited source in a semantic-grounding result (item #5 Phase 3) --
+ *  mirrors backend/src/rag/evidenceSchema.js's evidenceItem() shape. */
+export interface MemoryEvidenceItem {
+  sourceType: string;
+  sourceId: string;
+  title: string;
+  version: string | null;
+  updatedAt: string | null;
+  excerpt: string;
+  authority: number;
+  authorized: boolean;
+}
+
 export interface AgentMemoryContext {
   /** Bounded historical evidence assembled by the authenticated backend API. */
   summary: string;
@@ -325,6 +372,18 @@ export interface AgentMemoryContext {
   selectedCharacters: number;
   /** Approximate input tokens avoided by compact memory-backed excerpts. */
   estimatedTokenSavings?: number;
+  /**
+   * Item #5 Phase 3 -- pgvector-backed semantic grounding, present only for
+   * agents whose AgentDefinition.evidenceSources is set (tokenOptimizer
+   * today) AND only when the similarity search found at least one match.
+   * Undefined/absent for every other agent, and for tokenOptimizer runs
+   * where the search found nothing or the Runtime API call failed -- see
+   * db/projectRepository.ts's ProjectAgentMemoryContext and
+   * server/src/services/semanticMemory.ts.
+   */
+  evidenceItems?: MemoryEvidenceItem[];
+  evidenceConfidence?: number;
+  evidenceSufficient?: boolean;
 }
 
 export interface AgentPromptContext {
