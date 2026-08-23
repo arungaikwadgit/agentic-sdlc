@@ -11,6 +11,9 @@ const {
   buildSynthesisPrompt,
 } = require('./chatPlanner');
 const { findMemoryAnswer } = require('./chatMemory');
+// Item #5 Phase 1: dedupeEvidence() now lives in backend/src/rag/evidenceSchema.js
+// (shared, zero behavior change here).
+const { dedupeEvidence } = require('../rag/evidenceSchema');
 
 const MAX_PLAN_ROUNDS = 2;
 const TOOL_TIMEOUT_MS = 15_000;
@@ -33,16 +36,6 @@ function withTimeout(promise, timeoutMs, label) {
 
 function publicEvidence(items) {
   return items.map(({ excerpt: _excerpt, authorized: _authorized, claimKey: _claimKey, claimValue: _claimValue, ...metadata }) => metadata);
-}
-
-function dedupeEvidence(items) {
-  const seen = new Set();
-  return items.filter((item) => {
-    const key = `${item.sourceType}:${item.sourceId}:${item.version ?? ''}:${item.updatedAt ?? ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function normalizeUsage(value) {

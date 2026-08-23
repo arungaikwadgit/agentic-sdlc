@@ -3,7 +3,10 @@
  * Proprietary and Confidential - Unauthorized use prohibited.
  */
 
-const MAX_EXCERPT_CHARS = 3_000;
+// Item #5 Phase 1: evidenceItem() now lives in backend/src/rag/evidenceSchema.js
+// (shared with any future non-chat caller). Re-exported below unchanged so
+// nothing importing evidenceItem from this module needs to change.
+const { evidenceItem } = require('../rag/evidenceSchema');
 
 class ChatAccessError extends Error {
   constructor(message, status = 403) {
@@ -11,11 +14,6 @@ class ChatAccessError extends Error {
     this.name = 'ChatAccessError';
     this.status = status;
   }
-}
-
-function toExcerpt(value, max = MAX_EXCERPT_CHARS) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  return String(text ?? '').slice(0, max);
 }
 
 function memberFromProjectData(project, email) {
@@ -77,20 +75,6 @@ async function authorizeChatProjectAccess({ db, caller, projectId, isAppAdmin = 
     role: member.app_role,
     allAgents: !scoped,
     allowedAgentIds: scoped ? assignedAgentIds(project, jsonMember?.id) : [],
-  };
-}
-
-function evidenceItem({ sourceType, sourceId, title, excerpt, version = null, updatedAt = null, authority = 100, claimKey, claimValue }) {
-  return {
-    sourceType,
-    sourceId,
-    title,
-    version,
-    updatedAt,
-    excerpt: toExcerpt(excerpt),
-    authority,
-    authorized: true,
-    ...(claimKey ? { claimKey, claimValue } : {}),
   };
 }
 

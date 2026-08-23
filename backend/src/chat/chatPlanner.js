@@ -3,11 +3,18 @@
  * Proprietary and Confidential - Unauthorized use prohibited.
  */
 
+// Item #5 Phase 1: capEvidence()/MAX_EVIDENCE_CHARS now live in
+// backend/src/rag/evidenceSchema.js, and assessEvidence()/SOURCE_ALIASES
+// now live in backend/src/rag/evidenceAssessment.js (both shared, zero
+// behavior change here). Re-exported below unchanged so nothing importing
+// them from this module needs to change.
+const { capEvidence, MAX_EVIDENCE_CHARS } = require('../rag/evidenceSchema');
+const { assessEvidence } = require('../rag/evidenceAssessment');
+
 const MAX_HISTORY_TURNS = 8;
 const MAX_HISTORY_CHARS = 2_000;
 const MAX_QUESTION_CHARS = 4_000;
 const MAX_TOOL_CALLS = 8;
-const MAX_EVIDENCE_CHARS = 24_000;
 
 const CHAT_TOOL_NAMES = new Set([
   'get_agent_catalog',
@@ -18,16 +25,6 @@ const CHAT_TOOL_NAMES = new Set([
   'get_project_memory',
   'research_external_sources',
 ]);
-
-const SOURCE_ALIASES = {
-  project: new Set(['project']),
-  catalog: new Set(['catalog']),
-  runtime: new Set(['runtime', 'agent_run']),
-  outputs: new Set(['agent_output']),
-  gates: new Set(['review_gate']),
-  memory: new Set(['memory']),
-  external: new Set(['external']),
-};
 
 class ChatRequestError extends Error {
   constructor(message) {
@@ -117,44 +114,6 @@ function parsePlannerResponse(text) {
   }
 }
 
-function sourceSatisfies(sourceType, requirement) {
-  const accepted = SOURCE_ALIASES[requirement];
-  return accepted ? accepted.has(sourceType) : sourceType === requirement;
-}
-
-function assessEvidence(items = [], requirements = []) {
-  const authorized = items.filter((item) => item?.authorized !== false && item?.excerpt);
-  const missing = [...new Set(requirements)].filter(
-    (requirement) => !authorized.some((item) => sourceSatisfies(item.sourceType, requirement)),
-  );
-
-  const contradictionKeys = new Map();
-  for (const item of authorized) {
-    if (!item.claimKey || item.claimValue == null) continue;
-    const values = contradictionKeys.get(item.claimKey) ?? new Set();
-    values.add(String(item.claimValue));
-    contradictionKeys.set(item.claimKey, values);
-  }
-  const contradictions = [...contradictionKeys.entries()]
-    .filter(([, values]) => values.size > 1)
-    .map(([key]) => key);
-
-  const averageAuthority = authorized.length
-    ? Math.round(authorized.reduce((sum, item) => sum + Math.max(0, Math.min(100, Number(item.authority ?? 80))), 0) / authorized.length)
-    : 0;
-  let confidence = averageAuthority;
-  if (missing.length) confidence = Math.min(confidence, 97);
-  if (contradictions.length) confidence = Math.min(confidence, 85);
-  if (!authorized.length) confidence = 0;
-
-  return {
-    confidence,
-    sufficient: missing.length === 0 && contradictions.length === 0 && confidence >= 98,
-    missing,
-    contradictions,
-  };
-}
-
 function buildPlannerPrompt({ question, history = [], projectId = null, observation = null }) {
   return [
     'Create a minimal evidence retrieval plan for an Agentic SDLC help question.',
@@ -166,19 +125,6 @@ function buildPlannerPrompt({ question, history = [], projectId = null, observat
     observation ? `Previous observation: ${JSON.stringify(observation)}` : '',
     `Question: ${question}`,
   ].filter(Boolean).join('\n\n');
-}
-
-function capEvidence(items) {
-  let remaining = MAX_EVIDENCE_CHARS;
-  const capped = [];
-  for (const item of items) {
-    if (remaining <= 0) break;
-    const excerpt = String(item.excerpt ?? '').slice(0, Math.min(3_000, remaining));
-    if (!excerpt) continue;
-    remaining -= excerpt.length;
-    capped.push({ ...item, excerpt });
-  }
-  return capped;
 }
 
 function buildSynthesisPrompt({ question, history = [], evidence = [], assessment, trace = [] }) {
