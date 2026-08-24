@@ -1,0 +1,110 @@
+name: Production Smoke Test
+
+# Runs after every push to main -- separate from ci.yml (which only
+# typechecks/tests code and never touches a live URL). See
+# scripts/smokeTestProduction.js's header comment and
+# docs/architecture/execution-status-2026-08-24.md Section 3 ("CI/deploy
+# verification gap") for why this exists: 2026-08-24's two incidents were
+# infrastructure/config problems, not code bugs, so no amount of unit-test
+# coverage would have caught them. Railway auto-deploys on push independent
+# of ci.yml's result, so this workflow can't block a bad deploy -- it
+# detects one shortly after it ships instead.
+on:
+  push:
+    branches: [main]
+  # Lets us re-run this on demand (e.g. after a manual Railway config
+  # change made outside of a git push, like today's runtime-service split)
+  # without needing a throwaway commit.
+  workflow_dispatch: {}
+
+jobs:
+  smoke-test:
+    name: Verify live production endpoints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run smoke test
+        id: smoke_test
+        run: node scripts/smokeTestProduction.js
+
+      # Only reached if the step above exited non-zero. Dedup against an
+      # already-open issue with the same label rather than opening a new one
+      # on every failed push during an ongoing outage -- instead adds a
+      # comment to the existing issue so there's one thread per incident.
+      - name: Open or update a GitHub Issue on failure
+        if: failure() && steps.smoke_test.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'production-incident';
+            const title = 'Production smoke test failing';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `Smoke test failed on commit ${context.sha.slice(0, 7)}.`,
+              '',
+              `See the failed run for exact check output: ${runUrl}`,
+              '',
+              'This checks the live production URLs directly (agentic-sdlc, agentic-sdlc-runtime,',
+              'artistic-charm) -- see scripts/smokeTestProduction.js for what each check verifies.',
+            ].join('\n');
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+
+            if (existing.data.length > 0) {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Still failing as of commit ${context.sha.slice(0, 7)}.\n\n${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: [label],
+              });
+            }
+
+      # Best-effort auto-close: if a later run passes while a
+      # production-incident issue is still open, close it with a note.
+      # Doesn't fail the workflow if this step itself has a problem.
+      - name: Close resolved incident issue on success
+        if: success()
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'production-incident';
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Smoke test passed on commit ${context.sha.slice(0, 7)} -- closing.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
