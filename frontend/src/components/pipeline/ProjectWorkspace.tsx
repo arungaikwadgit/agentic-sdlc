@@ -1482,6 +1482,61 @@ export default function ProjectWorkspace({ projectId, onBack }: Props) {
               </div>
             );
           })}
+
+          {/* Internal assessments (2026-08-24) -- tokenOptimizer and
+              aiGovernance are visibility:'internal', so isInternalAgent
+              filters them out of the phase list above entirely; without
+              this, there was no way for a project member to ever select
+              them and see AgentThinkingPanel's output, including the new
+              pgvector-grounded evidence citations (item #5 Phase 3). This
+              is deliberately the smallest option considered -- it reuses
+              selectAgent/AgentThinkingPanel exactly as built for every
+              other agent, no new backend route, no admin-only gating.
+              Section is entirely absent until at least one of them has
+              actually run for this project, so it adds no clutter to a
+              project that hasn't reached phase0a/phase0b yet. */}
+          {(() => {
+            const internalAgents = (['tokenOptimizer', 'aiGovernance'] as AgentId[]).filter(
+              (id) => (project.agentRuns[id]?.status ?? 'idle') !== 'idle'
+            );
+            if (internalAgents.length === 0) return null;
+            return (
+              <div className={styles.phaseGroup}>
+                <div className={styles.phaseHeader}>
+                  <span className={styles.phaseHeaderText}>
+                    <span className={styles.phaseLabel}>Internal Assessments</span>
+                  </span>
+                </div>
+                {internalAgents.map((agentId) => {
+                  const run = project.agentRuns[agentId];
+                  const def = AGENT_DEFINITIONS[agentId];
+                  const status = run?.status ?? 'idle';
+                  const isSelected = selectedAgent === agentId;
+                  return (
+                    <div
+                      key={agentId}
+                      className={styles.agentRow + (isSelected ? ' ' + styles.agentSelected : '')}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectAgent(agentId)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectAgent(agentId); }
+                      }}
+                      title={def?.description}
+                    >
+                      <span
+                        className={status === 'running' ? styles.spinIcon : undefined}
+                        style={{ color: STATUS_COLOR[status], fontFamily: 'monospace', fontSize: 13 }}
+                      >
+                        {status === 'running' ? '⟳' : STATUS_ICON[status]}
+                      </span>
+                      <span className={styles.agentName}>{def?.name ?? agentId}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </aside>
 
         <main className={styles.content + (mobilePane !== 'artifact' ? ' ' + styles.mobilePaneHidden : '')}>
