@@ -19,6 +19,7 @@
     "migrate:up:test": "node-pg-migrate up --migrations-dir migrations --database-url-var POSTGRES_URL_TEST",
     "seed:master-data": "node scripts/seedMasterData.js",
     "seed:sample-data": "node scripts/seedSampleData.js",
+    "backfill:memory-embeddings": "node scripts/backfillMemoryEmbeddings.js",
     "test": "jest --testPathPattern=src/",
     "worker": "ts-node-dev --respawn --transpile-only src/worker/index.ts"
   },
