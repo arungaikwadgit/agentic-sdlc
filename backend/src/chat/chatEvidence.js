@@ -7,6 +7,11 @@
 // (shared with any future non-chat caller). Re-exported below unchanged so
 // nothing importing evidenceItem from this module needs to change.
 const { evidenceItem } = require('../rag/evidenceSchema');
+// Phase 2 (GitHub chat tool): reuses the same server-side credential
+// decryption module wired into routes/appState.js's GET /integrations/:id
+// -- no new crypto, no new secret.
+const { decryptIntegrationCredentials } = require('../integrationCredentialCrypto');
+const https = require('https');
 
 class ChatAccessError extends Error {
   constructor(message, status = 403) {
@@ -76,6 +81,43 @@ async function authorizeChatProjectAccess({ db, caller, projectId, isAppAdmin = 
     allAgents: !scoped,
     allowedAgentIds: scoped ? assignedAgentIds(project, jsonMember?.id) : [],
   };
+}
+
+// Read-only GET against the GitHub REST API. Mirrors routes/githubIntegration.js's
+// githubRequest() (same headers, same api.github.com target) but scoped to GET
+// only -- this tool never creates or modifies anything on GitHub. Best-effort:
+// resolves to [] on a non-200 response or a malformed body rather than
+// rejecting, so a GitHub-side failure degrades to "no evidence found" instead
+// of surfacing as a tool error (matching every other tool in this file).
+function githubGet(path, token) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: 'api.github.com',
+        port: 443,
+        path,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'AgenticSDLC/1.0',
+          'Accept': 'application/vnd.github+json',
+          'Authorization': `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        timeout: 10_000,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          if (res.statusCode !== 200) { resolve([]); return; }
+          try { resolve(JSON.parse(data)); } catch { resolve([]); }
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('GitHub request timed out')));
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 function createChatEvidenceTools({ db, isAppAdmin = () => false, externalResearch = null }) {
@@ -241,6 +283,86 @@ function createChatEvidenceTools({ db, isAppAdmin = () => false, externalResearc
           excerpt: row.content,
           authority: 98,
         }));
+    }
+
+    if (name === 'get_github_activity') {
+      // Access-control decision (Phase 2, GitHub chat tool): the only other
+      // place this credential is ever decrypted server-side --
+      // routes/appState.js's GET /integrations/:id -- is requireAdmin-gated
+      // (app-wide admin, isConfiguredAdminEmail, not project role). This tool
+      // never returns the raw token, only derived issue/PR facts, so the
+      // same justification (raw-secret exposure) doesn't strictly apply here.
+      // Still, matching the existing app-admin gate is the conservative
+      // choice: it adds no new path by which a non-admin project member can
+      // trigger a decrypt of a credential every other surface in this app
+      // already restricts to admins. Non-admins get an empty result, not an
+      // error -- same best-effort contract as "no integration connected", so
+      // this doesn't leak whether a GitHub integration exists to non-admins.
+      if (access.role !== 'app_admin') return [];
+
+      const integrationId = project.data?.githubIntegrationId;
+      if (!integrationId) return [];
+
+      const keyValue = process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+      if (!keyValue) return [];
+
+      const integrationResult = await db.query(
+        `SELECT id, provider, encrypted_data, iv
+           FROM app_integrations
+          WHERE id = $1
+          LIMIT 1`,
+        [integrationId],
+      );
+      const row = integrationResult.rows[0];
+      if (!row || row.provider !== 'github') return [];
+
+      let credentials;
+      try {
+        credentials = decryptIntegrationCredentials({
+          id: row.id,
+          provider: row.provider,
+          encryptedData: row.encrypted_data,
+          iv: row.iv,
+          keyValue,
+        });
+      } catch {
+        return [];
+      }
+
+      const { token, owner, repo } = credentials ?? {};
+      if (!token || !owner || !repo) return [];
+
+      let items;
+      try {
+        // /issues returns both issues and PRs in one call (PRs carry a
+        // pull_request key) -- avoids a second round trip for the common
+        // "what's happening in this repo" question.
+        items = await githubGet(
+          `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=all&per_page=20&sort=updated`,
+          token,
+        );
+      } catch {
+        return [];
+      }
+      if (!Array.isArray(items)) return [];
+
+      return items.slice(0, 20).map((item) => evidenceItem({
+        sourceType: 'external',
+        sourceId: `github:${owner}/${repo}#${item.number}`,
+        title: `${item.pull_request ? 'PR' : 'Issue'} #${item.number}: ${item.title}`,
+        updatedAt: item.updated_at,
+        excerpt: {
+          state: item.state,
+          isPullRequest: Boolean(item.pull_request),
+          author: item.user?.login ?? null,
+          labels: Array.isArray(item.labels)
+            ? item.labels.map((label) => (typeof label === 'string' ? label : label?.name)).filter(Boolean)
+            : [],
+          url: item.html_url,
+          body: typeof item.body === 'string' ? item.body.slice(0, 1000) : null,
+        },
+        authority: 90,
+      }));
     }
 
     throw new Error(`Unknown chat evidence tool: ${name}`);

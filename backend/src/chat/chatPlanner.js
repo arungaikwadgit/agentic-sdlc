@@ -24,6 +24,9 @@ const CHAT_TOOL_NAMES = new Set([
   'get_review_gate_state',
   'get_project_memory',
   'research_external_sources',
+  // Phase 2: GitHub issues/PRs for the project's connected repo (app-admin
+  // only server-side -- see chatEvidence.js's get_github_activity handler).
+  'get_github_activity',
 ]);
 
 class ChatRequestError extends Error {

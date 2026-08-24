@@ -24,6 +24,7 @@ const PROJECT_TOOL_NAMES = new Set([
   'get_latest_agent_outputs',
   'get_review_gate_state',
   'get_project_memory',
+  'get_github_activity',
 ]);
 
 function withTimeout(promise, timeoutMs, label) {

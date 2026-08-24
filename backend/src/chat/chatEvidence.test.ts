@@ -3,7 +3,15 @@
  * Proprietary and Confidential - Unauthorized use prohibited.
  */
 
+// Phase 2 addition (get_github_activity) needs to mock the raw `https`
+// module the same way routes/githubIntegration.test.ts does -- jest.mock
+// hoists this above the requires below regardless of where it's written,
+// but it's placed first to match that file's convention.
+jest.mock('https');
+
 const { authorizeChatProjectAccess, createChatEvidenceTools } = require('./chatEvidence');
+const https = require('https');
+const { encryptIntegrationCredentials } = require('../integrationCredentialCrypto');
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -177,6 +185,253 @@ describe('chat evidence tools', () => {
     expect(sql).toContain('ar.tool_trace');
     expect(sql).not.toMatch(/\biteration_count\b/);
     expect(sql).not.toMatch(/agent_runs[\s\S]*ORDER BY updated_at/i);
+  });
+});
+
+// Phase 2: get_github_activity. New tool, new describe block -- reuses this
+// file's existing PROJECT_ID but needs its own db-mock shape (app_integrations
+// isn't part of fakeDb() above) and a GitHub REST API mock via jest.mock('https')
+// (see routes/githubIntegration.test.ts, same pattern). Credential decryption
+// uses the REAL integrationCredentialCrypto module against a fixed test key
+// (round-trip encrypt/decrypt) rather than mocking it, matching the precedent
+// set in item #14's appState.test.ts rewrite.
+describe('chat evidence tools -- get_github_activity', () => {
+  const TEST_KEY = 'a'.repeat(64); // 32-byte hex key, same shape as production APP_INTEGRATION_ENCRYPTION_KEY
+  const INTEGRATION_ID = 'integration-1';
+  const originalKey = process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.APP_INTEGRATION_ENCRYPTION_KEY = TEST_KEY;
+  });
+
+  afterAll(() => {
+    process.env.APP_INTEGRATION_ENCRYPTION_KEY = originalKey;
+  });
+
+  type Outcome = { status: number; body: unknown } | { error: Error };
+
+  function mockHttpsRequestOnce(outcome: Outcome) {
+    (https.request as jest.Mock).mockImplementationOnce((_options: any, callback: any) => {
+      let errorHandler: ((err: Error) => void) | null = null;
+      const req = {
+        on: (event: string, handler: any) => {
+          if (event === 'error') errorHandler = handler;
+          return req;
+        },
+        end: () => {
+          if ('error' in outcome) {
+            if (errorHandler) errorHandler(outcome.error);
+            return;
+          }
+          const res = {
+            statusCode: outcome.status,
+            on: (event: string, handler: any) => {
+              if (event === 'data') handler(Buffer.from(JSON.stringify(outcome.body)));
+              if (event === 'end') handler();
+            },
+          };
+          callback(res);
+        },
+        destroy: () => {},
+        write: () => {},
+      };
+      return req;
+    });
+  }
+
+  function encryptedGithubRow(credentials: { token: string; owner: string; repo: string }) {
+    const envelope = encryptIntegrationCredentials({
+      id: INTEGRATION_ID,
+      provider: 'github',
+      credentials,
+      keyValue: TEST_KEY,
+    });
+    return {
+      id: INTEGRATION_ID,
+      provider: 'github',
+      encrypted_data: envelope.encryptedData,
+      iv: envelope.iv,
+    };
+  }
+
+  function buildGithubDb({ projectRow, integrationRow, memberRow }: { projectRow: any; integrationRow?: any; memberRow?: any }) {
+    return {
+      query: jest.fn((sql: string) => {
+        if (sql.includes('FROM projects')) return { rows: projectRow ? [projectRow] : [] };
+        if (sql.includes('FROM app_integrations')) return { rows: integrationRow ? [integrationRow] : [] };
+        if (sql.includes('FROM team_members')) return { rows: memberRow ? [memberRow] : [] };
+        throw new Error(`Unexpected query in test: ${sql}`);
+      }),
+    };
+  }
+
+  function adminProject(dataOverrides: Record<string, unknown> = {}) {
+    return {
+      id: PROJECT_ID,
+      owner_id: 'someone-else',
+      name: 'Test Project',
+      description: '',
+      domain: 'general',
+      status: 'active',
+      data: { githubIntegrationId: INTEGRATION_ID, ...dataOverrides },
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  it('returns [] for a non-admin caller without ever querying app_integrations', async () => {
+    const db = buildGithubDb({ projectRow: adminProject() });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => false });
+
+    await expect(
+      tools.execute('get_github_activity', {}, { caller: { userId: 'random-user', email: 'nobody@example.com' }, projectId: PROJECT_ID }),
+    ).rejects.toThrow('You do not have access to this project.');
+
+    const integrationQueries = (db.query as jest.Mock).mock.calls.filter(([sql]: [string]) => sql.includes('app_integrations'));
+    expect(integrationQueries).toHaveLength(0);
+  });
+
+  it('returns [] for a project owner (has project access, but is not app_admin)', async () => {
+    const project = adminProject();
+    project.owner_id = 'owner-user';
+    const db = buildGithubDb({ projectRow: project });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => false });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { userId: 'owner-user', email: 'owner@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+    const integrationQueries = (db.query as jest.Mock).mock.calls.filter(([sql]: [string]) => sql.includes('app_integrations'));
+    expect(integrationQueries).toHaveLength(0);
+  });
+
+  it('returns [] when the project has no githubIntegrationId', async () => {
+    const db = buildGithubDb({ projectRow: adminProject({ githubIntegrationId: undefined }) });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when APP_INTEGRATION_ENCRYPTION_KEY is not configured', async () => {
+    delete process.env.APP_INTEGRATION_ENCRYPTION_KEY;
+    const db = buildGithubDb({ projectRow: adminProject() });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when the integration row is missing or not a github provider', async () => {
+    const db = buildGithubDb({ projectRow: adminProject(), integrationRow: { id: INTEGRATION_ID, provider: 'jira', encrypted_data: '{}', iv: 'x' } });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when decryption fails (e.g. legacy or corrupt record)', async () => {
+    const db = buildGithubDb({
+      projectRow: adminProject(),
+      integrationRow: { id: INTEGRATION_ID, provider: 'github', encrypted_data: 'not-json', iv: 'wrong-marker' },
+    });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when GitHub responds with a non-200 status', async () => {
+    const db = buildGithubDb({
+      projectRow: adminProject(),
+      integrationRow: encryptedGithubRow({ token: 'ghp_test', owner: 'octo', repo: 'demo' }),
+    });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+    mockHttpsRequestOnce({ status: 401, body: { message: 'Bad credentials' } });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when the GitHub request errors at the network level', async () => {
+    const db = buildGithubDb({
+      projectRow: adminProject(),
+      integrationRow: encryptedGithubRow({ token: 'ghp_test', owner: 'octo', repo: 'demo' }),
+    });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+    mockHttpsRequestOnce({ error: new Error('ECONNRESET') });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
+  });
+
+  it('maps GitHub issues and PRs to evidence items for an app-admin caller', async () => {
+    const db = buildGithubDb({
+      projectRow: adminProject(),
+      integrationRow: encryptedGithubRow({ token: 'ghp_test', owner: 'octo', repo: 'demo' }),
+    });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => true });
+    mockHttpsRequestOnce({
+      status: 200,
+      body: [
+        {
+          number: 42,
+          title: 'Fix login bug',
+          state: 'open',
+          updated_at: '2026-08-20T00:00:00Z',
+          user: { login: 'alice' },
+          labels: [{ name: 'bug' }, 'urgent'],
+          html_url: 'https://github.com/octo/demo/issues/42',
+          body: 'Steps to reproduce...',
+        },
+        {
+          number: 43,
+          title: 'Add dark mode',
+          state: 'closed',
+          updated_at: '2026-08-19T00:00:00Z',
+          user: { login: 'bob' },
+          labels: [],
+          html_url: 'https://github.com/octo/demo/pull/43',
+          pull_request: { url: 'https://api.github.com/repos/octo/demo/pulls/43' },
+          body: null,
+        },
+      ],
+    });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { email: 'admin@example.com' }, projectId: PROJECT_ID });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      sourceType: 'external',
+      sourceId: 'github:octo/demo#42',
+      title: 'Issue #42: Fix login bug',
+      authority: 90,
+    });
+    // evidenceItem() serializes excerpt to a JSON string (evidenceSchema.js's
+    // toExcerpt) -- parse before asserting on shape.
+    expect(JSON.parse(result[0].excerpt)).toMatchObject({
+      state: 'open',
+      isPullRequest: false,
+      author: 'alice',
+      labels: ['bug', 'urgent'],
+      url: 'https://github.com/octo/demo/issues/42',
+    });
+    expect(result[1]).toMatchObject({
+      sourceType: 'external',
+      sourceId: 'github:octo/demo#43',
+      title: 'PR #43: Add dark mode',
+    });
+    expect(JSON.parse(result[1].excerpt)).toMatchObject({ isPullRequest: true, author: 'bob', labels: [] });
+  });
+
+  it('allows an adminBypass caller through the same app_admin path (no project row needed for role check)', async () => {
+    const db = buildGithubDb({
+      projectRow: adminProject(),
+      integrationRow: encryptedGithubRow({ token: 'ghp_test', owner: 'octo', repo: 'demo' }),
+    });
+    const tools = createChatEvidenceTools({ db, isAppAdmin: () => false });
+    mockHttpsRequestOnce({ status: 200, body: [] });
+
+    const result = await tools.execute('get_github_activity', {}, { caller: { adminBypass: true, email: 'local@example.com' }, projectId: PROJECT_ID });
+    expect(result).toEqual([]);
   });
 });
 
