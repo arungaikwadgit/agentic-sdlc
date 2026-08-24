@@ -11,6 +11,8 @@ Continues `docs/architecture/execution-status-2026-08-23.md` (same convention: u
 | #5 Phase 2 (GitHub half) | `get_github_activity` chat tool — read-only issues/PRs for a project's connected GitHub repo | `92212630` | Done, verified live (deploy `2c05e6c0`, 16:34 UTC). App-admin gated (see commit message for the access-control reasoning). Jira half deferred — see Section 3. |
 | Incident response | Restored `proxy.js` as `agentic-sdlc`'s live process after an earlier fix silently took it down | `6e7a80996` | Done, verified live (deploy `982e0a2d`, 14:40 UTC). See Section 2 for full detail — this is the most important thing in this file. |
 | Memory hygiene | Saved two feedback memories + updated the `agentic-sdlc-project` memory with current worktree path, service topology, and the two-entrypoint gap | — (memory files, not repo commits) | Done. See Section 4. |
+| Runtime-service split | Provisioned `agentic-sdlc-runtime`, a dedicated Railway service for `index.ts`, matching ADR-006 | `d718efe1` (config file) + Railway MCP (service creation/wiring, no commit) | Done, verified live. See Section 2. |
+| #23 (Jira, scoped) | Jira credential connect/test/disconnect UI — no chat tool, no issue push (deferred, see Section 3) | `9ae5adf6` | Done, verified via tests (11/11, `jiraIntegration.test.ts`) and a regression run of `ProjectSettings-team.test.tsx` (15/15). Not yet verified against a real Jira Cloud instance — the `/rest/api/3/*` calls are correct per Atlassian's documented API shape but untested against production Jira. |
 
 All commits authored as `arungaikwadgit <arun.gaikwad@outlook.com>`.
 
@@ -88,7 +90,7 @@ That doc scored 14 remaining items as of its own writing (after Wave 1 closed 8)
 **New items discovered this program, not on the original 14:**
 
 - **Runtime-service split** (Section 2) — not originally scored since nobody knew about the gap until today. Given it's the reason two other "done" items (#4, #5 Phase 3) aren't actually live, this should probably be scored **High value / Low-Medium effort** once the matrix gets revisited — it's pure infra provisioning, no design risk, and it unblocks real user-facing value that's already built.
-- **Jira integration — full scope** (extensive: chat tool + issue-creation parity with GitHub's push feature) — explicitly logged as its own future backlog item per today's decision. Only the credential connect/test/disconnect UI is in scope right now.
+- **Jira integration — full scope** (extensive: chat tool mirroring `get_github_activity` + issue-creation parity with GitHub's push feature) — explicitly logged as its own future backlog item per today's decision. Credential connect/test/disconnect UI shipped today (`9ae5adf6`); the read/write feature layer on top of it is what's deferred.
 - **CI/deploy verification gap** — the actual root cause enabling both today's incident and the #4/#5 Phase 3 unreachability: nothing in this program's process checks "is the thing I just built actually reachable at its production URL" as a release gate. Worth its own item — a lightweight post-deploy smoke test (curl the health/ready endpoints of every service, not just the one being changed) would have caught both of today's incidents before they shipped.
 
 ---
@@ -106,4 +108,4 @@ Full detail lives in the memory system (`railway-multi-entrypoint-verification.m
 
 ## 5. Next step
 
-Runtime-service split (Section 2) is done. Next: Jira credential connect/test/disconnect UI only (mirroring GitHub's `ProjectSettings.tsx` flow) — no chat tool, no issue-creation parity. Both explicitly logged as their own future backlog item (Section 3) per user decision.
+Both items started today (runtime-service split, Jira credential UI) are done. Remaining open items, in no particular forced order: verify #8 (background worker decision) rather than assume it's resolved; the CI/deploy-verification gap (Section 3) that would have caught both of today's production incidents before they shipped; and whichever of the reconciled backlog (Section 3) the user wants to prioritize next.
