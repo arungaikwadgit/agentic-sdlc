@@ -1,9 +1,24 @@
 # Agentic SDLC Architecture
 
-Last updated: 2026-07-14
+Last updated: 2026-08-24
 
 This document describes the current main-branch implementation of Agentic SDLC:
 a Postgres-backed, API-mediated, multi-service agentic delivery platform.
+
+**2026-08-24 correction:** this document has always described three separate
+backend services (proxy, project/admin API, runtime API — see ADR-003 below).
+That was the intended design from the start (see `docs/ADR/ADR-006-runtime-consolidation.md`,
+dated 2026-06-22, which documents proxy.js on port 3001 and index.ts on port
+4000 as two independent processes), but it was never actually true in
+production: `backend/src/proxy.js` and `backend/src/index.ts` had been sharing
+a single Railway service the whole time, which can only run one of them at
+once. Whichever deployed most recently silently took the other down — this is
+why item #4 (pgvector) and item #5 Phase 3 (Token Optimizer citations), both
+built and test-verified weeks earlier, were never actually reachable at their
+production URL until today. Fixed today by provisioning a dedicated second
+Railway service (`agentic-sdlc-runtime`) for `index.ts`, so the three-service
+model this document describes is now genuinely deployed, not just designed.
+Full incident writeup: `docs/architecture/execution-status-2026-08-24.md`.
 
 ![Agentic SDLC current implementation architecture](architecture/assets/current-implementation-architecture.svg)
 
@@ -12,9 +27,9 @@ a Postgres-backed, API-mediated, multi-service agentic delivery platform.
 | Area | Current implementation |
 |------|------------------------|
 | Frontend | React + Vite SPA deployed on Vercel. The browser is a thin client for project/app/runtime data. |
-| API gateway / LLM proxy | `backend/src/proxy.js` on Railway. Owns LLM calls, app-state APIs, master catalog API, invite/session APIs, CORS, rate limiting, and selected forwarding to the project API server. |
-| Project/admin API | `server/src/` on Railway. Owns authenticated project CRUD, app-admin checks, project permissions, and canonical `team_members` role access. |
-| Runtime API | `backend/src/index.ts` on Railway. Owns agent runs, jobs, memory records, action proposals, rollback logs, `/health`, and `/ready`. |
+| API gateway / LLM proxy | `backend/src/proxy.js` on Railway service **`agentic-sdlc`** (`agentic-sdlc-production-d156.up.railway.app`). Owns LLM calls, app-state APIs, master catalog API, invite/session APIs, CORS, rate limiting, chat, GitHub push, governance, feedback capture, and selected forwarding to the project API server. |
+| Project/admin API | `server/src/` on Railway service **`artistic-charm`** (`artistic-charm-production-6fa7.up.railway.app`). Owns authenticated project CRUD, app-admin checks, project permissions, and canonical `team_members` role access. |
+| Runtime API | `backend/src/index.ts` on Railway service **`agentic-sdlc-runtime`** (`agentic-sdlc-runtime-production.up.railway.app`), provisioned 2026-08-24 — see correction note above. Owns agent runs, jobs, memory records, pgvector semantic search, action proposals, rollback logs, `/health`, and `/ready`. Same `backend/` codebase and rootDirectory as the proxy above, but a separate Railway service with its own build/start config (`backend/railway.runtime.json`) so the two no longer compete for one process slot. |
 | Identity | Supabase Auth JWT is the production identity mechanism. Local admin bypass exists only outside production. Invite sessions are project-scoped. |
 | Data plane | Supabase Postgres is authoritative for projects, memberships, runtime records, app-state, integrations, backlog, master catalogs, and invite data. |
 | Agent orchestration | The frontend pipeline engine still initiates phase execution and agent reruns, while runtime services persist run/job/memory telemetry. |
@@ -209,16 +224,17 @@ Parallel tiers run with bounded concurrency. Dependency tiers were split so agen
 | File | Purpose |
 |------|---------|
 | `frontend/src/agents/constants.ts` | Phase order, parallel phases, PHASE_AGENTS map, review gates, TOTAL_AGENTS |
-| `frontend/src/agents/definitions.ts` | All 30 agent system/user prompts |
+| `frontend/src/agents/definitions.ts` | All 32 agent system/user prompts |
 | `frontend/src/services/pipelineEngine.ts` | Phase orchestration, review gates, resume, concurrency |
 | `frontend/src/db/projectRepository.ts` | Backend-backed project repository over the proxy/API server |
 | `frontend/src/services/appStateApi.ts` | Backend-backed app config, integrations, and backlog APIs |
 | `frontend/src/services/api.ts` | Frontend API client for proxy + runtime calls |
 | `frontend/src/components/pipeline/ProjectWorkspace.tsx` | Main workspace, artifact views, reruns, review flow |
 | `frontend/src/components/settings/AppSettingsModal.tsx` | App-wide API/model/theme/domain/prompt settings |
-| `backend/src/proxy.js` | API gateway / LLM proxy / invite + app-state API |
-| `backend/src/index.ts` | Agent runtime API (runs, jobs, memory, readiness) |
-| `server/src/` | Project/admin API with Supabase JWT auth |
+| `backend/src/proxy.js` | API gateway / LLM proxy / invite + app-state API — Railway service `agentic-sdlc` |
+| `backend/src/index.ts` | Agent runtime API (runs, jobs, memory, pgvector, readiness) — Railway service `agentic-sdlc-runtime` (separate from `agentic-sdlc` since 2026-08-24) |
+| `backend/railway.json` / `backend/railway.runtime.json` | Per-service Railway build/deploy config — `railway.json` is `agentic-sdlc` (proxy.js), `railway.runtime.json` is `agentic-sdlc-runtime` (index.ts). A stale, unrelated repo-root `railway.json` also exists; a service only picks it up if its own "Railway Config File" setting isn't pointed elsewhere. |
+| `server/src/` | Project/admin API with Supabase JWT auth — Railway service `artistic-charm` |
 
 ---
 

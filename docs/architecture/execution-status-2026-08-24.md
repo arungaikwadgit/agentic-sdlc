@@ -54,9 +54,13 @@ Frontend (Vercel)
          instead of competing with proxy.js for agentic-sdlc's one process slot.
 ```
 
-No code changes to either app — this is purely an infrastructure fix. Once live: set `RUNTIME_API_URL` on `agentic-sdlc` (dormant today — `proxy.js`'s lifecycle-event forwarding never activates because this var isn't set) and on `artistic-charm` (`semanticMemory.ts`'s `fetchSemanticEvidence()` needs it for real pgvector-grounded Token Optimizer citations to actually fire in production, not just fall back silently). Frontend migration to call `index.ts`'s routes directly (ADR-006's "Task #35") stays out of scope for this pass — it was already on hold pending a live-Postgres smoke test the team hadn't done; this fix finally makes that smoke test possible.
+No code changes to either app — this was purely an infrastructure fix.
 
-**Status: not yet started as of this writing.** Tracked as the next task in this session.
+**Status: Done, verified live.** New Railway service `agentic-sdlc-runtime` (`agentic-sdlc-runtime-production.up.railway.app`), backed by `backend/railway.runtime.json` (separate file from `agentic-sdlc`'s `backend/railway.json` — see execution notes in that file's commit message for why). Verified via direct curl, not just deploy status: `/ready` → `{"status":"ready","db":"connected"}`, `/api/v1/agent-runs` → `401 Unauthorized` (route exists, auth middleware working — not a 404). Re-verified `agentic-sdlc` (proxy.js) was still unaffected immediately after (`/api/health` 200, `/api/chat/respond` still its own 401, not index.ts's generic 404) — applying the lesson from Section 4 item 1 to this exact fix.
+
+Wired `RUNTIME_API_URL` to the new service's URL on both `agentic-sdlc` (`proxy.js`'s lifecycle-event forwarding — was dormant, this var was never set) and `artistic-charm` (`semanticMemory.ts`'s `fetchSemanticEvidence()` — this is what makes pgvector-grounded Token Optimizer citations actually fire in production instead of silently falling back). `RUNTIME_API_TOKEN_INTERNAL` set on `artistic-charm` via Railway's `${{agentic-sdlc.RUNTIME_API_TOKEN_INTERNAL}}` reference syntax, and on the new service the same way — never saw the actual secret value. Both dependent services (`agentic-sdlc`, `artistic-charm`) redeployed cleanly and re-verified healthy after the variable change.
+
+Not done / explicitly out of scope for this pass: frontend migration to call `index.ts`'s routes directly (ADR-006's "Task #35") — was already on hold pending a live-Postgres smoke test the team hadn't done; this fix finally makes that smoke test possible, but doesn't do it. `docs/ARCHITECTURE.md` updated to reflect this as the actual (not aspirational) deployed state.
 
 ---
 
@@ -102,4 +106,4 @@ Full detail lives in the memory system (`railway-multi-entrypoint-verification.m
 
 ## 5. Next step
 
-Provision the second Railway service for `index.ts` (Section 2's "After" state), verify both services live simultaneously via direct curl (not just deploy status), then wire `RUNTIME_API_URL` where it's currently dormant. After that, the Jira credential connect UI (scoped, per Section 3).
+Runtime-service split (Section 2) is done. Next: Jira credential connect/test/disconnect UI only (mirroring GitHub's `ProjectSettings.tsx` flow) — no chat tool, no issue-creation parity. Both explicitly logged as their own future backlog item (Section 3) per user decision.
