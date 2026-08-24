@@ -20,7 +20,7 @@ import type { Project, TeamMember, AgentAssignment, AppRole } from '@/types/proj
 import type { DomainId } from '@/types/domain.types';
 import { INVITABLE_APP_ROLES, ROLE_PERMISSIONS } from '@/types/project.types';
 import type { AgentId } from '@/types/agent.types';
-import type { GithubCredentials } from '@/types/integration.types';
+import type { GithubCredentials, JiraCredentials } from '@/types/integration.types';
 import styles from './ProjectSettings.module.css';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -388,6 +388,20 @@ export default function ProjectSettings({
   const [githubError, setGithubError] = useState<string | null>(null);
   const [githubTesting, setGithubTesting] = useState(false);
   const [githubTestResult, setGithubTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // ── Integrations (Jira) state -- item #23, 2026-08-24. Connect/test/
+  // disconnect only, mirroring the GitHub block above; no issue-creation UI. ──
+  const [jiraBaseUrl, setJiraBaseUrl] = useState('');
+  const [jiraEmail, setJiraEmail] = useState('');
+  const [jiraApiToken, setJiraApiToken] = useState('');
+  const [jiraProjectKey, setJiraProjectKey] = useState('');
+  const [jiraConnected, setJiraConnected] = useState(false);
+  const [jiraLoadingExisting, setJiraLoadingExisting] = useState(true);
+  const [jiraSaving, setJiraSaving] = useState(false);
+  const [jiraSaveMsg, setJiraSaveMsg] = useState('');
+  const [jiraError, setJiraError] = useState<string | null>(null);
+  const [jiraTesting, setJiraTesting] = useState(false);
+  const [jiraTestResult, setJiraTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // ── Knowledge tab state ──
   const [domainKnowledge, setDomainKnowledge] = useState(project.domainKnowledge ?? '');
@@ -765,6 +779,66 @@ export default function ProjectSettings({
     } catch (err) {
       setGithubTestResult({ ok: false, message: err instanceof Error ? err.message : 'Connection test failed.' });
     } finally { setGithubTesting(false); }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setJiraLoadingExisting(true);
+      const id = project.jiraIntegrationId;
+      if (!id) { if (!cancelled) setJiraLoadingExisting(false); return; }
+      const creds = await loadCredential<JiraCredentials>(id);
+      if (cancelled) return;
+      if (creds) { setJiraBaseUrl(creds.baseUrl); setJiraEmail(creds.email); setJiraProjectKey(creds.projectKey); setJiraConnected(true); }
+      setJiraLoadingExisting(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.jiraIntegrationId]);
+
+  async function saveJiraIntegration() {
+    if (!isAdmin) return;
+    setJiraError(null); setJiraTestResult(null);
+    if (!jiraBaseUrl.trim() || !jiraEmail.trim() || !jiraProjectKey.trim()) {
+      setJiraError('Base URL, email, and project key are required.'); return;
+    }
+    if (!jiraApiToken.trim() && !project.jiraIntegrationId) { setJiraError('An API token is required to connect.'); return; }
+    setJiraSaving(true);
+    try {
+      let apiToken = jiraApiToken.trim();
+      if (!apiToken && project.jiraIntegrationId) {
+        const existing = await loadCredential<JiraCredentials>(project.jiraIntegrationId);
+        apiToken = existing?.apiToken ?? '';
+        if (!apiToken) { setJiraError('Could not load the existing API token. Please re-enter it.'); return; }
+      }
+      const credentials: JiraCredentials = {
+        baseUrl: jiraBaseUrl.trim(), email: jiraEmail.trim(), apiToken, projectKey: jiraProjectKey.trim(),
+      };
+      const id = await saveCredential('jira', `${project.name} — Jira`, credentials, project.jiraIntegrationId);
+      await updateProject(project.id, (p) => { p.jiraIntegrationId = id; });
+      setJiraConnected(true); setJiraApiToken('');
+      setJiraSaveMsg('✓ Saved'); setTimeout(() => setJiraSaveMsg(''), 2000);
+    } finally { setJiraSaving(false); }
+  }
+
+  async function disconnectJira() {
+    if (!isAdmin) return;
+    if (project.jiraIntegrationId) await removeCredential(project.jiraIntegrationId);
+    await updateProject(project.id, (p) => { p.jiraIntegrationId = undefined; });
+    setJiraConnected(false); setJiraApiToken(''); setJiraBaseUrl(''); setJiraEmail(''); setJiraProjectKey(''); setJiraTestResult(null);
+  }
+
+  async function testJiraConnection() {
+    if (!project.jiraIntegrationId) { setJiraTestResult({ ok: false, message: 'Save the connection first.' }); return; }
+    setJiraTesting(true); setJiraTestResult(null);
+    try {
+      const creds = await loadCredential<JiraCredentials>(project.jiraIntegrationId);
+      if (!creds) { setJiraTestResult({ ok: false, message: 'Could not load saved credentials.' }); return; }
+      const result = await api.testJiraConnection(creds);
+      setJiraTestResult(result);
+    } catch (err) {
+      setJiraTestResult({ ok: false, message: err instanceof Error ? err.message : 'Connection test failed.' });
+    } finally { setJiraTesting(false); }
   }
 
   // ─── Team management ──────────────────────────────────────────────────────
@@ -1190,6 +1264,70 @@ export default function ProjectSettings({
                             )}
                             {githubConnected && (
                               <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={disconnectGithub}>
+                                Disconnect
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Jira Integration -- item #23, 2026-08-24. Connect/test/disconnect
+                    only; issue push is a deferred backlog item (see execution-status
+                    doc), so there's no "push to Jira" affordance here yet. */}
+                <div className={styles.integrationSection}>
+                  <p className={styles.sectionTitle}>Jira Integration</p>
+                  {jiraLoadingExisting ? (
+                    <p className={styles.fieldHint}>Loading…</p>
+                  ) : (
+                    <>
+                      <div className={styles.integrationStatus}>
+                        <span className={`${styles.integrationDot} ${jiraConnected ? styles.integrationDotConnected : styles.integrationDotDisconnected}`} />
+                        <span>{jiraConnected ? `Connected to ${jiraProjectKey}` : 'Not connected'}</span>
+                      </div>
+                      <p className={styles.fieldHint}>
+                        Connect a Jira Cloud project to verify credentials. Pushing items to Jira isn't available yet.
+                      </p>
+                      <div className={styles.formGroup}>
+                        <label>Jira Base URL *</label>
+                        <input value={jiraBaseUrl} onChange={(e) => setJiraBaseUrl(e.target.value)} placeholder="https://your-domain.atlassian.net" disabled={!isAdmin} />
+                      </div>
+                      <div className={styles.addRow}>
+                        <div className={styles.formGroup}>
+                          <label>Account Email *</label>
+                          <input value={jiraEmail} onChange={(e) => setJiraEmail(e.target.value)} placeholder="you@company.com" disabled={!isAdmin} />
+                        </div>
+                        <div className={styles.formGroup}>
+                          <label>Project Key *</label>
+                          <input value={jiraProjectKey} onChange={(e) => setJiraProjectKey(e.target.value)} placeholder="e.g. ENG" disabled={!isAdmin} />
+                        </div>
+                      </div>
+                      <div className={styles.formGroup}>
+                        <label>API Token {jiraConnected ? '(leave blank to keep current token)' : '*'}</label>
+                        <input type="password" value={jiraApiToken} onChange={(e) => setJiraApiToken(e.target.value)}
+                          placeholder={jiraConnected ? '••••••••••••••••' : 'Jira API token'} disabled={!isAdmin} />
+                      </div>
+                      {jiraError && <p className={styles.error}>{jiraError}</p>}
+                      {jiraTestResult && (
+                        <p className={jiraTestResult.ok ? styles.roleHint : styles.error}>
+                          {jiraTestResult.ok ? '✓ ' : '⚠ '}{jiraTestResult.message}
+                        </p>
+                      )}
+                      {isAdmin && (
+                        <div className={styles.addRow}>
+                          <button className="btn-primary" onClick={saveJiraIntegration} disabled={jiraSaving}>
+                            {jiraSaving ? 'Saving...' : jiraSaveMsg || (jiraConnected ? 'Update Connection' : 'Connect')}
+                          </button>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {jiraConnected && (
+                              <button className="btn-secondary" onClick={testJiraConnection} disabled={jiraTesting}>
+                                {jiraTesting ? 'Testing...' : 'Test Connection'}
+                              </button>
+                            )}
+                            {jiraConnected && (
+                              <button className={`${styles.actionBtn} ${styles.removeBtn}`} onClick={disconnectJira}>
                                 Disconnect
                               </button>
                             )}

@@ -233,6 +233,7 @@ export interface Project {
   archivedAt?: number;
   archivedBy?: string;
   githubIntegrationId?: string;
+  jiraIntegrationId?: string;
   sourceDocumentIds?: string[];
   extractionPackage?: ExtractionPackage;
   creationApproval?: ApprovalRecord;

@@ -618,6 +618,12 @@ app.use('/api/figma', createFigmaIntegrationRouter({ checkToken }));
 const { createGithubIntegrationRouter } = require('./routes/githubIntegration');
 app.use('/api/github', createGithubIntegrationRouter({ checkToken }));
 
+// Jira integration route group (item #23, 2026-08-24) -- credential
+// connect/test only, mirroring the GitHub group above. No issue-creation
+// route yet (deferred backlog item, see jiraIntegration.js's header comment).
+const { createJiraIntegrationRouter } = require('./routes/jiraIntegration');
+app.use('/api/jira', createJiraIntegrationRouter({ checkToken }));
+
 // Settings (read/write backend/.env) route group extracted 2026-07-19
 // (architecture upgrade Phase 3) to backend/src/routes/envSettings.js --
 // note the new file resolves envPath as '../../.env' (not '../.env'),

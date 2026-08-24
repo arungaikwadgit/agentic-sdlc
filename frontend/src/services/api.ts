@@ -628,6 +628,48 @@ async function testGithubConnection(params: GithubConnectionParams): Promise<Git
   return res.json();
 }
 
+// ── Jira integration ─────────────────────────────────────────────────────
+// Item #23 (2026-08-24): credential connect/test only. No issue-creation
+// route yet -- see backend/src/routes/jiraIntegration.js's header comment.
+
+export interface JiraConnectionParams {
+  baseUrl: string;
+  email: string;
+  apiToken: string;
+  projectKey: string;
+}
+
+export interface JiraTestResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Verifies Jira credentials can authenticate and see the configured project. Routed through the backend (CORS + Basic auth can't be done from the browser). */
+async function testJiraConnection(params: JiraConnectionParams): Promise<JiraTestResult> {
+  const res = await fetch(`${API_URL}/jira/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(await getAuthHeader()),
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    let message = `Connection check failed (${res.status})`;
+    try {
+      const parsed = JSON.parse(detail);
+      if (parsed?.error) message = parsed.error;
+    } catch {
+      // ignore — use default message
+    }
+    return { ok: false, message };
+  }
+
+  return res.json();
+}
+
 export interface GithubIssueDraft {
   title: string;
   body?: string;
@@ -684,4 +726,5 @@ export const api = {
   generateBrandingGuidelines,
   testGithubConnection,
   pushIssuesToGithub,
+  testJiraConnection,
 };
