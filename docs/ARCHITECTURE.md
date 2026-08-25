@@ -235,6 +235,8 @@ Parallel tiers run with bounded concurrency. Dependency tiers were split so agen
 | `backend/src/index.ts` | Agent runtime API (runs, jobs, memory, pgvector, readiness) — Railway service `agentic-sdlc-runtime` (separate from `agentic-sdlc` since 2026-08-24) |
 | `backend/railway.json` / `backend/railway.runtime.json` | Per-service Railway build/deploy config — `railway.json` is `agentic-sdlc` (proxy.js), `railway.runtime.json` is `agentic-sdlc-runtime` (index.ts). A stale, unrelated repo-root `railway.json` also exists; a service only picks it up if its own "Railway Config File" setting isn't pointed elsewhere. |
 | `server/src/` | Project/admin API with Supabase JWT auth — Railway service `artistic-charm` |
+| `scripts/smokeTestProduction.js` | Post-deploy production smoke test — checks live response shape for all 3 backend services (added 2026-08-24, see Deploy Verification & Monitoring above) |
+| `.github/workflows/production-smoke-test.yml` | Runs the smoke test after every push to `main`; opens/closes a `production-incident` GitHub Issue based on result |
 
 ---
 
@@ -269,6 +271,18 @@ Use these checks when validating the deployed architecture:
 | Project CRUD | Create, list, update, archive, and restore project flows call backend APIs and persist in Supabase Postgres. |
 | Invite flow | Invite links are project-scoped, non-admin by default, and resolved through backend invite/session APIs. |
 | Agent calls | Frontend agent execution calls the proxy; provider keys are never exposed to the browser. |
+
+## Deploy Verification & Monitoring — Before / After (2026-08-24)
+
+The manual checklist above tells you how to verify the architecture by hand. It does not run itself. Until today, nothing did — a bad deploy or a service going dark between deploys had no automated signal. Three gaps were found and closed in the same remediation pass; recorded here as the permanent architecture record (dated incident narrative and reconciled backlog live in `docs/architecture/execution-status-2026-08-24.md`, Sections 2–3).
+
+| Capability | Before (start of 2026-08-24) | After (end of 2026-08-24) |
+|---|---|---|
+| Runtime API deployment | `proxy.js` and `index.ts` shared a single Railway service (`agentic-sdlc`), which can only run one `startCommand`. Whichever deployed most recently silently took the other down — undetected for weeks, since nothing checked. | Dedicated Railway service `agentic-sdlc-runtime` runs `index.ts` independently, per ADR-006's original (never-implemented) design. Both processes verified reachable by direct curl against production, not just Railway's reported deploy status. |
+| Post-deploy verification | None. `.github/workflows/ci.yml` only typechecks and runs unit tests — it never calls a live URL, so it structurally cannot catch an infra/config regression like the one above. Railway auto-deploys on every push to `main` regardless of CI result. | `.github/workflows/production-smoke-test.yml` runs after every push to `main` (and on demand). `scripts/smokeTestProduction.js` hits all 3 backend services' real response shape — 5 checks, retried on transient failure — including the exact `model`-field check that would have caught today's incident within a minute instead of ~90. Opens a GitHub Issue labeled `production-incident` on failure (dedup'd, commented on if already open), auto-closes it on the next passing run. Detects a bad deploy quickly; cannot block one, since Railway's deploy is independent of this workflow's result. |
+| Continuous monitoring (between deploys) | None. A service going down hours or days after a clean deploy — dependency outage, resource exhaustion, unrelated infra failure — had no automated signal at all; the gap the smoke test above structurally can't cover. | 4 UptimeRobot monitors, user-configured: "Agentic SDLC App" (frontend/Vercel), "Agentic SDLC Railway API Health" (`agentic-sdlc` `/api/health`), "Agentic SDLC Railway ArtisticCharm Health" (`artistic-charm` `/health`), "Agentic SDLC Railway App Ready" (`agentic-sdlc-runtime` `/ready`). Runs independent of any git push. Exact alert thresholds/contacts configured directly in UptimeRobot, not independently verified from here. |
+
+Net effect: production regressions are now caught two ways instead of zero — a push-triggered check that inspects actual response shape (not just HTTP 200), and an always-on external monitor that doesn't depend on anyone pushing code.
 
 ## Architecture Documentation and Diagram Skill Recommendations
 

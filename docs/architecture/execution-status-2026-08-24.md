@@ -64,6 +64,13 @@ Wired `RUNTIME_API_URL` to the new service's URL on both `agentic-sdlc` (`proxy.
 
 Not done / explicitly out of scope for this pass: frontend migration to call `index.ts`'s routes directly (ADR-006's "Task #35") — was already on hold pending a live-Postgres smoke test the team hadn't done; this fix finally makes that smoke test possible, but doesn't do it. `docs/ARCHITECTURE.md` updated to reflect this as the actual (not aspirational) deployed state.
 
+### Deploy verification & monitoring — before / after
+
+Same before/after treatment, now also covering the two gaps found downstream of the runtime-service fix above (how would we have caught this sooner, and how do we catch the next one). Full comparison table lives in `docs/ARCHITECTURE.md` under "Deploy Verification & Monitoring — Before / After (2026-08-24)" since that's the permanent architecture record; summarized here for the day's ledger:
+
+- **Post-deploy verification:** before, none (`ci.yml` never touches a live URL) → after, `scripts/smokeTestProduction.js` + `.github/workflows/production-smoke-test.yml` (`fa4e7281`), checks real response shape on every push to `main`, auto-files/closes a `production-incident` GitHub Issue.
+- **Continuous monitoring:** before, none → after, 4 UptimeRobot monitors (frontend + 3 backends), independent of git pushes. See Section 3 below for the exact monitor list.
+
 ---
 
 ## 3. Backlog — reconciled against `step6-prioritization-matrix-draft.md`'s 14 items
