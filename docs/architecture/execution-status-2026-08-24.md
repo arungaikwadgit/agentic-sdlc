@@ -15,12 +15,12 @@ Continues `docs/architecture/execution-status-2026-08-23.md` (same convention: u
 5. Production smoke-test CI (`production-smoke-test.yml`) — closes the post-deploy verification gap
 6. Continuous uptime monitoring — 4 UptimeRobot monitors, user-configured — closes the between-deploys gap
 7. `docs/ARCHITECTURE.md` + this ledger updated with before/after comparisons for all three gaps above
+8. `#8` background lifecycle worker — found and fixed a regression from today's split (see Section 6)
 
-**Remaining (10, none started or scheduled by the user yet — see Section 3 for full detail):**
+**Remaining (9, none started or scheduled by the user yet — see Section 4 for full detail):**
 
 | # | Item | Why it's still open |
 |---|---|---|
-| #8 | Background lifecycle worker decision | Flagged unclear last pass — not independently re-verified. **Picking this up next, below.** |
 | #7 | CI coverage gap, backend + server | Not started |
 | #12 | Supabase backup/PITR posture decision | Not started — it's a decision, not code |
 | #13 | RLS policy per-table review | Not started |
@@ -119,7 +119,7 @@ That doc scored 14 remaining items as of its own writing (after Wave 1 closed 8)
 | #4 | Vector search / embeddings (pgvector) | Code done, but **production-unreachable** until the runtime-service split above lands — see Section 2 |
 | #5 | RAG grounding for 32 pipeline agents | Phase 1 done, Phase 3 (Token Optimizer pilot) done, Phase 2 GitHub half done today, Phase 2 Jira half **rescoped to credential-UI-only, deferred chat tool** (see below), Phases 4-6 not started |
 | #7 | CI coverage gap, backend + server | Not started |
-| #8 | Background lifecycle worker decision | **Status unclear — not verified this pass.** `BACKGROUND_WORKER_ENABLED` env var exists and `index.ts` calls `startLifecycleWorker`/`startScheduledLifecycleReviews`, suggesting a decision was made and implemented, but not independently re-confirmed here. Verify before assuming resolved. |
+| #8 | Background lifecycle worker decision | **Resolved — was a regression, now fixed.** Was silently disabled on `agentic-sdlc-runtime` (missing `PROXY_API_URL`/`PROXY_TOKEN`, a gap introduced by today's service split). Fixed, redeployed, warning confirmed gone from logs. See Section 6 for full detail and the caveat on end-to-end verification. |
 | #12 | Supabase backup/PITR posture decision | Not started (it's a decision, not code) |
 | #13 | RLS policy per-table review | Not started |
 | #14 | Integration credential storage duplication | Done (this program, prior session) |
@@ -151,6 +151,20 @@ Full detail lives in the memory system (`railway-multi-entrypoint-verification.m
 
 ---
 
-## 6. Next step
+## 6. #8 resolved — background lifecycle worker was a regression, not an unclear decision
 
-All items started today are done, including both follow-on gaps (CI/deploy verification, continuous monitoring) that were discovered mid-session rather than planned upfront. Picking up **#8 (background lifecycle worker decision)** next — it's the one remaining item flagged "unclear" rather than confirmed, and it's a direct extension of today's theme (things marked "done" that were never independently re-verified against what's actually running in production). Investigation only for now: confirming whether `BACKGROUND_WORKER_ENABLED` is actually set on the runtime service in production and whether the worker is running, not making a design decision. Will report back with findings before touching any code.
+Investigating #8 turned up a real, self-caused regression rather than the vague "unclear" status carried over from the prior pass.
+
+**Gap:** `startLifecycleWorker()` (processes queued background Token Optimizer / AI Governance jobs) requires `PROXY_API_URL` + `PROXY_TOKEN` to reach the proxy for the actual LLM call. Confirmed via a filtered log pull on `agentic-sdlc-runtime`'s deployment `ffdbb052`: `[lifecycle-worker] disabled: PROXY_API_URL/PROXY_TOKEN missing or explicitly disabled`. Root cause: when the runtime-service split (Section 3) was done earlier today, `RUNTIME_API_URL`/`RUNTIME_API_TOKEN_INTERNAL` were wired proxy→runtime, but the reverse leg (runtime→proxy) was never wired onto the new `agentic-sdlc-runtime` service — confirmed by comparing variable lists: the old combined service (`agentic-sdlc`) still has `PROXY_API_URL`/`PROXY_TOKEN` set from when `index.ts` ran there; the new service never got them. So any lifecycle event since the split queued a job in `agent_jobs` that nothing was polling — silent, no error surfaced anywhere a human would see it.
+
+**Fix:** wired `PROXY_API_URL=https://${{agentic-sdlc.RAILWAY_PUBLIC_DOMAIN}}` and `PROXY_TOKEN=${{agentic-sdlc.PROXY_TOKEN}}` onto `agentic-sdlc-runtime` via Railway reference syntax (same pattern as the earlier `RUNTIME_API_TOKEN_INTERNAL` wiring — never saw the actual secret value). Triggered a redeploy (`bde0788f`, SUCCESS). Confirmed the `[lifecycle-worker] disabled` warning no longer appears in the new deployment's logs, and re-ran `scripts/smokeTestProduction.js` — 5/5 still passing on both dependent services, confirming this change didn't regress anything else.
+
+**Benefit:** background Token Optimizer / AI Governance assessments (queued via lifecycle events on agent completion/rerun) can now actually process instead of silently piling up in `agent_jobs`.
+
+**Caveat — not fully closed:** absence of the disabled-warning log proves the worker *starts*; it doesn't prove a job has successfully round-tripped end-to-end, since there's nothing currently queued to observe draining. Confidence this specific fix is correct: ~0.9 (the exact same env-var pattern already verified working for `RUNTIME_API_URL` earlier today, and the failure mode/fix are directly traceable in code). Confidence the worker is *fully* functional end-to-end in production: lower, unverified — flagging as a follow-up rather than claiming it outright.
+
+Also worth noting for calibration: `get-service-config` on `agentic-sdlc` momentarily reported `startCommand: npm run runtime:start` / `healthcheckPath: /ready` — i.e., looked like the original incident had recurred. Direct curl against the live URL immediately after showed correct `proxy.js` behavior (`model` field present, `/api/chat/respond` 401, `/ready` 404 as expected), and the committed `backend/railway.json` on disk is correct. Treating this as a stale/lagging read from that particular tool, not a live incident — but recording it here since it's exactly the kind of "trust the curl, not the tool" lesson from Section 5.
+
+## 7. Next step
+
+Both today's originally-scoped items and both follow-on gaps discovered mid-session (post-deploy verification, continuous monitoring, and now the lifecycle-worker regression) are closed. Nothing else has emerged as urgent. Remaining work is the reconciled backlog in Section 4 (9 items, none started) plus the deferred full-scope Jira integration — next actual step is the user's call on which of those to prioritize.
