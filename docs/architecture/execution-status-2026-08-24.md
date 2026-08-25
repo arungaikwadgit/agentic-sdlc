@@ -4,7 +4,44 @@ Continues `docs/architecture/execution-status-2026-08-23.md` (same convention: u
 
 ---
 
-## 1. Completed today
+## 0. Summary — completed vs. remaining
+
+**Completed today (7):**
+
+1. Restored `proxy.js` after it was silently taken down (incident response)
+2. Runtime-service split — `agentic-sdlc-runtime` provisioned for `index.ts`, matching ADR-006
+3. `#5 Phase 2` (GitHub half) — `get_github_activity` chat tool, live and verified
+4. `#23` Jira credential connect/test/disconnect UI (scoped — chat tool + issue push deferred)
+5. Production smoke-test CI (`production-smoke-test.yml`) — closes the post-deploy verification gap
+6. Continuous uptime monitoring — 4 UptimeRobot monitors, user-configured — closes the between-deploys gap
+7. `docs/ARCHITECTURE.md` + this ledger updated with before/after comparisons for all three gaps above
+
+**Remaining (10, none started or scheduled by the user yet — see Section 3 for full detail):**
+
+| # | Item | Why it's still open |
+|---|---|---|
+| #8 | Background lifecycle worker decision | Flagged unclear last pass — not independently re-verified. **Picking this up next, below.** |
+| #7 | CI coverage gap, backend + server | Not started |
+| #12 | Supabase backup/PITR posture decision | Not started — it's a decision, not code |
+| #13 | RLS policy per-table review | Not started |
+| #15 | Integration provider scoping | Unblocked (was waiting on #14), not started |
+| #16 | Eval scorers, heuristic → LLM-judge | Not started |
+| #17 | Load/performance testing expansion | Not started |
+| #21 | UI component structural inventory | Not started |
+| #5 Phases 4-6 | RAG grounding, remaining phases | Not started |
+| Jira full scope | Chat tool + issue-creation parity with GitHub | Explicitly deferred per your decision — logged as its own future item |
+
+## 1. Gap → fix → benefit (today's three architecture gaps)
+
+| Gap | How it was fixed | Benefit |
+|---|---|---|
+| **Runtime API unreachable in production.** `proxy.js` and `index.ts` shared one Railway service that can only run one process. Whichever deployed last silently killed the other — true since `index.ts` was first deployed, over two months before caught. `#4` (pgvector) and `#5 Phase 3` (Token Optimizer citations) had been "done and tested" for weeks without ever being reachable. | Provisioned a dedicated second Railway service, `agentic-sdlc-runtime`, for `index.ts` — matching ADR-006's original (never-implemented) two-service design. No code changes; pure infra. Verified live via direct curl on both services, not just deploy status. | pgvector search and Token Optimizer citations are now actually reachable, not just built. The two services can no longer compete for one process slot, so a future `index.ts` deploy can't silently take down `proxy.js` (or vice versa) again. |
+| **No post-deploy verification.** `ci.yml` only typechecks and runs unit tests — it never calls a live URL, so it structurally could not have caught the incident above. Railway deploys on every push to `main` regardless of CI result. | Added `scripts/smokeTestProduction.js` + `.github/workflows/production-smoke-test.yml`, running after every push to `main`. 5 checks assert on actual response *shape* (not just HTTP 200) across all 3 backend services — including the exact `model`-field check that would have caught today's incident in ~1 minute instead of ~90. Auto-files a `production-incident` GitHub Issue on failure, auto-closes it on recovery. | A bad deploy is now surfaced automatically within minutes, with a tracked issue and no manual "did anyone check?" step. Can't block a bad deploy (Railway deploys independently of CI), but it catches one fast. |
+| **No monitoring between deploys.** A service could go down hours or days after a clean deploy — dependency outage, resource limits, unrelated infra failure — with zero automated signal. This is the exact gap that let `#4`/`#5 Phase 3` sit broken for weeks with no pushes in that window. | 4 UptimeRobot monitors, user-configured: frontend (Vercel) + all 3 backend services (`agentic-sdlc` `/api/health`, `agentic-sdlc-runtime` `/ready`, `artistic-charm` `/health`). Runs independent of git activity. | Closes the one blind spot the smoke test structurally can't cover — drift with no corresponding push. Together, the two form a two-layer safety net: push-triggered shape check + always-on external monitor. |
+
+---
+
+## 2. Completed today — detail
 
 | Item | What | Commit(s) | Status |
 |---|---|---|---|
@@ -18,7 +55,7 @@ All commits authored as `arungaikwadgit <arun.gaikwad@outlook.com>`.
 
 ---
 
-## 2. Production architecture — before / after
+## 3. Production architecture — before / after
 
 ### Before today (and, it turns out, before this whole remediation program — see ADR-006, dated 2026-06-22)
 
@@ -73,7 +110,7 @@ Same before/after treatment, now also covering the two gaps found downstream of 
 
 ---
 
-## 3. Backlog — reconciled against `step6-prioritization-matrix-draft.md`'s 14 items
+## 4. Backlog — reconciled against `step6-prioritization-matrix-draft.md`'s 14 items
 
 That doc scored 14 remaining items as of its own writing (after Wave 1 closed 8). Status now:
 
@@ -103,7 +140,7 @@ That doc scored 14 remaining items as of its own writing (after Wave 1 closed 8)
 
 ---
 
-## 4. Learnings (running list)
+## 5. Learnings (running list)
 
 Full detail lives in the memory system (`railway-multi-entrypoint-verification.md`, `check-file-exists-before-write.md`) so these persist across sessions. Summarized here so they're visible in-repo too:
 
@@ -114,6 +151,6 @@ Full detail lives in the memory system (`railway-multi-entrypoint-verification.m
 
 ---
 
-## 5. Next step
+## 6. Next step
 
-Both items started today (runtime-service split, Jira credential UI) are done. Remaining open items, in no particular forced order: verify #8 (background worker decision) rather than assume it's resolved; the CI/deploy-verification gap (Section 3) that would have caught both of today's production incidents before they shipped; and whichever of the reconciled backlog (Section 3) the user wants to prioritize next.
+All items started today are done, including both follow-on gaps (CI/deploy verification, continuous monitoring) that were discovered mid-session rather than planned upfront. Picking up **#8 (background lifecycle worker decision)** next — it's the one remaining item flagged "unclear" rather than confirmed, and it's a direct extension of today's theme (things marked "done" that were never independently re-verified against what's actually running in production). Investigation only for now: confirming whether `BACKGROUND_WORKER_ENABLED` is actually set on the runtime service in production and whether the worker is running, not making a design decision. Will report back with findings before touching any code.
