@@ -21,6 +21,7 @@
     "seed:sample-data": "node scripts/seedSampleData.js",
     "backfill:memory-embeddings": "node scripts/backfillMemoryEmbeddings.js",
     "test": "jest --testPathPattern=src/",
+    "test:coverage": "jest --testPathPattern=src/ --coverage --coverageReporters=text-summary --coverageReporters=text --coverageReporters=json-summary",
     "worker": "ts-node-dev --respawn --transpile-only src/worker/index.ts"
   },
   "dependencies": {

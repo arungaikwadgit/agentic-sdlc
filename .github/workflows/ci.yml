@@ -53,8 +53,8 @@ jobs:
       - name: Run migrations (test DB)
         run: npm run migrate:up:test
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
   # ─── Frontend: tsc + vitest + coverage ──────────────────────────────────────
   frontend:
@@ -83,9 +83,9 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage -- --reporter=verbose
 
-  # ─── Server: tsc ──────────────────────────────────────────────────────────────
+  # ─── Server: tsc + jest ────────────────────────────────────────────────────
   server:
-    name: Server (tsc)
+    name: Server (tsc + jest)
     runs-on: ubuntu-latest
 
     defaults:
@@ -106,6 +106,9 @@ jobs:
 
       - name: Typecheck
         run: npx tsc --noEmit
+
+      - name: Run tests with coverage
+        run: npm run test:coverage
 
   # ─── Shared types: tsc ───────────────────────────────────────────────────────
   shared-types:
