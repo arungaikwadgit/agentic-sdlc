@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agentic AI SDLC — Verified Architecture</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#131c30; --card2:#0f1728; --border:#233049;
+    --text:#e8edf7; --text-dim:#93a1bd; --text-faint:#5c6b8a;
+    --ok-bg:#0f2b1e; --ok-bd:#1f6b45; --ok-tx:#7fe0a8;
+    --warn-bg:#2c2308; --warn-bd:#8a6a12; --warn-tx:#f2c94c;
+    --miss-bg:#180c0e; --miss-bd:#7a2b34; --miss-tx:#f28b93;
+    --accent:#5b8def;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px 16px 60px}
+  .wrap-outer{max-width:1180px;margin:0 auto}
+  h1{font-size:20px;font-weight:600;margin:0 0 4px}
+  .sub{font-size:13px;color:var(--text-dim);line-height:1.6;margin:0}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--text-dim)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .header{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px}
+  .panel{background:var(--card);border:1px solid var(--accent);border-radius:12px;padding:18px 20px;margin-bottom:16px;min-height:150px}
+  .panel-title{font-size:15px;font-weight:600;margin:0 0 2px}
+  .panel-badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;margin-bottom:10px}
+  .panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  .panel-field-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:4px}
+  .panel-field-body{font-size:13px;line-height:1.55;color:var(--text)}
+  .placeholder{color:var(--text-dim);font-size:13px;line-height:1.6}
+  .wrap{display:grid;grid-template-columns:200px 1fr 200px;gap:14px;align-items:start}
+  @media(max-width:900px){.wrap{grid-template-columns:1fr}.panel-grid{grid-template-columns:1fr}}
+  .col-h{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .sec{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:14px}
+  .sec-h{font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px}
+  .col{display:flex;flex-direction:column;gap:8px}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .badge{border-radius:8px;padding:8px 10px;cursor:pointer;position:relative;text-align:left;font-family:inherit;width:100%}
+  .b-t{font-size:12px;font-weight:600;line-height:1.3}
+  .b-s{font-size:11px;margin-top:2px;line-height:1.3;opacity:.85}
+  .b-ok{background:var(--ok-bg);border:1px solid var(--ok-bd)}
+  .b-ok .b-t,.b-ok .b-s{color:var(--ok-tx)}
+  .b-warn{background:var(--warn-bg);border:1px solid var(--warn-bd)}
+  .b-warn .b-t,.b-warn .b-s{color:var(--warn-tx)}
+  .b-miss{background:var(--miss-bg);border:1px dashed var(--miss-bd)}
+  .b-miss .b-t,.b-miss .b-s{color:var(--miss-tx)}
+  .badge:hover{filter:brightness(1.25)}
+  .badge.selected{outline:2px solid var(--accent);outline-offset:1px}
+  .upd{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .footer-note{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 18px;font-size:12px;color:var(--text-dim);line-height:1.6;margin-top:6px}
+  .tag{display:inline-flex;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap-outer">
+
+  <div class="header">
+    <h1>Agentic AI SDLC application — verified architecture</h1>
+    <p class="sub">Rebuilt from direct code/schema evidence on <code>main</code>. Click any component below for its definition, usage, current gaps, and next steps. Updated after every completed remediation step — last updated 2026-08-25.</p>
+    <div class="legend">
+      <span><span class="dot" style="background:#1f6b45"></span>Implemented</span>
+      <span><span class="dot" style="background:#8a6a12"></span>Partial</span>
+      <span><span class="dot" style="background:#7a2b34;border:1px dashed #f28b93"></span>Missing</span>
+      <span><span class="dot" style="background:var(--accent)"></span>Changed this pass</span>
+    </div>
+  </div>
+
+  <div class="panel" id="panel">
+    <div class="placeholder">Click any component in the diagram below to see its definition, how it's actually used in this app, what's missing versus a complete version, and the concrete next step to close that gap.</div>
+  </div>
+
+  <div class="wrap">
+    <div class="col" id="col-left">
+      <div class="col-h">Security, governance &amp; compliance</div>
+    </div>
+    <div id="col-mid"></div>
+    <div class="col" id="col-right">
+      <div class="col-h">Observability &amp; evaluation</div>
+    </div>
+  </div>
+
+  <div class="sec" style="margin-top:14px">
+    <div class="sec-h">Runtime &amp; infra</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" id="footer-tags"></div>
+  </div>
+
+  <div class="footer-note">
+    Ten boxes changed in the 2026-08-25 pass: vector database and user feedback loop moved from missing to implemented; monitoring &amp; alerting moved from missing to partial; the agent count was corrected from 30 to 32; evidence text was refreshed for external integrations, memory agent, RAG pipeline, CI/CD pipeline, work items (Jira), and background lifecycle worker. Every claim traces to a specific commit, migration, or deploy log — nothing here is inferred, and UptimeRobot is flagged as externally-configured rather than code-verified since it lives outside this repository.
+  </div>
+
+</div>
+
+<script>
+const DATA = {
+"identity-access":{title:"Identity & access",status:"ok",sub:"JWT + RBAC, no SSO",def:"Authenticates users and controls what they can do, based on a signed identity token and a role assigned per project.",use:"Supabase issues a JWT on login; backend middleware verifies it and checks the caller's team_members role before allowing project/admin actions.",gap:"No SSO/SAML — every user needs a direct Supabase account, which doesn't fit enterprise identity requirements (Okta, Azure AD, etc).",next:"Add an SSO provider via Supabase Auth's third-party OAuth/SAML support if enterprise customers require centralized identity."},
+"data-privacy":{title:"Data privacy & encryption",status:"ok",sub:"Credential AES-256-GCM only",def:"Protects sensitive data (integration credentials, tokens) so it isn't readable if the database is exposed.",use:"integrationCredentialCrypto.js encrypts stored GitHub/Jira/etc credentials with AES-256-GCM before writing to app_integrations, keyed by APP_INTEGRATION_ENCRYPTION_KEY.",gap:"Only integration credentials are encrypted at the field level; other sensitive project data relies solely on Postgres/Supabase storage-level encryption, with no key-rotation process documented.",next:"Decide whether other sensitive fields need field-level encryption, and document a key-rotation runbook for APP_INTEGRATION_ENCRYPTION_KEY."},
+"ai-governance":{title:"AI governance agent",status:"ok",sub:"Real agent + audit log",def:"A background agent that reviews AI-generated output/config changes against policy and records the outcome.",use:"Runs via the lifecycle worker on agent completion/rerun, writes results to agent_runs for audit.",gap:"Governance policy is defined in prompts/config, not a structured, versioned policy engine — hard to audit exactly what policy was active when.",next:"Version and snapshot the governance policy alongside each agent_runs record so audit trails are self-contained."},
+"policy-audit":{title:"Policy enforcement & audit logs",status:"ok",sub:"Confirmed writes",def:"Records who did what, when, for accountability and troubleshooting.",use:"Key actions (invite creation/revocation, admin actions, governance reviews) write confirmed audit rows to Postgres.",gap:"No centralized, queryable audit log UI — rows exist but there's no admin view to search or filter them.",next:"Build a minimal admin audit-log viewer, even a simple filterable table, so audit data is usable without direct DB access."},
+"compliance":{title:"Compliance (SOC2/HIPAA)",status:"miss",sub:"Only in generated content",def:"Formal control frameworks (SOC2, HIPAA) that map technical controls to compliance requirements.",use:"Not implemented — compliance-sounding text may appear in agent-generated project documents, but no actual control mapping exists in the codebase.",gap:"No SOC2/HIPAA control matrix, no compliance evidence collection, no BAA-ready data handling review.",next:"If a customer needs this, treat it as a scoped compliance project (control mapping, evidence automation), not a code feature to bolt on."},
+"threat-protection":{title:"Threat protection",status:"miss",sub:"Manual reviews, no SAST/DAST",def:"Automated scanning for security vulnerabilities in code and running services.",use:"Security review happens via the securityCompliance pipeline agent (a review-gate agent) and manual review, not automated scanning.",gap:"No SAST (static analysis) or DAST (dynamic scanning) in CI — vulnerabilities could ship undetected.",next:"Add a SAST step (e.g. Semgrep, CodeQL) to ci.yml as a low-effort first layer."},
+"secrets-mgmt":{title:"Secrets management",status:"ok",sub:"Platform env vars, no vault",def:"Where and how API keys, tokens, and passwords are stored and accessed by running services.",use:"All secrets live in Railway/Vercel environment variables, cross-referenced between services via Railway's \${{Service.VAR}} syntax.",gap:"No dedicated secrets vault — rotation is manual, and env vars are visible to anyone with Railway project access.",next:"Acceptable at current scale; revisit if the team grows past a size where env-var-level access control becomes a real risk."},
+"rate-limiting":{title:"Rate limiting",status:"ok",sub:"express-rate-limit, 3 layers",def:"Prevents abuse or accidental overload by capping how many requests a client can make.",use:"express-rate-limit applied across 3 layers in proxy.js, confirmed in code.",gap:"Limits are static/global, not tiered by plan or role, and not distributed (in-memory) — multi-instance scaling would need a shared store.",next:"Move to a Redis-backed limiter if/when the service scales past a single instance."},
+"web-portal":{title:"Web portal",status:"ok",sub:"React SPA / Vercel",def:"The primary way users interact with the platform.",use:"React + Vite SPA deployed on Vercel; talks to the proxy and runtime APIs.",gap:"No offline support or PWA install; single deployment target (Vercel).",next:"Not urgent — revisit only if usage patterns demand it."},
+"chatbot":{title:"In-app help chatbot",status:"ok",sub:"Real RAG loop",def:"A conversational assistant inside the app that can answer questions using project context and connected tool evidence.",use:"chatOrchestrator.js runs a planner → tool-execution → synthesis loop, pulling evidence from GitHub and project memory via chatEvidence.js.",gap:"Jira evidence isn't wired into this loop yet — credentials exist, the read tool doesn't.",next:"Build get_jira_activity mirroring get_github_activity, once prioritized (currently a deferred backlog item)."},
+"external-integrations":{title:"External integrations",status:"warn",updated:true,sub:"GitHub read via chat; Jira stored only",def:"Third-party service connections (GitHub, Jira, Confluence, Slack, GitLab) the app can read from or write to on the user's behalf.",use:"useIntegrations.ts stores encrypted credentials for any provider; GitHub credentials are now also read via the chat tool for issues/PRs (app-admin gated).",gap:"Jira, Confluence, Slack, and GitLab credentials can be stored/tested but nothing reads or writes through them yet.",next:"Prioritize which provider gets read/write parity next — Jira is already flagged as a deferred backlog item.",changed:"Updated 2026-08-25: GitHub read capability added via get_github_activity."},
+"ide-plugin":{title:"IDE plugin",status:"miss",sub:"Not present",def:"An extension letting developers use the platform from inside their editor.",use:"Not built.",gap:"No IDE integration at all.",next:"Low priority unless developer-workflow adoption becomes a blocker."},
+"mobile-app":{title:"Mobile app",status:"miss",sub:"Not present",def:"A native or wrapped mobile client.",use:"Not built — the web SPA is responsive but not a dedicated app.",gap:"No mobile-specific UX or offline support.",next:"Low priority; revisit if mobile usage data justifies it."},
+"teams-slack":{title:"Teams / Slack bot",status:"miss",sub:"Not present",def:"A bot presence in team chat tools for notifications or quick actions.",use:"Not built.",gap:"No chat-platform integration — smoke-test failure alerts go to GitHub Issues, not Slack/Teams.",next:"Could be a natural extension of the smoke-test alerting work if the team wants push notifications instead of polling GitHub."},
+"public-api":{title:"Public API / SDK",status:"miss",sub:"Internal-only today",def:"A documented, stable API surface for external developers to build against.",use:"The proxy/runtime APIs exist but are internal, undocumented for external consumption, and not versioned as a public contract.",gap:"No public API docs, no SDK, no API versioning guarantees.",next:"Only worth doing if there's demand for third-party integrations against this platform."},
+"api-gateway":{title:"API gateway",status:"ok",sub:"REST only (proxy.js)",def:"The single entry point that fronts backend services for the frontend.",use:"backend/src/proxy.js on Railway service agentic-sdlc — owns LLM calls, app-state, chat, GitHub push, governance, feedback, and forwards select routes to the project API.",gap:"REST only — no GraphQL, no API gateway product; rate limiting and auth are hand-rolled in the same process.",next:"Fine at current scale; revisit only if the team wants unified API management across more services."},
+"authentication":{title:"Authentication",status:"ok",sub:"Supabase JWT",def:"Verifies who a user is.",use:"Supabase Auth issues JWTs; local admin bypass exists only outside production; invite sessions are project-scoped.",gap:"No SSO (see Identity & access) and no MFA enforcement confirmed in code.",next:"Add MFA enforcement if handling more sensitive customer data."},
+"authz-rbac":{title:"Authorization / RBAC",status:"ok",sub:"4-tier app_role",def:"Controls what an authenticated user is allowed to do.",use:"A 4-tier app_role enum drives access checks across proxy and project API routes.",gap:"Role checks are scattered across route handlers rather than a single policy layer, making consistency harder to audit.",next:"Consider consolidating authorization checks into a shared policy module if the role model grows more complex."},
+"session-mgmt":{title:"Session management",status:"ok",sub:"invite_sessions table",def:"Tracks active login/invite sessions and their scope.",use:"invite_sessions backs project-scoped, single-accept invite links; invite tokens are stored as SHA-256 hashes, never plaintext.",gap:"No visible session-revocation UI for admins to force-expire an active session.",next:"Add an admin \"revoke session\" action if incident response ever requires it."},
+"prompt-context":{title:"Prompt / context mgmt",status:"ok",sub:"contextBudget.ts + governance",def:"Manages how much and which context gets sent to the LLM per agent call.",use:"contextBudget.ts enforces token budgets; governed prompts are resolved server-side for background jobs.",gap:"Budget tuning is static per agent, not adaptive to actual usage/cost patterns.",next:"Instrument actual token usage per agent to inform budget tuning (ties into Token optimizer / Metrics)."},
+"user-mgmt":{title:"User management",status:"ok",sub:"team_members + prefs",def:"Manages user membership, roles, and preferences per project.",use:"team_members table plus per-user preference storage.",gap:"No self-service user directory/admin screen beyond project-level membership management.",next:"Low priority unless the org needs cross-project user administration."},
+"sso-saml":{title:"SSO / SAML",status:"miss",sub:"Not present",def:"Centralized enterprise identity federation.",use:"Not built.",gap:"Same as Identity & access — no SSO provider wired in.",next:"Add via Supabase Auth's OAuth/SAML support if required."},
+"pipeline-orchestrator":{title:"Pipeline orchestrator",status:"warn",sub:"Real sequencer, not a planner",def:"Drives the SDLC pipeline through its phases, gates, and agent reruns.",use:"pipelineEngine.ts runs phase sequencing, review gates, resume, and concurrency — confirmed real and in production use.",gap:"It's a fixed sequencer following a hardcoded phase order, not a planner that can reorder or skip phases based on project context.",next:"Only worth building a real planner if projects need genuinely different phase paths — the current fixed sequence covers the common case."},
+"sdlc-agents":{title:"32 SDLC agents",status:"ok",updated:true,sub:"Document generators, confirmed",def:"The individual AI agents that each produce one artifact (PRD, architecture doc, test plan, etc.) in the pipeline.",use:"32 agents across 17 phases, defined in frontend/src/agents/definitions.ts and constants.ts.",gap:"All are document generators — none execute real code or take real-world action (see Code execution sandbox, Automation/RPA).",next:"No action needed on the count; if the platform expands into code-executing agents, that's a much larger scope.",changed:"Count corrected from a stale 30 to the true 32 (item #22)."},
+"parallel-execution":{title:"Parallel phase execution",status:"ok",sub:"Real, dependency-tiered",def:"Runs independent agents concurrently instead of one at a time.",use:"Phases split into dependency tiers (phase2a, phase3a, phase3c, phase4a) so same-domain dependencies resolve before downstream agents start.",gap:"Concurrency is bounded but not dynamically tuned to load — a fixed tier structure, not adaptive scheduling.",next:"Not urgent; revisit only if phase execution time becomes a bottleneck at scale."},
+"tool-use":{title:"Tool use",status:"ok",sub:"6 internal tools, real",def:"Lets agents call structured tools (not just generate text) to fetch real data during execution.",use:"6 internal tools confirmed wired into agent execution.",gap:"Tool set is fixed and internal — no external tool/plugin framework (see MCP/A2A).",next:"If external tool integration becomes a priority, MCP is the natural next step."},
+"l3-think-act":{title:"L3 think/act loop",status:"ok",sub:"Real bounded-retry loop",def:"A reasoning loop that lets certain agents plan, act, observe, and retry within bounds instead of a single-shot generation.",use:"Confirmed real, with a bounded retry count to prevent runaway loops.",gap:"Bounds are static (fixed retry count/timeout) rather than adaptive to task difficulty.",next:"Low priority; only revisit if specific agents are consistently hitting retry limits without completing."},
+"hitl-gates":{title:"Human-in-the-loop gates",status:"ok",sub:"4 gates, real, hardened",def:"Checkpoints where a human must approve before the pipeline proceeds.",use:"4 active review gates confirmed in the phase table (gate1, gate2, gate3, gate5).",gap:"Gates are fixed at these 4 phases — no per-project configuration of which phases require approval.",next:"Low priority unless customers want configurable approval workflows."},
+"timeout-cancel":{title:"Timeout & cancellation",status:"ok",sub:"Real, 120-180s + Stop",def:"Prevents a stuck agent call from hanging indefinitely, and lets a user stop a running phase.",use:"Confirmed real timeouts (120-180s range) plus a Stop control.",gap:"Timeout values are fixed, not tuned per agent complexity.",next:"Low priority; revisit only if specific agents are timing out prematurely or hanging past a reasonable ceiling."},
+"memory-agent":{title:"Memory agent",status:"warn",updated:true,sub:"Tag/keyword base; vector for 1 agent",def:"Selects relevant prior project context to feed into an agent's prompt.",use:"selectProjectMemoryContext() scores and ranks memory records by tag/keyword match for every agent; Token Optimizer additionally gets pgvector semantic search via fetchSemanticEvidence().",gap:"Only 1 of 32 agents benefits from real semantic (vector) retrieval — the rest rely on keyword scoring, which misses conceptually-related-but-differently-worded context.",next:"Extend evidenceSources (the mechanism currently gating Token Optimizer's grounding) to more agents, prioritizing the ones most sensitive to context quality.",changed:"Updated 2026-08-25: pgvector now real (see Vector database), but wired into only 1 of 32 agents."},
+"token-optimizer":{title:"Token optimizer / cost",status:"ok",sub:"Real agent + tracking",def:"Monitors and optimizes LLM token usage/cost.",use:"Real background agent with cost tracking, pgvector-grounded and verified end-to-end in production.",gap:"Tracking exists per-run; no aggregated cost dashboard across a project or org (see Metrics).",next:"Surface aggregated cost data in a dashboard — natural pairing with the Metrics gap."},
+"ai-safety":{title:"AI safety / guardrails",status:"warn",sub:"Function-level, not an agent",def:"Checks that prevent unsafe or policy-violating AI output from reaching users.",use:"Implemented as functions/middleware, not a dedicated reviewing agent.",gap:"No single place to audit what guardrails exist and what they check — logic is distributed across call sites.",next:"Consider consolidating guardrail checks into one reviewable module if the number of checks grows."},
+"lifecycle-worker":{title:"Background lifecycle worker",status:"ok",updated:true,sub:"Real durable job queue",def:"Processes queued background jobs (async governance/optimizer assessments) without blocking the user-facing request.",use:"Polls agent_jobs with FOR UPDATE SKIP LOCKED, retries with backoff.",gap:"No dashboard showing queue depth or failed-job rate — a stuck queue currently only surfaces via manual log inspection.",next:"Add a lightweight queue-health check (e.g. to the smoke test) so a stuck worker is caught automatically, not hours later by chance.",changed:"2026-08-24: a wiring regression (missing PROXY_API_URL/PROXY_TOKEN on the split-off runtime service) had silently disabled this worker; found and fixed same day."},
+"multi-agent":{title:"Multi-agent collaboration",status:"miss",sub:"No mesh — false in template",def:"Agents coordinating with each other directly (not just sequentially via the pipeline).",use:"Not implemented — agents run in a fixed sequence/tiers, not a peer-to-peer mesh.",gap:"No agent-to-agent negotiation or dynamic collaboration.",next:"Not needed at current scope; the phase-tier model covers today's use case without this complexity."},
+"dynamic-decomposition":{title:"Dynamic task decomposition",status:"warn",sub:"Statically defined only",def:"Breaking a goal into subtasks dynamically based on the specific project, rather than a fixed template.",use:"Task breakdown is statically defined — every project runs the same phase/agent structure.",gap:"No project-specific task planning regardless of project complexity or type.",next:"Only worth pursuing if customers need meaningfully different pipelines for different project types."},
+"mcp-a2a":{title:"MCP / A2A",status:"miss",sub:"Not present",def:"Standard protocols (Model Context Protocol, Agent-to-Agent) for connecting agents to external tools and other agents.",use:"Not implemented — the 6 internal tools are custom-wired, not MCP-based.",gap:"No standardized external tool/agent interoperability.",next:"Consider MCP if the platform wants to let users plug in their own tools without custom backend code per integration."},
+"rag-pipeline":{title:"RAG pipeline",status:"warn",updated:true,sub:"Chatbot + 1 of 32 agents",def:"Retrieves relevant external/internal knowledge to ground AI output in real evidence instead of the model's unaided memory.",use:"The chatbot's evidence tools (GitHub) and Token Optimizer's pgvector-grounded citations, verified in production.",gap:"31 of 32 pipeline agents generate without any retrieval grounding.",next:"Same as Memory agent — extend evidenceSources to more agents, prioritized by which ones most need factual grounding.",changed:"Updated 2026-08-25: Token Optimizer grounding now counted, was chatbot-only before."},
+"vector-db":{title:"Vector database",status:"ok",updated:true,sub:"pgvector + HNSW, backfilled",def:"A database structure that lets you search by semantic similarity instead of exact keyword match.",use:"migrations/025_pgvector_memory_embeddings.sql adds memory_records.embedding vector(1536) with an HNSW cosine index; embeddings backfilled for pre-existing records.",gap:"Only memory_records has embeddings — no other table (e.g. project artifacts, agent outputs directly) is embedded.",next:"Evaluate whether embedding agent outputs directly would improve the RAG pipeline gap above.",changed:"Was “explicitly deferred, not built.” Now confirmed real and live."},
+"project-memory":{title:"Project memory store",status:"ok",sub:"Real, isolation-checked",def:"Persistent, project-scoped memory that agents can read and write across runs.",use:"Real, with confirmed project-isolation checks — one project's memory can't leak into another's.",gap:"No user-facing UI to browse/manage what's stored in a project's memory.",next:"Low priority — an admin/debug view could help troubleshoot RAG quality issues if they arise."},
+"knowledge-graph":{title:"Knowledge graph",status:"miss",sub:"Not present",def:"A structured graph of entities and relationships (vs. flat documents) for more precise retrieval.",use:"Not built.",gap:"No entity-relationship modeling — all retrieval is document/record-based.",next:"Not worth building unless retrieval quality genuinely plateaus with the vector+keyword approach."},
+"document-store":{title:"Document store",status:"ok",sub:"Postgres backed",def:"Where generated documents/artifacts are persisted.",use:"Postgres-backed, confirmed.",gap:"No versioning/diffing between artifact revisions beyond whatever Postgres row history exists.",next:"Low priority unless users request artifact version comparison."},
+"enterprise-search":{title:"Enterprise search",status:"miss",sub:"Not present",def:"Search across all of an organization's projects/artifacts, not just within one project.",use:"Not built — retrieval is scoped per-project.",gap:"No cross-project search.",next:"Only relevant once an org has enough projects that cross-project search adds real value."},
+"web-research":{title:"External web research",status:"warn",sub:"Chatbot only, thin",def:"Letting the AI pull in live information from the public web.",use:"Available to the chatbot only, and lightly built.",gap:"Not available to pipeline agents; unclear reliability/rate-limit handling.",next:"Low priority unless a specific pipeline agent (e.g. competitive research) needs live web data."},
+"foundation-models":{title:"Foundation models",status:"ok",sub:"OpenAI default, Claude optional",def:"The underlying LLM(s) powering agent generation.",use:"OpenAI gpt-4o is the default; Claude and OpenAI-compatible models are routed server-side when enabled.",gap:"No local/self-hosted model option — fully dependent on external provider availability and pricing.",next:"Not urgent; revisit only if provider cost or availability becomes a real constraint."},
+"model-router":{title:"Model router",status:"ok",sub:"Real, confirmed in proxy.js",def:"Decides which model/provider handles a given request.",use:"Confirmed real routing logic in proxy.js.",gap:"Routing rules are static per-agent config, not dynamic based on live cost/latency/quality signals.",next:"Low priority; a dynamic router only pays off once there's real usage data to route on."},
+"model-eval":{title:"Model / agent evaluation",status:"warn",sub:"Heuristic scorers, not LLM-judge",def:"Automated scoring of agent output quality.",use:"Heuristic scorers exist and are real, but there's no LLM-as-judge evaluation layer.",gap:"Heuristics can miss nuanced quality issues an LLM judge would catch.",next:"Backlog item #16 — pilot an LLM-judge scorer on one agent (Token Optimizer is a natural candidate given it already has grounding) before rolling out broadly."},
+"fine-tuned":{title:"Fine-tuned models",status:"miss",sub:"Not present",def:"Models custom-trained on this platform's own data.",use:"Not built — all models are off-the-shelf foundation models.",gap:"No fine-tuning pipeline or infrastructure.",next:"Not worth pursuing without a clear quality gap that prompting/RAG can't close."},
+"custom-models":{title:"Custom / proprietary models",status:"miss",sub:"Not present",def:"Fully custom or in-house model infrastructure.",use:"Not built.",gap:"Same as Fine-tuned models.",next:"No action unless a specific need emerges."},
+"devops-github":{title:"DevOps tools (GitHub)",status:"warn",sub:"Push-out only, one-directional",def:"Lets the pipeline push generated code/artifacts to a GitHub repo.",use:"githubIntegration.js supports creating issues and pushing content — one-directional (out only).",gap:"Can't read back repo state (commits, file contents) to inform pipeline decisions.",next:"If bidirectional GitHub sync becomes valuable, extend past get_github_activity (which only reads issues/PRs for the chatbot) to actual repo content reads."},
+"cicd":{title:"CI/CD pipeline",status:"ok",updated:true,sub:"2 workflows: CI + smoke test",def:"Automated testing and deployment verification.",use:"ci.yml (4 typecheck/test jobs on push/PR) plus production-smoke-test.yml, which checks live prod endpoints after every push and auto-files a GitHub Issue on failure.",gap:"No project-wide coverage threshold gate for backend/server — see backlog item #7.",next:"Currently being worked — see the coverage-gap investigation.",changed:"Added production-smoke-test.yml 2026-08-24; ci.yml's original 4 jobs unchanged."},
+"code-sandbox":{title:"Code execution sandbox",status:"miss",sub:"No agent runs real code",def:"An isolated environment where an agent could actually execute code, not just generate it.",use:"Not built — all agents produce text/document artifacts.",gap:"No code execution capability at all.",next:"A large scope addition — only pursue if the product direction genuinely needs agents to run/validate code, not just describe it."},
+"infrastructure":{title:"Infrastructure",status:"ok",sub:"Railway + Vercel + Supabase",def:"The hosting/runtime platforms the app runs on.",use:"Railway (backend services), Vercel (frontend), Supabase (Postgres + Auth) — confirmed real and live.",gap:"Single-region deployment; no documented DR/multi-region strategy (see Backup & DR).",next:"See Backup & DR — related, unaddressed gap."},
+"external-apis":{title:"External APIs",status:"ok",sub:"4 real providers",def:"Third-party APIs the platform depends on.",use:"4 real providers confirmed wired in (OpenAI, Anthropic, GitHub, Resend for invite delivery).",gap:"No documented fallback behavior if a provider has an outage.",next:"Confirm/document provider-outage fallback behavior, especially for the primary LLM provider."},
+"load-testing-tools":{title:"Load testing",status:"warn",sub:"1 k6 script, real but thin",def:"Simulated load to verify the system holds up under realistic traffic.",use:"One real k6 script exists but coverage is thin (likely a single scenario, not a full load profile).",gap:"No regular load-testing cadence or broader scenario coverage — backlog item #17.",next:"Not being picked up this pass; remains open backlog."},
+"automation-rpa":{title:"Automation / RPA",status:"miss",sub:"Not present",def:"Automated, code-free workflows for repetitive tasks.",use:"Not built.",gap:"N/A — not part of this platform's current scope.",next:"No action needed unless a specific automation use case emerges."},
+"mcp-a2a-frameworks":{title:"MCP / A2A frameworks",status:"miss",sub:"Not present",def:"Same as MCP/A2A, viewed from the tools/action layer.",use:"Not built.",gap:"Duplicate of the orchestration-layer MCP/A2A gap.",next:"Same — consider if external tool interoperability becomes a priority."},
+"source-repos":{title:"Source code repos",status:"ok",sub:"GitHub push-out only",def:"Where the platform's generated code/artifacts can be pushed for version control.",use:"GitHub push-out, confirmed real.",gap:"Can't read repo contents back (same limitation as DevOps tools above).",next:"Same as DevOps tools (GitHub) — extend to bidirectional if needed."},
+"work-items-jira":{title:"Work items (Jira)",status:"warn",updated:true,sub:"Credential UI only, read deferred",def:"Integration with a work-tracking tool (Jira) for syncing backlog items/tickets.",use:"Connect/test/disconnect credential UI shipped 2026-08-24 (jiraIntegration.js) — validates credentials against /rest/api/3/myself and a project key.",gap:"No chat read tool (unlike GitHub's get_github_activity) and no issue push — credentials are stored but nothing reads or writes through them yet.",next:"Explicitly deferred per your decision — build get_jira_activity (mirroring the GitHub chat tool) when this gets prioritized.",changed:"Credential UI shipped 2026-08-24; was not present before."},
+"databases":{title:"Databases",status:"ok",sub:"Postgres, 30+ tables, live",def:"The system of record for the whole platform.",use:"Supabase Postgres, 30+ tables, confirmed live and authoritative for projects, memberships, runtime records, integrations, and more.",gap:"No documented backup/point-in-time-recovery posture — see Backup & DR (backlog item #12).",next:"Not being picked up this pass; remains open backlog — it's a decision (retention policy, RPO/RTO targets), not just code."},
+"artifact-repo":{title:"Artifact repository",status:"miss",sub:"Not exposed to the app",def:"A dedicated store for build artifacts (binaries, packages) separate from source/documents.",use:"Not applicable — the platform generates documents/plans, not deployable build artifacts.",gap:"N/A given the product's current scope.",next:"No action needed unless the platform starts producing deployable build artifacts directly."},
+"monitoring-alerting":{title:"Monitoring & alerting",status:"warn",updated:true,sub:"Smoke-test issues + UptimeRobot",def:"Detects when something in production is broken and tells someone.",use:"production-smoke-test.yml auto-files/closes a GitHub Issue on failure (code-verified); 4 UptimeRobot monitors cover frontend + all 3 backend services (user-configured, external to this repo).",gap:"No unified alert routing/escalation — GitHub Issues and UptimeRobot's own notifications are two separate, unlinked channels.",next:"If on-call response time matters, consider routing both into a single alerting tool; otherwise the current two-channel setup is a reasonable stopgap.",changed:"Was “health checks only, no alerts.” Both channels added 2026-08-24/25."},
+"logging-analytics":{title:"Logging & analytics",status:"miss",sub:"Platform logs only",def:"Structured, searchable logs and usage analytics.",use:"Only Railway/Vercel's platform-native logs — nothing centralized or structured for analytics.",gap:"No log aggregation, no product usage analytics.",next:"Low priority unless debugging production issues from platform logs alone becomes a real bottleneck."},
+"data-lake":{title:"Data lake / warehouse",status:"miss",sub:"Not present",def:"A separate analytical store for reporting/BI, distinct from the operational database.",use:"Not built — all data lives in the operational Postgres database.",gap:"No analytical/BI layer.",next:"Not needed at current scale; revisit if reporting needs outgrow ad hoc Postgres queries."},
+"tracing":{title:"Distributed tracing",status:"miss",sub:"Not present",def:"Following a single request as it moves across multiple services, to debug latency/errors.",use:"Not built — no trace IDs propagated across proxy/runtime/server.",gap:"Debugging a cross-service issue requires manually correlating logs by timestamp.",next:"Low priority given current service count (3); worth revisiting if the service count grows further."},
+"logs-obs":{title:"Logs",status:"warn",sub:"Platform-native, not centralized",def:"Application log output for debugging.",use:"Railway/Vercel platform-native logs, viewed per-service.",gap:"No centralized log search across all 3 backend services at once.",next:"Low priority unless it becomes a real debugging bottleneck."},
+"metrics":{title:"Metrics",status:"warn",sub:"Per-run only, no dashboard",def:"Quantitative measurement of system behavior (latency, cost, usage) over time.",use:"Metrics exist per-run (e.g. token cost per agent call) but aren't aggregated into a dashboard.",gap:"No way to see trends over time without querying the database directly.",next:"Natural pairing with the Token optimizer gap — build a simple aggregated dashboard once there's enough run history to make it useful."},
+"model-eval-obs":{title:"Model/agent evaluation",status:"warn",sub:"Heuristic, real framework",def:"Same evaluation capability as in the Model layer, viewed from the observability angle.",use:"Real heuristic scoring framework exists.",gap:"No LLM-judge layer yet.",next:"Same — backlog item #16."},
+"feedback-loop":{title:"User feedback loop",status:"ok",updated:true,sub:"Real capture route",def:"Lets users flag or rate AI output so the platform can learn what's working.",use:"Real feedback capture route confirmed in backend/src/proxy.js.",gap:"Feedback is captured but not yet fed back into anything — no visible loop closing (e.g. into eval scorers or prompt tuning).",next:"Once eval scorers (#16) exist, consider using captured feedback as a labeled dataset for them.",changed:"Was “not present.” Now confirmed real (item #18)."},
+"load-testing-obs":{title:"Load testing",status:"warn",sub:"Minimal, real",def:"Same capability as Tools & action layer's Load testing, from an observability angle.",use:"Minimal but real (same k6 script).",gap:"Same as above.",next:"Same — backlog item #17."},
+"railway-vercel-supabase":{title:"Railway + Vercel + Supabase",status:"ok",sub:"",def:"The core hosting stack.",use:"Confirmed live across all services.",gap:"Single-provider dependency for each layer — no multi-cloud redundancy.",next:"Not worth addressing unless provider reliability becomes a real problem."},
+"kubernetes":{title:"Kubernetes",status:"miss",sub:"",def:"Container orchestration for scaling/managing services.",use:"Not used — Railway handles deployment/orchestration instead.",gap:"N/A — Railway's PaaS model is an intentional alternative to running Kubernetes directly.",next:"No action needed unless the team outgrows Railway's PaaS model."},
+"vms":{title:"Virtual machines",status:"miss",sub:"",def:"Traditional VM-based infrastructure.",use:"Not used — everything runs on PaaS (Railway/Vercel).",gap:"N/A, same reasoning as Kubernetes.",next:"No action needed."},
+"networking":{title:"Networking",status:"warn",sub:"",def:"How services communicate — public domains, private networking, service-to-service auth.",use:"Mix of public HTTPS domains and Railway's \${{Service.VAR}} reference syntax for cross-service secrets.",gap:"No private VPC/network isolation between services — cross-service calls go over public domains rather than Railway's private networking.",next:"Consider migrating cross-service calls to Railway's private domains for lower latency and reduced public exposure, now that the wiring pattern is proven."},
+"iac":{title:"IaC",status:"miss",sub:"",def:"Infrastructure-as-code — infrastructure defined in version-controlled files rather than clicked together in a dashboard.",use:"Partial at best — railway.json/railway.runtime.json define build/deploy config, but service creation, variable wiring, and domain generation were all done via dashboard/MCP, not Terraform-style IaC.",gap:"The 2026-08-24 lifecycle-worker regression (a missed env-var wiring step) is exactly the kind of mistake IaC with a diff-and-apply workflow catches before it ships.",next:"Consider Railway's Terraform provider if this class of manual-wiring mistake recurs."},
+"backup-dr":{title:"Backup & DR",status:"miss",sub:"",def:"A plan for recovering data/service after a serious failure.",use:"Not documented — this is backlog item #12 (Supabase backup/PITR posture decision).",gap:"No confirmed backup retention policy, no disaster-recovery runbook.",next:"Not being picked up this pass; it's a decision (RPO/RTO targets, retention policy) that needs to be made before it's a code task."}
+};
+
+const LEFT = ["identity-access","data-privacy","ai-governance","policy-audit","compliance","threat-protection","secrets-mgmt","rate-limiting"];
+const RIGHT = ["tracing","logs-obs","metrics","model-eval-obs","feedback-loop","load-testing-obs"];
+const FOOTER = ["railway-vercel-supabase","kubernetes","vms","networking","iac","backup-dr"];
+const SECTIONS = [
+  {h:"1. Users & channels", items:["web-portal","chatbot","external-integrations","ide-plugin","mobile-app","teams-slack","public-api"], full:["public-api"]},
+  {h:"2. Experience & access layer", items:["api-gateway","authentication","authz-rbac","session-mgmt","prompt-context","user-mgmt","sso-saml"], full:["sso-saml"]},
+  {h:"3. AI agent orchestration layer", items:["pipeline-orchestrator","sdlc-agents","parallel-execution","tool-use","l3-think-act","hitl-gates","timeout-cancel","memory-agent","token-optimizer","ai-safety","lifecycle-worker","multi-agent","dynamic-decomposition","mcp-a2a"], full:[]},
+  {h:"4. Knowledge & retrieval layer", items:["rag-pipeline","vector-db","project-memory","knowledge-graph","document-store","enterprise-search","web-research"], full:["web-research"]},
+  {h:"5. Model layer", items:["foundation-models","model-router","model-eval","fine-tuned","custom-models"], full:["custom-models"]},
+  {h:"6. Tools & action layer", items:["devops-github","cicd","code-sandbox","infrastructure","external-apis","load-testing-tools","automation-rpa","mcp-a2a-frameworks"], full:[]},
+  {h:"7. Enterprise data & systems", items:["source-repos","work-items-jira","databases","artifact-repo","monitoring-alerting","logging-analytics","data-lake"], full:[]}
+];
+
+function badgeHtml(id){
+  const d = DATA[id];
+  const cls = d.status === "ok" ? "b-ok" : d.status === "warn" ? "b-warn" : "b-miss";
+  const dot = d.updated ? '<span class="upd"></span>' : '';
+  const sub = d.sub ? '<div class="b-s">'+d.sub+'</div>' : '';
+  return '<button type="button" class="badge '+cls+'" data-id="'+id+'" onclick="selectItem(\''+id+'\')">'+dot+'<div class="b-t">'+d.title+'</div>'+sub+'</button>';
+}
+
+document.getElementById('col-left').innerHTML += LEFT.map(badgeHtml).join('');
+document.getElementById('col-right').innerHTML += RIGHT.map(badgeHtml).join('');
+document.getElementById('footer-tags').innerHTML = FOOTER.map(id=>{
+  const d = DATA[id];
+  const cls = d.status === "ok" ? "b-ok" : d.status === "warn" ? "b-warn" : "b-miss";
+  return '<button type="button" class="badge tag '+cls+'" data-id="'+id+'" onclick="selectItem(\''+id+'\')" style="width:auto">'+d.title+'</button>';
+}).join('');
+
+let midHtml = '';
+SECTIONS.forEach(sec=>{
+  midHtml += '<div class="sec"><div class="sec-h">'+sec.h+'</div><div class="g2">';
+  sec.items.forEach(id=>{
+    const spanFull = sec.full.includes(id) ? ' style="grid-column:1/-1"' : '';
+    const d = DATA[id];
+    const cls = d.status === "ok" ? "b-ok" : d.status === "warn" ? "b-warn" : "b-miss";
+    const dot = d.updated ? '<span class="upd"></span>' : '';
+    const sub = d.sub ? '<div class="b-s">'+d.sub+'</div>' : '';
+    midHtml += '<button type="button" class="badge '+cls+'"'+spanFull+' data-id="'+id+'" onclick="selectItem(\''+id+'\')">'+dot+'<div class="b-t">'+d.title+'</div>'+sub+'</button>';
+  });
+  midHtml += '</div></div>';
+});
+document.getElementById('col-mid').innerHTML = midHtml;
+
+function selectItem(id){
+  const d = DATA[id];
+  document.querySelectorAll('.badge').forEach(b=>b.classList.remove('selected'));
+  document.querySelectorAll('.badge[data-id="'+id+'"]').forEach(b=>b.classList.add('selected'));
+  const statusLabel = d.status === "ok" ? "Implemented" : d.status === "warn" ? "Partial" : "Missing";
+  const badgeBg = d.status === "ok" ? "var(--ok-bg)" : d.status === "warn" ? "var(--warn-bg)" : "var(--miss-bg)";
+  const badgeTx = d.status === "ok" ? "var(--ok-tx)" : d.status === "warn" ? "var(--warn-tx)" : "var(--miss-tx)";
+  let html = '<div class="panel-title">'+d.title+'</div>';
+  html += '<span class="panel-badge" style="background:'+badgeBg+';color:'+badgeTx+'">'+statusLabel+'</span>';
+  if(d.changed){ html += '<div style="font-size:12px;color:var(--accent);margin-bottom:8px">Changed this pass: '+d.changed+'</div>'; }
+  html += '<div class="panel-grid">';
+  html += '<div><div class="panel-field-label">Definition</div><div class="panel-field-body">'+d.def+'</div></div>';
+  html += '<div><div class="panel-field-label">Usage in this app</div><div class="panel-field-body">'+d.use+'</div></div>';
+  html += '<div><div class="panel-field-label">Gap</div><div class="panel-field-body">'+d.gap+'</div></div>';
+  html += '<div><div class="panel-field-label">Next step</div><div class="panel-field-body">'+d.next+'</div></div>';
+  html += '</div>';
+  document.getElementById('panel').innerHTML = html;
+  document.getElementById('panel').scrollIntoView({behavior:'smooth', block:'start'});
+}
+</script>
+</body>
+</html>
