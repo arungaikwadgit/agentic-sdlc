@@ -1,0 +1,25 @@
+-- Backlog item #13 (RLS policy per-table review), 2026-08-26 -- Supabase's
+-- security advisor (get_advisors, type=security) flagged agent_feedback as
+-- the one ERROR-level, EXTERNAL-facing finding in the whole database: RLS
+-- was not enabled on it at all, unlike every other public-schema table.
+--
+-- Why this mattered: the frontend ships a public Supabase anon key
+-- (VITE_SUPABASE_ANON_KEY -- public by design, visible in the deployed JS
+-- bundle). With RLS disabled, that key could be used to call Supabase's
+-- PostgREST API directly (GET/POST/DELETE .../rest/v1/agent_feedback),
+-- reading or writing every project's feedback rows, completely bypassing
+-- this app's own authorization in backend/src/routes/agentFeedback.js
+-- (checkToken / requireAdmin), which only guards the Express route -- not
+-- the table itself.
+--
+-- Why enabling RLS with NO policies is the correct, safe fix here (not a
+-- placeholder): the app never queries this table through PostgREST. Every
+-- read/write goes through agentFeedback.js's `dbPool.query(...)`, a direct
+-- pg.Pool connection using POSTGRES_URL. Confirmed via
+-- `SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'postgres'`
+-- that this connection role has rolbypassrls = true, so RLS has zero
+-- effect on the app's own access path -- this migration only closes the
+-- PostgREST/anon-key exposure, matching the same fail-closed,
+-- zero-policy pattern already present (accidentally or not) on the other
+-- 26 public-schema tables per the same advisor scan.
+ALTER TABLE agent_feedback ENABLE ROW LEVEL SECURITY;
