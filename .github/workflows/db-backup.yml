@@ -1,0 +1,85 @@
+name: Nightly DB backup
+
+on:
+  schedule:
+    # 09:00 UTC = ~04:00 America/Chicago, low-traffic window
+    - cron: '0 9 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Dump, encrypt, and archive production database
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install PostgreSQL 17 client tools
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: Dump production database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set on this repo. See docs/architecture/execution-status-2026-08-26.md backlog #12." >&2
+            exit 1
+          fi
+          pg_dump "$SUPABASE_DB_URL" --no-owner --no-privileges --format=custom --file=db.dump
+
+      - name: Encrypt dump
+        env:
+          BACKUP_ENCRYPTION_PASSPHRASE: ${{ secrets.BACKUP_ENCRYPTION_PASSPHRASE }}
+        run: |
+          if [ -z "$BACKUP_ENCRYPTION_PASSPHRASE" ]; then
+            echo "::error::BACKUP_ENCRYPTION_PASSPHRASE secret is not set on this repo." >&2
+            exit 1
+          fi
+          STAMP="$(date -u +%Y-%m-%d)"
+          echo "BACKUP_STAMP=$STAMP" >> "$GITHUB_ENV"
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$BACKUP_ENCRYPTION_PASSPHRASE" \
+            --symmetric --cipher-algo AES256 \
+            -o "agentic-sdlc-${STAMP}.dump.gpg" db.dump
+          rm -f db.dump
+
+      - name: Checkout backups repo
+        uses: actions/checkout@v4
+        with:
+          repository: arungaikwadgit/agentic-sdlc-backups
+          path: backups-repo
+          token: ${{ secrets.BACKUP_REPO_PAT }}
+
+      - name: Add new backup and prune anything older than 7 days
+        run: |
+          set -euo pipefail
+          mkdir -p backups-repo/backups
+          mv "agentic-sdlc-${BACKUP_STAMP}.dump.gpg" backups-repo/backups/
+
+          cd backups-repo/backups
+          cutoff="$(date -u -d '7 days ago' +%Y-%m-%d)"
+          for f in agentic-sdlc-*.dump.gpg; do
+            [ -e "$f" ] || continue
+            fdate="$(echo "$f" | sed -E 's/agentic-sdlc-([0-9]{4}-[0-9]{2}-[0-9]{2})\.dump\.gpg/\1/')"
+            if [[ "$fdate" < "$cutoff" ]]; then
+              echo "Pruning $f (older than $cutoff)"
+              rm -f "$f"
+            fi
+          done
+
+      - name: Commit and push backup
+        run: |
+          cd backups-repo
+          git config user.name "agentic-sdlc-backup-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && echo "Nothing to commit" && exit 0
+          git commit -m "backup: ${BACKUP_STAMP}"
+          git push
