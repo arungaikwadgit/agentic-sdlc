@@ -49,8 +49,8 @@ This is a judgment call on my part, same as Step 2's criticality scoring — fla
 | RLS policy per-table review (#13) | Medium | Medium | **Do next** |
 | Supabase backup/PITR posture decision (#12) | High | Low (it's a decision, not code) | **Quick win** |
 | CI coverage gap, backend + server (#7) | Medium | Medium | **Do next** |
-| Integration credential storage duplication (#14) | Medium | Low | **Quick win** |
-| Integration provider scoping (#15) | Low | Medium | **Later** — depends on #14 |
+| Integration credential storage duplication (#14) | Medium | Low | **Done** (2026-08-22, commit `404a5d2a`) |
+| Integration provider scoping (#15) | Low | Medium | **Done** (2026-08-27) — GitHub + Jira wired, Confluence/GitLab/Slack are placeholders |
 | Eval scorers, heuristic → LLM-judge (#16) | Medium | Medium | **Do next** — benefits from #5 existing first, not blocked by it |
 | Load/performance testing expansion (#17) | Medium | Medium | **Do next** |
 | User feedback capture (#18) | Low | Low | **Quick win** |
@@ -62,13 +62,13 @@ This is a judgment call on my part, same as Step 2's criticality scoring — fla
 
 ## 4. Reading the matrix into a recommendation
 
-**Quick wins first (low effort regardless of value)** — these are cheap enough that sequencing barely matters, so front-load them for momentum and to shrink the backlog fast: background worker decision (#8), backup/PITR decision (#12), integration credential duplication (#14), feedback capture (#18), sidebar re-check (#20), agent count fix (#22). None of these need a design meeting — #8 and #12 are yes/no decisions, the rest are a few hours each.
+**Quick wins first (low effort regardless of value)** — these are cheap enough that sequencing barely matters, so front-load them for momentum and to shrink the backlog fast: background worker decision (#8), backup/PITR decision (#12), integration credential duplication (#14), feedback capture (#18), sidebar re-check (#20), agent count fix (#22). None of these need a design meeting — #8 and #12 are yes/no decisions, the rest are a few hours each. (#12 done 2026-08-26, #14 done 2026-08-22.)
 
 **The one big bet** — pgvector (#4) → RAG grounding (#5) is the highest-value, highest-effort pair in the whole program, and it's also the item most likely to slip a schedule (already flagged as the biggest sprint risk in Step 5). Recommend starting #4 in parallel with the quick wins above, not after them, since it's on the critical path for #5 and nothing else here blocks it.
 
 **Everything else (#7, #13, #16, #17)** — solid Medium/Medium items, no reason to front-load or defer specifically; slot them around the two tracks above based on team capacity.
 
-**Genuinely low priority (#15, #21)** — fine to defer to whenever capacity opens up; neither blocks anything else and neither has user-facing urgency.
+**Genuinely low priority (#21)** — fine to defer to whenever capacity opens up; doesn't block anything else and has no user-facing urgency. (#15 done 2026-08-27 — see the row above.)
 
 ---
 
