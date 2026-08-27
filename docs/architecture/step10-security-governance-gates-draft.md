@@ -13,7 +13,7 @@
 | Server-side RBAC on new routes | None automated — verified manually this session (Wave 1 item 2) | Add the integration test described in Step 9 §2; require it for any new mutating route touching `team_members`-scoped resources |
 | No new SECURITY DEFINER views/functions without justification | None automated | A migration-review checklist item — cheap, no tooling needed, just a habit backed by this session's finding (two views had this exact problem, both now fixed) |
 | No new tables without RLS consideration | None automated — this is exactly how ~24 tables ended up RLS-enabled-but-policy-less (a deliberate, documented pattern per migration 006, not an oversight, but worth re-confirming per table as Step 6 #13 proceeds) | Migration review checklist: every new table gets an explicit RLS decision recorded in the migration file's comments, matching this session's own convention |
-| Secrets/credentials never duplicated without reason | Currently **violated** — two separate credential encryption systems exist (frontend `useIntegrations.ts`, backend `integrationCredentialCrypto.js`), flagged in Step 8 and Step 6 #14 | Resolve the duplication (Step 6 #14) before treating this gate as met |
+| Secrets/credentials never duplicated without reason | **Met** — resolved 2026-08-22 (Step 6 #14, commit `404a5d2a`): the client-side system was deleted; `backend/src/integrationCredentialCrypto.js` is the only credential encryption system | Gate met — no further action |
 
 ## 2. Runtime governance gates (the platform's own AI-governance feature)
 
