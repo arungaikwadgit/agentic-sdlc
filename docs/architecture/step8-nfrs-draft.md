@@ -40,7 +40,7 @@
 | Database-layer defense-in-depth (RLS) | ~24 tables have RLS enabled with **zero policies** — all access control is application-layer only (Step 1 Ledger #2, RAID I2) | Either real per-table RLS policies where anon/authenticated access is a legitimate path, or an explicit documented decision that service-role-only access makes policies unnecessary for a given table | Tracked as Step 6 item #13, not started |
 | Leaked-password protection | Disabled — Supabase Free plan doesn't support it (confirmed via failed live save attempt this session) | Enabled, contingent on Pro plan upgrade | **Accepted risk** (RAID I1) — not an open action item |
 | SECURITY DEFINER / search_path hygiene | Fixed live this session (Wave 1 item 5) — both flagged views now `security_invoker`, both functions have explicit `search_path` | Maintain — already met | None found |
-| Credential storage | **Two separate systems** exist: `frontend/src/hooks/useIntegrations.ts` (client-side AES-GCM, passphrase in `localStorage`) and `backend/src/integrationCredentialCrypto.js` (server-side) — not yet reconciled | One system, or an explicit documented reason for two | Tracked as Step 6 item #14 (credential storage duplication investigation), not started |
+| Credential storage | **One system**: `backend/src/integrationCredentialCrypto.js` (server-side AES-256-GCM). The client-side system was dead code and was deleted (commit `404a5d2a`, 2026-08-22) | One system, or an explicit documented reason for two — met | Resolved via Step 6 item #14 (2026-08-22) + #15 provider scoping (2026-08-27, GitHub/Jira wired, Confluence/GitLab/Slack are placeholders) |
 | App-admin allowlist | Enforced via `ADMIN_EMAIL_ALLOWLIST` env var, tested this session (`auth.test.ts`, pending real execution) | Maintain | None found, pending test suite execution (RAID R2) |
 
 ## 5. Observability
@@ -70,7 +70,7 @@
 
 ## 8. Summary — where the real gaps are
 
-Three things stand out as genuinely unresolved, not just process boxes to check: **test coverage** (the standing >95% instruction is far from met in `backend/` and `server/`), **RLS policy coverage** (24 tables with no DB-layer defense-in-depth), and **credential storage duplication** (two systems, unreconciled). Everything else in this NFR pass either already has a tracked action item from Step 6, or is a genuine accepted risk with a clear reason.
+Two things stood out as genuinely unresolved when this pass was written; both are now closed. **RLS policy coverage** (24+ tables with no DB-layer defense-in-depth) was resolved 2026-08-26 (Step 6 #13 — reviewed, confirmed RLS-enabled-zero-policy is the correct fail-closed state, and additionally revoked wide-open `anon`/`authenticated` grants and backfilled migration drift on 8 tables). **Credential storage duplication** was resolved 2026-08-22/27 (Step 6 #14/#15 — see the Credential storage row above). **Test coverage** (the standing >95% instruction, far from met in `backend/` and `server/`) remains the one genuinely open item from this NFR pass.
 
 ---
 
