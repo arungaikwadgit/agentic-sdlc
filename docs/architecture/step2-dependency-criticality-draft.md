@@ -38,8 +38,8 @@
 | 11 | Dead code in `invites.ts` (D3) | **P2** | Nothing | Nothing — noise reduction only |
 | 12 | Supabase backup/PITR posture (C5) | **P2** | A business decision (upgrade plan tier or accept the risk) | Any "enterprise-grade" backup/DR claim in later steps |
 | 13 | RLS policy per-table deliberate review (F2) | **P2** | Nothing | Nothing urgent — refines an already-accurate picture |
-| 14 | Integration credential storage duplication (H2) | **P2** | Nothing to investigate; a decision once understood | Nothing blocking, but should resolve before H1 scoping is finalized |
-| 15 | Integration provider scoping (H1) | **P2** | #14 ideally resolved first for a clean picture | Any spec claiming integration support |
+| 14 | Integration credential storage duplication (H2) | **P2** | Resolved 2026-08-22 (commit `404a5d2a`) — client-side crypto deleted, server-side `integrationCredentialCrypto.js` is now the only system | Done — see execution-status-2026-08-23.md |
+| 15 | Integration provider scoping (H1) | **P2** | #14 resolved 2026-08-22 — clean picture available. Scoped 2026-08-27: GitHub + Jira fully wired, Confluence/GitLab/Slack are placeholders (type-union entry only, no route, no UI) | Done — see execution-status-2026-08-27.md |
 | 16 | Eval scorers still heuristic (E4) | **P2** | Nothing structural | Confidence in any "agent output quality" claim |
 | 17 | Load/performance testing minimal (E5) | **P2** | Nothing | Any production-scale capacity claim |
 | 18 | User feedback capture absent (E6) | **P2** | Nothing | Any "agents improve from feedback" future claim |
@@ -63,7 +63,7 @@ The sequence that gates the most downstream work, in order:
 3. **#4 (vector search decision) → #5 (RAG grounding)** — the single largest capability investment in this list; sequencing it early means later component specs (Step 6 onward) can assume a real answer instead of building around a placeholder.
 4. **#8 (background worker decision)** — independent of the above, can run in parallel with #3-#5.
 5. **P2 quick wins (#9, #10, #11, #19)** — no dependencies, cheap, can be scheduled any time in parallel with the above rather than waiting in line.
-6. **P2 investigation items (#12, #13, #14→#15, #16, #17, #18)** — normal backlog, no urgency to front-load.
+6. **P2 investigation items (#12, #13, #14→#15, #16, #17, #18)** — normal backlog, no urgency to front-load. #12–#15 done as of 2026-08-27 (see execution-status-2026-08-2{6,7}.md).
 7. **P3 items (#20, #21, #22)** — whenever convenient.
 
 ## 5. What this feeds into
