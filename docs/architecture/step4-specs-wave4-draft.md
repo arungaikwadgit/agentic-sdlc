@@ -48,25 +48,25 @@
 
 ---
 
-# 3. Integration Credential Storage Investigation → Provider Scoping (P2)
+# 3. Integration Credential Storage Investigation → Provider Scoping (P2) — RESOLVED 2026-08-27
 
-**1. Purpose & Problem Statement.** Two parallel credential-encryption systems exist (client-side AES-GCM in `useIntegrations.ts`, server-side AES-256-GCM in `integrationCredentialCrypto.js`) with no confirmed reason for the split (Step 1, Section H). Also: 5 integration providers claimed, only 2 have typed credential shapes.
+**1. Purpose & Problem Statement — resolved.** The client-side system (`frontend/src/utils/crypto.ts` + `useIntegrations.ts`) was deleted in commit `404a5d2a` (2026-08-22, item #14) — it was dead code the routes never actually called. `backend/src/integrationCredentialCrypto.js` (server-side AES-256-GCM) is now the only credential-encryption system. Provider scoping (item #15) completed 2026-08-27: of the 5 claimed providers, only GitHub and Jira have real typed credential shapes and wired routes; Confluence/GitLab/Slack exist only as a string in the `IntegrationProvider` type union, with no route file and no UI.
 
-**2. Current State.** Both systems exist and are used somewhere; their respective scope/purpose isn't documented anywhere found this program.
+**2. Current State.** One system in production: `backend/src/integrationCredentialCrypto.js` (AES-256-GCM, key `APP_INTEGRATION_ENCRYPTION_KEY`), storing ciphertext in the `app_integrations` table. GitHub and Jira credentials flow through it end-to-end (save/load/remove via `/api/app-state/integrations/:id`); Confluence, GitLab, and Slack have no implementation to store credentials for.
 
-**3. Target State.** A clear answer: are these two systems serving genuinely different purposes (e.g. user-level vs. org-level credentials), or is one redundant/should be deprecated? Then, informed by that answer, precise scoping of which of the 5 claimed providers (Jira/Confluence/GitHub/GitLab/Slack) are actually fully wired vs. placeholder.
+**3. Target State — reached.** Answer: the two systems were never serving different purposes — the server-side module was fully built and tested but never wired into the routes, so the client-side module (which had a real defect: credentials permanently undecryptable if `localStorage` was cleared) was doing the actual work by default. The fix was a one-time cutover to the server-side module, not a redundancy to preserve. Provider scoping: GitHub and Jira are fully wired (Jira's issue-push/chat-tool integration is explicitly deferred as its own future item); Confluence, GitLab, and Slack are placeholders only.
 
 **4-9.** Investigation first; any consolidation work would be a follow-on spec once the answer is known.
 
-**10. Dependencies.** Provider scoping benefits from the credential-storage investigation resolving first (Step 2, item #15 depends on #14), so they're sequenced as one two-step item.
+**10. Dependencies.** Provider scoping benefited from the credential-storage investigation resolving first (Step 2, item #15 depends on #14) — #14 resolved 2026-08-22, #15 resolved 2026-08-27, in that order as planned.
 
-**11. Pre-Implementation Gate.** Risk: assuming redundancy and deleting one system without confirming intent first could break a legitimate use case. Mitigation: this spec is investigation-only; no consolidation without a separate explicit decision once the answer is known.
+**11. Pre-Implementation Gate.** Risk realized and mitigated as planned: the investigation confirmed no legitimate use case depended on the client-side system before it was removed (commit `404a5d2a`), with the explicit user decision recorded in the commit message and a breaking-change tradeoff accepted (existing saved credentials became undecryptable, users had to reconnect). Provider scoping (#15) stayed investigation-only per the original gate — no consolidation or new provider implementation was done as part of this item.
 
-**19. Effort Estimate.** Small-Medium — mostly code reading and confirming actual call sites for each credential system.
+**19. Effort Estimate — actual.** Small-Medium, as estimated. #14's fix (already done, discovered during this review) plus #15's provider audit was a code-reading and call-site-confirmation exercise, no new implementation.
 
-**20. Open Questions.** The core question this whole item exists to answer.
+**20. Open Questions — answered.** Confluence/GitLab/Slack wiring is out of scope here; if the product wants those providers live, that's a new, separate implementation spec (typed credential shape + route + UI per provider), not a continuation of this investigation.
 
-**21. Owner/Sign-off.** Unassigned, awaiting go.
+**21. Owner/Sign-off.** Closed 2026-08-27 — see docs/architecture/execution-status-2026-08-27.md.
 
 ---
 
