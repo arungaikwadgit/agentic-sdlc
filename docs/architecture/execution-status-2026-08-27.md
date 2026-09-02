@@ -9,6 +9,7 @@ Continues `docs/architecture/execution-status-2026-08-26.md`.
 | Item | What | Commit(s) | Status |
 |---|---|---|---|
 | #15 — Integration provider scoping | Investigated the credential-storage duplication this item was scoped to resolve, and scoped which of the 5 claimed integration providers are actually wired. | See Section 2 for the full commit list (5 doc corrections + diagram) | Done, verified. See Section 2. |
+| #16 — Eval scorers scoping | Made the 3 open-question decisions from the wave3 spec (judge model, replace-vs-both, pilot scope) per the user's explicit direction. Build deliberately NOT started — kept as a future backlog item. | `step4-specs-wave3-draft.md`, `step6-prioritization-matrix-draft.md` | Scoped, deferred. See Section 5. |
 
 ---
 
@@ -57,4 +58,18 @@ Continues `docs/architecture/execution-status-2026-08-26.md`.
 
 ## 4. Next step
 
-Backlog #15 is closed. Remaining items, in the program's original order: #16 (eval scorers), #17 (load/performance testing), #21 (UI component inventory), #5 phases 4-6, deferred Jira full scope — plus the #12 follow-ups and the Section 3 items above. User's call on what to prioritize next.
+Backlog #15 is closed. #16 is scoped but explicitly deferred (see Section 5) — the user chose to record the decisions and keep it in the backlog rather than build it now. Remaining items, in the program's original order: #17 (load/performance testing), #21 (UI component inventory), #5 phases 4-6, deferred Jira full scope, and #16 whenever it's picked back up — plus the #12 follow-ups and the Section 3 items above.
+
+---
+
+## 5. Scoped but deferred — Eval scorers upgrade (#16)
+
+The wave3 spec for #16 (`step4-specs-wave3-draft.md`) left 3 open questions before any build could start: judge model choice, whether to replace the 5 existing heuristic scorers or run both, and rollout scope. Asked the user directly rather than assuming; decisions made 2026-08-27:
+
+- **Judge model: `gpt-4o`** — the same model already used for the live agent pipeline (`backend/src/proxy.js`), so judge reasoning stays consistent with what actually generated the output being judged, rather than a cheaper model with a different quality bar.
+- **Replace vs. both: run both.** The 5 heuristic scorers in `tests/eval/scorers.ts` stay as the free, deterministic, no-API-key baseline that already gates CI (per `tests/eval/eval.test.ts`'s no-API-key contract) — the judge score is reported alongside as a new signal, not a replacement. Matches the spec's own flagged risk about judge reliability: a bad judge run can never silently weaken the existing gate.
+- **Rollout scope: pilot on Token Optimizer only**, per the architecture diagram's own prior suggestion (it already has real pgvector grounding, so a judge could score citation accuracy, not just plausibility) — not wired into every agent's fixtures on the first pass.
+
+**Explicitly not done:** no code was written. `llmJudge.ts` (referenced in `tests/eval/README.md` as the aspirational file for this) still does not exist. The user's direction was to capture the scoping decisions and keep #16 as a future backlog item, not implement it in this session. Updated `step4-specs-wave3-draft.md`'s Open Questions (now answered) and Owner/Sign-off (now "scoped, deferred") accordingly, and `step6-prioritization-matrix-draft.md`'s #16 row (was "Do next", now "Scoped, deferred").
+
+**Confidence: ~0.95** that the decisions themselves are recorded accurately (they came directly from the user, not inferred). Rubric design (part of section 20's original open questions) is intentionally left for whoever picks this up — `tests/eval/README.md`'s existing example judge prompt is the suggested starting point, not a finished rubric.
