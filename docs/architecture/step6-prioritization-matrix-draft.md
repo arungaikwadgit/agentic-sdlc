@@ -51,7 +51,7 @@ This is a judgment call on my part, same as Step 2's criticality scoring — fla
 | CI coverage gap, backend + server (#7) | Medium | Medium | **Do next** |
 | Integration credential storage duplication (#14) | Medium | Low | **Done** (2026-08-22, commit `404a5d2a`) |
 | Integration provider scoping (#15) | Low | Medium | **Done** (2026-08-27) — GitHub + Jira wired, Confluence/GitLab/Slack are placeholders |
-| Eval scorers, heuristic → LLM-judge (#16) | Medium | Medium | **Do next** — benefits from #5 existing first, not blocked by it |
+| Eval scorers, heuristic → LLM-judge (#16) | Medium | Medium | **Scoped, deferred** (2026-08-27) — judge model (gpt-4o), replace-vs-both (both), and pilot scope (Token Optimizer) decided; build not started, kept in backlog |
 | Load/performance testing expansion (#17) | Medium | Medium | **Do next** |
 | User feedback capture (#18) | Low | Low | **Quick win** |
 | Sidebar "already run" status re-check (#20) | Low | Low | **Quick win** |
