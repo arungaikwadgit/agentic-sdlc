@@ -96,25 +96,25 @@
 
 ---
 
-# 3. Eval Scorers Upgrade (Heuristic → LLM-Judge) (P2)
+# 3. Eval Scorers Upgrade (Heuristic → LLM-Judge) (P2) — SCOPED 2026-08-27, DEFERRED
 
 **1. Purpose & Problem Statement.** `tests/eval/scorers.ts` uses heuristic scorers, with in-code comments already acknowledging they need eventual LLM-judge replacement (Step 1, Section E).
 
 **2. Current State.** Heuristic-only; self-documented as a stopgap in the existing code.
 
-**3. Target State.** LLM-judge-based scoring for agent output quality, replacing or supplementing the heuristics.
+**3. Target State.** LLM-judge-based scoring for agent output quality, running alongside the existing 5 heuristic scorers (not replacing them) as a comparison signal.
 
-**4-9.** Standard LLM-as-judge pattern: a judge prompt, rubric, and scoring call added to the eval harness; no data model or API changes beyond the eval tooling itself.
+**4-9.** Standard LLM-as-judge pattern: a judge prompt, rubric, and scoring call added to the eval harness; no data model or API changes beyond the eval tooling itself. First build targets a single pilot agent (Token Optimizer, since it already has real pgvector grounding to judge citation accuracy against) rather than wiring every agent's fixtures at once.
 
 **10. Dependencies.** None structurally (Step 2, item #16), but thematically stronger once Item 2 (RAG grounding) exists, since a judge could then also score citation accuracy, not just output plausibility.
 
-**11. Pre-Implementation Gate.** Risk: LLM-judge scoring has its own reliability questions (judge consistency, cost per eval run) — needs a rubric design pass, not just "call an LLM to score it."
+**11. Pre-Implementation Gate.** Risk: LLM-judge scoring has its own reliability questions (judge consistency, cost per eval run) — needs a rubric design pass, not just "call an LLM to score it." Mitigated by running the judge alongside the heuristics rather than replacing them, so a bad judge run never silently weakens the existing deterministic gate.
 
 **19. Effort Estimate.** Medium.
 
-**20. Open Questions.** Judge model choice; rubric design; whether to replace heuristics entirely or run both and compare.
+**20. Open Questions — decided 2026-08-27, build not yet started.** Judge model: `gpt-4o` (same model already used for the live agent pipeline in `backend/src/proxy.js`, so judge reasoning is consistent with what actually generated the output being judged). Rubric design: still to be written when this is picked up — reuse `tests/eval/README.md`'s existing example judge prompt as the starting point. Replace vs. both: run both — heuristics stay as the free/deterministic/no-API-key baseline that already gates CI (per `tests/eval/eval.test.ts`'s no-API-key contract), judge score reported alongside as a new signal. Rollout scope: pilot on Token Optimizer's eval fixtures only; do not wire into every agent's fixtures on the first pass.
 
-**21. Owner/Sign-off.** Unassigned, awaiting go.
+**21. Owner/Sign-off.** Scoped 2026-08-27 (judge model, replace-vs-both, and pilot-agent decisions made) but explicitly deferred — kept in the backlog as a future item, not started. Revisit when prioritized.
 
 ---
 
